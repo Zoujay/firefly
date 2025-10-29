@@ -1,0 +1,145 @@
+package firefly.service.pipelineconfig.impl;
+
+import firefly.bean.dto.JobConfigDto;
+import firefly.bean.dto.PipelineConfigDto;
+import firefly.bean.dto.StageConfigDto;
+import firefly.bean.vo.request.JobConfigRequest;
+import firefly.bean.vo.request.PipelineConfigRequest;
+import firefly.bean.vo.request.StageConfigRequest;
+import firefly.bean.vo.response.JobConfigResponse;
+import firefly.bean.vo.response.PipelineConfigResponse;
+import firefly.bean.vo.response.StageConfigResponse;
+import firefly.constant.PluginType;
+import firefly.dao.jobconfig.IJobConfigDao;
+import firefly.dao.pipelineconfig.IPipelineConfigDao;
+import firefly.model.job.JobModel;
+import firefly.model.pipeline.PipelineModel;
+import firefly.service.jobconfig.impl.JobConfigServiceServiceImpl;
+import firefly.service.pipelineconfig.IPipelineConfig;
+import firefly.service.pluginconfig.IPluginConfig;
+import firefly.service.pluginparser.PluginServiceParser;
+import firefly.service.stageconfig.impl.StageConfigServiceImpl;
+import firefly.service.triggerorigin.OriginCenter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+@Transactional
+public class PipelineConfigImpl implements IPipelineConfig {
+
+    @Autowired
+    private IPipelineConfigDao pipelineConfigDao;
+
+    @Autowired
+    private IJobConfigDao jobConfigDao;
+
+    @Autowired
+    private StageConfigServiceImpl stageConfigServiceImpl;
+
+    @Autowired
+    private JobConfigServiceServiceImpl jobConfigService;
+
+    @Override
+    @Transactional
+    public String createPipeline(PipelineConfigRequest pipelineConfigRequest) {
+        PipelineModel pipelineModel = this.assemblePipelineModel(pipelineConfigRequest, -1L);
+        pipelineConfigDao.save(pipelineModel);
+        Long pipelineId = pipelineModel.getId();
+
+        // save origin info
+        Long originID = OriginCenter.TriggerOriginMap
+                .get(pipelineModel.getTriggerOrigin())
+                .saveTriggerOrigin(pipelineConfigRequest.getOriginInfo(), pipelineId);
+        pipelineModel.setOriginID(originID);
+        pipelineConfigDao.save(pipelineModel);
+
+
+        for (StageConfigRequest stageConfigRequest : pipelineConfigRequest.getStageConfigs()) {
+            StageConfigDto stageConfigDto = stageConfigServiceImpl.createStage(stageConfigRequest, pipelineId);
+            List<JobConfigRequest> jobs = stageConfigRequest.getJobConfigs();
+            for (JobConfigRequest job : jobs) {
+                JobModel jobModel = jobConfigService.assembleJobModel(job, stageConfigDto.getId(), 0L);
+                jobConfigDao.save(jobModel);
+                PluginType type = job.getPluginType();
+                IPluginConfig pluginConfigService = PluginServiceParser.PLUGIN_MAP.get(type);
+                Long pluginID = pluginConfigService.savePlugin(job.getPluginRaw(), jobModel.getId());
+                jobModel.setPluginID(pluginID);
+                jobConfigDao.save(jobModel);
+            }
+        }
+        return pipelineConfigRequest.getUuid();
+    }
+
+    @Override
+    public PipelineConfigResponse getPipelineConfigByUUID(String pipelineUUID) {
+        PipelineModel pipelineModel = pipelineConfigDao.getPipelineConfigByPipelineUUID(pipelineUUID);
+        if (pipelineModel == null) {
+            return null;
+        }
+        PipelineConfigDto pipelineConfigDto = this.assemblePipelineConfigDto(pipelineModel);
+        Long pipelineID = pipelineModel.getId();
+        List<StageConfigDto> stageConfigDtos = stageConfigServiceImpl.getStageConfigsByPipelineID(pipelineID);
+        List<StageConfigResponse> stageConfigResponses = new ArrayList<>();
+        for (StageConfigDto stageDto : stageConfigDtos){
+            List<JobConfigDto> jobConfigDtos = jobConfigService.getJobConfigsByStageID(stageDto.getId());
+            List<JobConfigResponse> jobConfigResponses = new ArrayList<>();
+            for (JobConfigDto jobConfigDto : jobConfigDtos) {
+                JobConfigResponse jobConfigResponse = jobConfigService.assembleJobConfigResponse(jobConfigDto);
+                jobConfigResponses.add(jobConfigResponse);
+            }
+            StageConfigResponse stageConfigResponse = stageConfigServiceImpl.assembleConfigResponse(stageDto, jobConfigResponses);
+            stageConfigResponses.add(stageConfigResponse);
+        }
+        return this.assemblePipelineConfigResponse(pipelineConfigDto, stageConfigResponses);
+    }
+
+    @Override
+    public PipelineConfigDto getPipelineConfigDtoByID(Long pipelineID) {
+        Optional<PipelineModel> pipelineModel = pipelineConfigDao.findById(pipelineID);
+        return pipelineModel.map(this::assemblePipelineConfigDto).orElse(null);
+    }
+
+    @Override
+    public PipelineConfigDto assemblePipelineConfigDto(PipelineModel pipelineModel) {
+        PipelineConfigDto pipelineConfigDto = new  PipelineConfigDto();
+        pipelineConfigDto.setUuid(pipelineModel.getPipelineUUID());
+        pipelineConfigDto.setId(pipelineModel.getId());
+        pipelineConfigDto.setTriggerMode(pipelineModel.getTriggerMode().name());
+        pipelineConfigDto.setTriggerMatch(pipelineModel.getTriggerMatch().name());
+        pipelineConfigDto.setName(pipelineModel.getPipelineName());
+        pipelineConfigDto.setName(pipelineModel.getTriggerOrigin().name());
+        return pipelineConfigDto;
+    }
+
+    @Override
+    public PipelineConfigResponse assemblePipelineConfigResponse(PipelineConfigDto pipelineConfigDto, List<StageConfigResponse> stageConfigResponses) {
+        PipelineConfigResponse  pipelineConfigResponse = new PipelineConfigResponse();
+        pipelineConfigResponse.setId(pipelineConfigDto.getId());
+        pipelineConfigResponse.setUuid(pipelineConfigDto.getUuid());
+        pipelineConfigResponse.setName(pipelineConfigDto.getName());
+        pipelineConfigResponse.setTriggerMode(pipelineConfigDto.getTriggerMode());
+        pipelineConfigResponse.setTriggerMatch(pipelineConfigDto.getTriggerMatch());
+        pipelineConfigResponse.setStageConfigs(stageConfigResponses);
+        pipelineConfigResponse.setTriggerOrigin(pipelineConfigDto.getTriggerOrigin());
+
+        return pipelineConfigResponse;
+    }
+
+    @Override
+    public PipelineModel assemblePipelineModel(PipelineConfigRequest request, Long originID) {
+        PipelineModel pipelineModel = new PipelineModel();
+        pipelineModel.setPipelineUUID(request.getUuid());
+        pipelineModel.setPipelineName(request.getName());
+        pipelineModel.setTriggerMode(request.getTriggerModel());
+        pipelineModel.setTriggerMatch(request.getTriggerMatch());
+        pipelineModel.setTriggerOrigin(request.getTriggerOrigin());
+        pipelineModel.setOriginID(originID);
+        return pipelineModel;
+    }
+
+}
