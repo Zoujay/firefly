@@ -32,7 +32,12 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
     }
 
     @Override
-    public Long getJobBuild(Long pluginBuildID) {
+    public Long getPluginBuildIDByJobBuildID(Long jobBuildID) {
+        return textPluginBuildDao.getPluginBuildIDByJobBuildID(jobBuildID);
+    }
+
+    @Override
+    public Long getJobBuildID(Long pluginBuildID) {
         Long jobBuildID = textPluginBuildDao.getJobBuildIDByPluginBuildID(pluginBuildID);
         if(jobBuildID == null) {
             return -1L;
@@ -55,9 +60,6 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
     @Override
     public Boolean executePluginBuild(Long id, BuildStatus status) {
         Integer result = textPluginBuildDao.updatePluginBuildStatus(id, status);
-        if (result != null) {
-            return result == 1;
-        }
         // execute
         System.out.println("mock trigger plugin build");
         TriggerPluginMessage triggerPluginMessage = this.triggerPluginBuild(id, BuildStatus.SUCCESS);
@@ -84,7 +86,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
                 .setMessageUUID(uuid.toString())
                 .setPluginBuildID(pluginBuildID)
                 .setStatus(status);
-        return null;
+        return triggerPluginMessage;
     }
 
 

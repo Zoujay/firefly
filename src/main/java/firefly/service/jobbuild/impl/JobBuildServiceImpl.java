@@ -53,7 +53,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
     @Override
-    public List<JobBuildDto> getJobBuildsByStageBuildStage(Long stageBuildID) {
+    public List<JobBuildDto> getJobBuildsByStageBuildID(Long stageBuildID) {
         StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
         if (stageBuildDto == null) {
             return List.of();
@@ -88,13 +88,14 @@ public class JobBuildServiceImpl implements IJobBuildService {
         int success = 0;
         int pending = 0;
         for(JobBuildDto jobBuildDto : jobBuildDtos) {
-            if(jobBuildDto.getStatus().name().equals(BuildStatus.FAILURE.name())) {
+            String status = jobBuildDto.getStatus().name();
+            if(status.equals(BuildStatus.FAILURE.name())) {
                 return BuildStatus.FAILURE;
             }
-            if (jobBuildDto.getStatus().name().equals(BuildStatus.SUCCESS.name())) {
+            if (status.equals(BuildStatus.SUCCESS.name())) {
                 success++;
             }
-            if (jobBuildDto.getStatus().name().equals(BuildStatus.PENDING.name())) {
+            if (status.equals(BuildStatus.PENDING.name())) {
                 pending++;
             }
         }
