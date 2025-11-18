@@ -13,6 +13,7 @@ import org.springframework.util.CollectionUtils;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @Transactional
@@ -33,7 +34,8 @@ public class StageBuildServiceImpl implements IStageBuildService {
 
     @Override
     public StageBuildDto getStageBuildByID(Long id) {
-        return null;
+        Optional<StageBuild> stageBuild = stageBuildDao.findById(id);
+        return stageBuild.map(this::assembleStageBuildDto).orElse(null);
     }
 
     @Override
@@ -52,7 +54,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
                 return stageBuildDto;
             }
         }
-        return null;
+        return stageBuildDto;
     }
 
     @Override
@@ -85,7 +87,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
         StageBuildDto stageBuildDto = new StageBuildDto();
         stageBuildDto.setStatus(stageBuild.getStageStatus())
                 .setPipelineBuildID(stageBuild.getPipelineBuildID())
-                .setStageConfigID(stageBuild.getId());
+                .setStageConfigID(stageBuild.getStageID());
         return stageBuildDto;
     }
 }

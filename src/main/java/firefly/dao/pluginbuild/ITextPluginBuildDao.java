@@ -7,8 +7,6 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
-import java.util.Optional;
-
 @Repository
 public interface ITextPluginBuildDao extends JpaRepository<TextPluginBuild, Long> {
 
@@ -18,5 +16,9 @@ public interface ITextPluginBuildDao extends JpaRepository<TextPluginBuild, Long
 
     @Query("select t.jobBuildID from TextPluginBuild t where t.id = ?1")
     Long getJobBuildIDByPluginBuildID(Long id);
+
+
+    @Query("select t.id from TextPluginBuild t where t.jobBuildID = ?1")
+    Long getPluginBuildIDByJobBuildID(Long jobBuildID);
 
 }
