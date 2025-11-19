@@ -15,10 +15,10 @@ import firefly.dao.pipelineconfig.IPipelineConfigDao;
 import firefly.model.job.JobModel;
 import firefly.model.pipeline.PipelineModel;
 import firefly.service.jobconfig.impl.JobConfigServiceServiceImpl;
-import firefly.service.pipelineconfig.IPipelineConfig;
+import firefly.service.pipelineconfig.IPipelineConfigService;
 import firefly.service.pluginconfig.IPluginConfig;
 import firefly.service.pluginparser.PluginServiceParser;
-import firefly.service.stageconfig.impl.StageConfigServiceImpl;
+import firefly.service.stageconfig.impl.StageConfigServiceServiceImpl;
 import firefly.service.triggerorigin.OriginCenter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,7 +30,7 @@ import java.util.Optional;
 
 @Service
 @Transactional
-public class PipelineConfigImpl implements IPipelineConfig {
+public class PipelineConfigServiceImpl implements IPipelineConfigService {
 
     @Autowired
     private IPipelineConfigDao pipelineConfigDao;
@@ -39,7 +39,7 @@ public class PipelineConfigImpl implements IPipelineConfig {
     private IJobConfigDao jobConfigDao;
 
     @Autowired
-    private StageConfigServiceImpl stageConfigServiceImpl;
+    private StageConfigServiceServiceImpl stageConfigServiceImpl;
 
     @Autowired
     private JobConfigServiceServiceImpl jobConfigService;

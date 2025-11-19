@@ -9,7 +9,7 @@ import firefly.model.stage.StageModel;
 
 import java.util.List;
 
-public interface IStageConfig {
+public interface IStageConfigService {
     StageConfigDto createStage(StageConfigRequest pipelineConfigRequest, Long pipelineId);
     StageConfigDto getStageConfigByUUID(String stageUUID);
     StageConfigDto getStageConfigByID(Long stageConfigID);

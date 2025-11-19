@@ -8,7 +8,7 @@ import firefly.dao.jobbuild.IJobBuildDao;
 import firefly.model.job.JobBuild;
 import firefly.service.jobbuild.IJobBuildService;
 import firefly.service.stagebuild.IStageBuildService;
-import firefly.service.stageconfig.IStageConfig;
+import firefly.service.stageconfig.IStageConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,7 +28,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
     private IStageBuildService stageBuildService;
 
     @Autowired
-    private IStageConfig stageConfig;
+    private IStageConfigService stageConfig;
 
     @Override
     public Long saveJobBuild(JobBuildDto jobBuildDto) {

@@ -12,10 +12,10 @@ import firefly.model.pipeline.PipelineBuild;
 import firefly.service.jobbuild.impl.JobBuildServiceImpl;
 import firefly.service.jobconfig.IJobConfigService;
 import firefly.service.pipelinebuild.IPipelineBuildService;
-import firefly.service.pipelineconfig.IPipelineConfig;
+import firefly.service.pipelineconfig.IPipelineConfigService;
 import firefly.service.pluginbuild.IPluginBuild;
 import firefly.service.stagebuild.IStageBuildService;
-import firefly.service.stageconfig.impl.StageConfigServiceImpl;
+import firefly.service.stageconfig.impl.StageConfigServiceServiceImpl;
 import firefly.service.trigger.TriggerCenter;
 import firefly.service.triggerorigin.OriginCenter;
 import lombok.extern.slf4j.Slf4j;
@@ -37,14 +37,14 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
     private IPipelineBuildDao pipelineBuildDao;
 
     @Autowired
-    private IPipelineConfig pipelineConfig;
+    private IPipelineConfigService pipelineConfig;
 
     @Autowired
     private IStageBuildService stageBuildService;
     @Autowired
     private IJobConfigService jobConfig;
     @Autowired
-    private StageConfigServiceImpl stageConfigService;
+    private StageConfigServiceServiceImpl stageConfigService;
 
     @Autowired
     private JobBuildServiceImpl jobBuildService;
