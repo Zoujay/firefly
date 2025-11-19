@@ -2,7 +2,7 @@ package firefly.controller.pipelineconfig;
 
 import firefly.bean.vo.request.PipelineConfigRequest;
 import firefly.bean.vo.response.PipelineConfigResponse;
-import firefly.service.pipelineconfig.IPipelineConfig;
+import firefly.service.pipelineconfig.IPipelineConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 public class PipelineConfigController {
 
     @Autowired
-    private IPipelineConfig pipelineConfig;
+    private IPipelineConfigService pipelineConfig;
 
     @RequestMapping(value = "/create/pipeline", method = RequestMethod.POST)
     public String CreatePipeline(@RequestBody PipelineConfigRequest pipelineConfigRequest){

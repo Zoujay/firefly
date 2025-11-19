@@ -6,7 +6,7 @@ import firefly.bean.vo.response.JobConfigResponse;
 import firefly.bean.vo.response.StageConfigResponse;
 import firefly.dao.stageconfig.IStageConfigDao;
 import firefly.model.stage.StageModel;
-import firefly.service.stageconfig.IStageConfig;
+import firefly.service.stageconfig.IStageConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +17,7 @@ import java.util.Optional;
 
 @Service
 @Transactional
-public class StageConfigServiceImpl implements IStageConfig {
+public class StageConfigServiceServiceImpl implements IStageConfigService {
 
     @Autowired
     private IStageConfigDao stageConfigDao;
