@@ -172,7 +172,7 @@ public class MessageCenter {
     public Boolean onPluginMessage(TriggerPluginMessage pluginMessage) {
         PluginType pluginType = pluginMessage.getPluginType();
         Long pluginBuildID = pluginMessage.getPluginBuildID();
-        BuildStatus statusv = pluginMessage.getStatus();
+        BuildStatus status = pluginMessage.getStatus();
         Boolean pluginResult = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).updatePluginBuild(pluginBuildID, status);
         System.out.println("update plugin build status");
         Long jobBuildID = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).getJobBuildID(pluginBuildID);
