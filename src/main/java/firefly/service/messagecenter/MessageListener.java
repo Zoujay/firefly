@@ -11,16 +11,21 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.Semaphore;
 
 import static firefly.constant.KafkaConfiguration.*;
 
 @Component
 public class MessageListener {
 
+    private static final int MAX_VIRTUAL_THREAD_NUMBER = 1000;
+
     @Autowired
     private MessageCenter messageCenter;
 
     private Gson gson = new Gson();
+
+    private static Semaphore SEMAPHORE = new Semaphore(MAX_VIRTUAL_THREAD_NUMBER);
 
     @KafkaListener(topics = PIPELINE_TOPIC)
     public void onPipelineMessage(List<String> messages, Acknowledgment ack) {
@@ -29,11 +34,18 @@ public class MessageListener {
             TriggerPipelineMessage triggerPipelineMessage = gson.fromJson(message, TriggerPipelineMessage.class);
             // modify pipeline status
             Thread.startVirtualThread(() -> {
-                Boolean result = messageCenter.onPipelineMessage(triggerPipelineMessage);
-                // send stage message
-                // modify stage status
-                if (result) {
-                    ack.acknowledge();
+                try {
+                    SEMAPHORE.acquire();
+                    Boolean result = messageCenter.onPipelineMessage(triggerPipelineMessage);
+                    // send stage message
+                    // modify stage status
+                    if (result) {
+                        ack.acknowledge();
+                    }
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    SEMAPHORE.release();
                 }
             });
         }
@@ -47,12 +59,21 @@ public class MessageListener {
             TriggerStageMessage triggerStageMessage = gson.fromJson(message, TriggerStageMessage.class);
             // modify pipeline status
             Thread.startVirtualThread(() -> {
-                Boolean result = messageCenter.onStageMessage(triggerStageMessage);
-                // send stage message
-                // modify stage status
-                if (result) {
-                    ack.acknowledge();
+
+                try {
+                    SEMAPHORE.acquire();
+                    Boolean result = messageCenter.onStageMessage(triggerStageMessage);
+                    // send stage message
+                    // modify stage status
+                    if (result) {
+                        ack.acknowledge();
+                    }
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    SEMAPHORE.release();
                 }
+
             });
         }
     }
@@ -64,13 +85,21 @@ public class MessageListener {
         for (String message : messages) {
             Thread.startVirtualThread(() -> {
                 // modify pipeline status
-                TriggerJobMessage triggerJobMessage = gson.fromJson(message, TriggerJobMessage.class);
-                Boolean result = messageCenter.onJobMessage(triggerJobMessage);
-                // send stage message
-                // modify stage status
-                if (result) {
-                    ack.acknowledge();
+                try {
+                    SEMAPHORE.acquire();
+                    TriggerJobMessage triggerJobMessage = gson.fromJson(message, TriggerJobMessage.class);
+                    Boolean result = messageCenter.onJobMessage(triggerJobMessage);
+                    // send stage message
+                    // modify stage status
+                    if (result) {
+                        ack.acknowledge();
+                    }
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    SEMAPHORE.release();
                 }
+
             });
         }
     }
@@ -81,14 +110,21 @@ public class MessageListener {
         System.out.println(messages);
         for (String message : messages) {
             Thread.startVirtualThread(() -> {
-                TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
-                // modify pipeline status
-                Boolean result = messageCenter.onPluginMessage(triggerPluginMessage);
-                // send stage message
-                // modify stage status
-                if (result) {
-                    ack.acknowledge();
+                try {
+                    SEMAPHORE.acquire();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
+                    // modify pipeline status
+                    Boolean result = messageCenter.onPluginMessage(triggerPluginMessage);
+                    // send stage message
+                    // modify stage status
+                    if (result) {
+                        ack.acknowledge();
+                    }
                 }
+
             });
         }
 
