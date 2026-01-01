@@ -51,8 +51,7 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
                 stageModel.getId(),
                 stageModel.getPipeline_id(),
                 stageModel.getStageUUID(),
-                stageModel.getStageName(),
-                stageModel.getIsJobParallel()
+                stageModel.getStageName()
         );
     }
 
@@ -73,7 +72,6 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
         stageConfigResponse.setPipelineID(stageConfigDto.getPipelineID());
         stageConfigResponse.setName(stageConfigDto.getName());
         stageConfigResponse.setUuid(stageConfigDto.getUuid());
-        stageConfigResponse.setIsJobParallel(stageConfigDto.getIsJobParallel());
         stageConfigResponse.setJobs(jobs);
         return stageConfigResponse;
     }
@@ -86,7 +84,6 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
         model.setPipeline_id(pipelineID);
         model.setStageUUID(request.getUuid());
         model.setStageName(request.getName());
-        model.setIsJobParallel(request.getIsJobParallel());
         return model;
     }
 }

@@ -1,10 +1,7 @@
 package firefly.service.messagecenter;
 
 
-import firefly.bean.dto.JobBuildDto;
-import firefly.bean.dto.JobConfigDto;
-import firefly.bean.dto.StageBuildDto;
-import firefly.bean.dto.StageConfigDto;
+import firefly.bean.dto.*;
 import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerPluginMessage;
@@ -14,6 +11,7 @@ import firefly.constant.KafkaConfiguration;
 import firefly.constant.PluginType;
 import firefly.service.jobbuild.IJobBuildService;
 import firefly.service.jobconfig.IJobConfigService;
+import firefly.service.jobconfig.IJobRelationService;
 import firefly.service.pipelinebuild.IPipelineBuildService;
 import firefly.service.pipelineconfig.IPipelineConfigService;
 import firefly.service.pluginparser.PluginServiceParser;
@@ -51,6 +49,9 @@ public class MessageCenter {
     private IJobConfigService jobConfigService;
 
     @Autowired
+    private IJobRelationService jobRelationService;
+
+    @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
 
 
@@ -76,11 +77,12 @@ public class MessageCenter {
     public Boolean onStageMessage(TriggerStageMessage stageMessage) {
         // step 1. modify stage status
         Long stageBuildID = stageMessage.getStageBuildID();
+        StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
+        Long stageConfigID = stageBuildDto.getStageConfigID();
         BuildStatus buildStatus = stageMessage.getBuildStatus();
+        stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
-            stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
-            StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
-            Long stageConfigID = stageBuildDto.getStageConfigID();
+
             StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
             Long pipelineID = stageConfigDto.getPipelineID();
             List<StageConfigDto> stageConfigDtos = stageConfigService.getStageConfigsByPipelineID(pipelineID);
@@ -100,9 +102,6 @@ public class MessageCenter {
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
-            stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
-            StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
-            Long stageConfigID = stageBuildDto.getStageConfigID();
             StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
             Long pipelineID = stageConfigDto.getPipelineID();
             Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
@@ -114,9 +113,8 @@ public class MessageCenter {
             kafkaTemplate.send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             return true;
         }
-        Boolean result = stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
         // assemble job message
-        List<TriggerJobMessage> jobMessages = this.assembleTriggerJobMessages(stageBuildID);
+        List<TriggerJobMessage> jobMessages = this.assembleTriggerHeadJobMessages(stageConfigID, stageBuildID);
         for (TriggerJobMessage jobMessage : jobMessages) {
             kafkaTemplate.send(KafkaConfiguration.JOB_TOPIC, jobMessage);
         }
@@ -133,25 +131,30 @@ public class MessageCenter {
         Long stageBuildID = jobBuildDto.getStageBuildID();
         Boolean result = jobBuildService.updateJobBuildStatus(jobBuildID, buildStatus);
         TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(stageBuildID, BuildStatus.RUNNING);
-        if (buildStatus.equals(BuildStatus.SUCCESS)) {
-            // check stage status
+        if (buildStatus == BuildStatus.SUCCESS) {
+            // todo check stage status
             StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
+            if(stageBuildDto.getStatus() == BuildStatus.FAILURE) {
+                return false;
+            }
             Long stageConfigID = stageBuildDto.getStageConfigID();
             StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
-            Boolean isJobParallel = stageConfigDto.getIsJobParallel();
-            List<JobBuildDto> jobBuildDtos = jobBuildService.getJobBuildsByStageBuildID(stageBuildID);
-            if (isJobParallel) {
-                BuildStatus status = jobBuildService.checkParallelStageStatus(jobBuildDtos);
+            JobRelationDto jobRelationDto = jobRelationService.getNextJobRelation(
+                    stageConfigDto.getId(), jobBuildDto.getJobConfigID());
+            Long triggerNextJobID = jobRelationDto.getJobID();
+            JobBuildDto nextJobBuildDto = jobBuildService.getJobBuildByJobConfigID(triggerNextJobID);
+            if(nextJobBuildDto != null) {
+                TriggerJobMessage triggerJobMessage = new TriggerJobMessage();
+                triggerJobMessage.setMessageUUID(UUID.randomUUID().toString());
+                triggerJobMessage.setJobBuildID(nextJobBuildDto.getJobBuildID());
+                triggerJobMessage.setBuildStatus(BuildStatus.RUNNING);
+                kafkaTemplate.send(KafkaConfiguration.JOB_TOPIC, triggerJobMessage);
+            }else {
+                List<JobBuildDto> tailJobs= jobBuildService.getTailJobBuildsByStageBuildID(stageConfigID, stageBuildID);
+                BuildStatus status = jobBuildService.calculateStageStatus(tailJobs);
                 triggerStageMessage.setBuildStatus(status);
-            } else {
-                JobBuildDto lastOne = jobBuildDtos.get(jobBuildDtos.size() - 1);
-                if (lastOne.getJobBuildID().equals(jobBuildDto.getJobBuildID())) {
-                    triggerStageMessage.setBuildStatus(BuildStatus.SUCCESS);
-                } else {
-                    triggerStageMessage.setBuildStatus(BuildStatus.RUNNING);
-                }
+                kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
             }
-            kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
@@ -215,9 +218,9 @@ public class MessageCenter {
     }
 
 
-    private List<TriggerJobMessage> assembleTriggerJobMessages(Long stageBuildID) {
+    private List<TriggerJobMessage> assembleTriggerHeadJobMessages(Long stageConfigID, Long stageBuildID) {
         List<TriggerJobMessage> triggerJobMessageList = new ArrayList<>();
-        List<JobBuildDto> jobBuildDtos = jobBuildService.getJobBuildsByStageBuildID(stageBuildID);
+        List<JobBuildDto> jobBuildDtos = jobBuildService.getHeadJobBuildsByStageBuildID(stageConfigID, stageBuildID);
         for (JobBuildDto jobBuildDto : jobBuildDtos) {
             TriggerJobMessage jobMessage = new TriggerJobMessage();
             UUID uuid = UUID.randomUUID();

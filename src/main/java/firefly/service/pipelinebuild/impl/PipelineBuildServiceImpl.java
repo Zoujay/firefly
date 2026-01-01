@@ -161,13 +161,4 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         return jobBuildDto;
     }
 
-
-    private boolean checkCanJobRunning(Boolean isJobParallel, int jobIndex){
-        if(isJobParallel) {
-            return true;
-        }
-        return jobIndex == 0;
-    }
-
-
 }

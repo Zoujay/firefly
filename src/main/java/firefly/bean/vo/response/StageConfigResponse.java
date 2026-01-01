@@ -15,7 +15,6 @@ public class StageConfigResponse {
     private Long pipelineID;
     private String uuid;
     private String name;
-    private Boolean isJobParallel;
     private List<JobConfigResponse> jobs;
 
 }

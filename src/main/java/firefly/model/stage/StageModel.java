@@ -26,7 +26,4 @@ public class StageModel {
     @Column(name = "stage_name")
     private String stageName;
 
-    @Column(name = "is_job_parallel")
-    private Boolean isJobParallel = true;
-
 }
