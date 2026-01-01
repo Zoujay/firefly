@@ -140,3 +140,23 @@ CREATE TABLE `firefly`.`volcano_engine`
     INDEX                `idx_pipeline_id` (`pipeline_id`),
     INDEX                `idx_ak` (`ak`)
 );
+
+
+
+CREATE TABLE `firefly`.`job_relation`
+(
+    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `pipeline_id`     BIGINT(20) NOT NULL,
+    `stage_id`        BIGINT(20) NOT NULL,
+    `job_id`          BIGINT(20) NOT NULL,
+    `next_job_id`     BIGINT(20) NOT NULL,
+    `previous_job_id` BIGINT(20) NOT NULL,
+    `is_head_job`     TINYINT(1) NOT NULL,
+    PRIMARY KEY (`id`),
+    INDEX             `idx_pipeline_id` (`pipeline_id`),
+    INDEX             `idx_stage_job_id` (`stage_id`, `job_id`),
+    INDEX             `idx_stage_id_head` (`stage_id`, `is_head_job`),
+    INDEX             `idx_job_id` (`job_id`),
+    INDEX             `idx_next_job_id` (`next_job_id`),
+    INDEX             `idx_previous_job_id` (`previous_job_id`)
+);

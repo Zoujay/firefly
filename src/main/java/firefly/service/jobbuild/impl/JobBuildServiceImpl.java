@@ -1,12 +1,15 @@
 package firefly.service.jobbuild.impl;
 
 import firefly.bean.dto.JobBuildDto;
+import firefly.bean.dto.JobRelationDto;
 import firefly.bean.dto.StageBuildDto;
 import firefly.bean.dto.StageConfigDto;
 import firefly.constant.BuildStatus;
 import firefly.dao.jobbuild.IJobBuildDao;
+import firefly.dao.jobconfig.IJobRelationDao;
 import firefly.model.job.JobBuild;
 import firefly.service.jobbuild.IJobBuildService;
+import firefly.service.jobconfig.IJobRelationService;
 import firefly.service.stagebuild.IStageBuildService;
 import firefly.service.stageconfig.IStageConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 
@@ -26,6 +30,9 @@ public class JobBuildServiceImpl implements IJobBuildService {
 
     @Autowired
     private IStageBuildService stageBuildService;
+
+    @Autowired
+    private IJobRelationService jobRelationService;
 
     @Autowired
     private IStageConfigService stageConfig;
@@ -53,30 +60,23 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
     @Override
-    public List<JobBuildDto> getJobBuildsByStageBuildID(Long stageBuildID) {
-        StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
-        if (stageBuildDto == null) {
-            return List.of();
-        }
-        Long stageConfigID = stageBuildDto.getStageConfigID();
-        if(stageConfigID == null) {
-            return List.of();
-        }
-        StageConfigDto stageConfigDto = stageConfig.getStageConfigByID(stageConfigID);
-        boolean isJobParallel = stageConfigDto.getIsJobParallel();
-        List<JobBuild> result =jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
+    public JobBuildDto getJobBuildByJobConfigID(Long jobConfigID) {
+        Optional<JobBuild> jobBuildOptional = jobBuildDao.getJobBuildByJobConfigID(jobConfigID);
+        return jobBuildOptional.map(this::assembleJobBuildDto).orElse(null);
+    }
+
+
+
+    @Override
+    public List<JobBuildDto> getHeadJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
-        if(isJobParallel) {
-            for(JobBuild jobBuild : result) {
-                if(jobBuild.getJobStatus().name().equals(BuildStatus.PENDING.name())) {
-                    jobBuildDtos.add(this.assembleJobBuildDto(jobBuild));
-                }
-            }
-        }else {
-            for(JobBuild jobBuild : result) {
-                if(jobBuild.getJobStatus().name().equals(BuildStatus.PENDING.name())) {
-                    jobBuildDtos.add(this.assembleJobBuildDto(jobBuild));
-                    break;
+        List<JobRelationDto> jobRelationDtos = jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
+        List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
+        for(JobBuild build : jobBuilds) {
+            for(JobRelationDto jobRelationDto : jobRelationDtos) {
+                if(Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
+                    JobBuildDto jobBuildDto = this.assembleJobBuildDto(build);
+                    jobBuildDtos.add(jobBuildDto);
                 }
             }
         }
@@ -84,35 +84,48 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
     @Override
-    public BuildStatus checkParallelStageStatus(List<JobBuildDto> jobBuildDtos) {
-        int success = 0;
-        int pending = 0;
-        for(JobBuildDto jobBuildDto : jobBuildDtos) {
-            String status = jobBuildDto.getStatus().name();
-            if(status.equals(BuildStatus.FAILURE.name())) {
-                return BuildStatus.FAILURE;
-            }
-            if (status.equals(BuildStatus.SUCCESS.name())) {
-                success++;
-            }
-            if (status.equals(BuildStatus.PENDING.name())) {
-                pending++;
+    public List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
+        List<JobBuildDto> jobBuildDtos = new ArrayList<>();
+        List<JobRelationDto> jobRelationDtos = jobRelationService.getAllTailJobRelationByStageID(stageConfigID);
+        List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
+        for(JobBuild build : jobBuilds) {
+            for(JobRelationDto jobRelationDto : jobRelationDtos) {
+                if(Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
+                    JobBuildDto jobBuildDto = this.assembleJobBuildDto(build);
+                    jobBuildDtos.add(jobBuildDto);
+                }
             }
         }
-        if (success == jobBuildDtos.size()) {
+        return jobBuildDtos;
+    }
+
+    @Override
+    public BuildStatus calculateStageStatus(List<JobBuildDto> jobBuildDtos) {
+        int running = 0;
+        int pending = 0;
+        int failure = 0;
+        int success = 0;
+        for(JobBuildDto jobBuildDto : jobBuildDtos) {
+            switch (jobBuildDto.getStatus()) {
+                case SUCCESS -> success++;
+                case FAILURE -> failure++;
+                case PENDING -> pending++;
+                case RUNNING -> running++;
+            }
+        }
+        int len = jobBuildDtos.size();
+        if(failure >= 1){
+            return BuildStatus.FAILURE;
+        }
+        if(len == success) {
             return BuildStatus.SUCCESS;
         }
-        if (pending == jobBuildDtos.size()) {
+        if(len == pending) {
             return BuildStatus.PENDING;
         }
         return BuildStatus.RUNNING;
     }
 
-    @Override
-    public BuildStatus checkSerializeStageStatus(JobBuildDto jobBuildDto) {
-
-        return null;
-    }
 
     private JobBuild assembleJobBuild(JobBuildDto jobBuildDto, BuildStatus status) {
         JobBuild jobBuild = new JobBuild();

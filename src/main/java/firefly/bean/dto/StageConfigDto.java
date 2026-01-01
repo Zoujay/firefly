@@ -14,6 +14,5 @@ public class StageConfigDto {
     private Long pipelineID;
     private String uuid;
     private String name;
-    private Boolean isJobParallel;
 
 }

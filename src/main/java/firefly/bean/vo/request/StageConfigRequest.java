@@ -19,10 +19,6 @@ public class StageConfigRequest implements Serializable {
     @NotNull
     @Size(min = 10, max = 64)
     private String name;
-
     @NotNull
-    private Boolean isJobParallel = true;
-
-    @NotNull
-    private List<JobConfigRequest> jobConfigs;
+    private List<List<JobConfigRequest>> jobConfigs;
 }

@@ -10,8 +10,8 @@ public interface IJobBuildService{
     Long saveJobBuild(JobBuildDto jobBuild);
     JobBuildDto getJobBuildByID(Long jobBuildID);
     Boolean updateJobBuildStatus(Long jobBuildID, BuildStatus status);
-
-    List<JobBuildDto> getJobBuildsByStageBuildID(Long stageBuildID);
-    BuildStatus checkParallelStageStatus(List<JobBuildDto> jobBuildDtos);
-    BuildStatus checkSerializeStageStatus(JobBuildDto jobBuildDto);
+    JobBuildDto getJobBuildByJobConfigID(Long jobConfigID);
+    List<JobBuildDto> getHeadJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
+    List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
+    BuildStatus calculateStageStatus(List<JobBuildDto> jobBuildDtos);
 }
