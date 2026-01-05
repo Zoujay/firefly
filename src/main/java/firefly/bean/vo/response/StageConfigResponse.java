@@ -15,6 +15,6 @@ public class StageConfigResponse {
     private Long pipelineID;
     private String uuid;
     private String name;
-    private List<JobConfigResponse> jobs;
+    private List<List<JobConfigResponse>> jobs;
 
 }

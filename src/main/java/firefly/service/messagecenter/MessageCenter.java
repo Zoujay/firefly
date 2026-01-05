@@ -74,6 +74,7 @@ public class MessageCenter {
         return true;
     }
 
+
     public Boolean onStageMessage(TriggerStageMessage stageMessage) {
         // step 1. modify stage status
         Long stageBuildID = stageMessage.getStageBuildID();

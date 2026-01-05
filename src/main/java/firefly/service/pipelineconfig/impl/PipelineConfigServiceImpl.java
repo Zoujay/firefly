@@ -26,9 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 @Transactional
@@ -65,8 +63,8 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         for (StageConfigRequest stageConfigRequest : pipelineConfigRequest.getStageConfigs()) {
             StageConfigDto stageConfigDto = stageConfigServiceImpl.createStage(stageConfigRequest, pipelineId);
             List<List<JobConfigRequest>> jobs = stageConfigRequest.getJobConfigs();
-            List<JobModel> jobModels = new ArrayList<>();
             for (List<JobConfigRequest> jobList : jobs) {
+                List<JobModel> jobModels = new ArrayList<>();
                 for (JobConfigRequest job : jobList) {
                     JobModel jobModel = jobConfigService.assembleJobModel(job, stageConfigDto.getId(), 0L);
                     jobConfigDao.save(jobModel);
@@ -112,11 +110,34 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         List<StageConfigDto> stageConfigDtos = stageConfigServiceImpl.getStageConfigsByPipelineID(pipelineID);
         List<StageConfigResponse> stageConfigResponses = new ArrayList<>();
         for (StageConfigDto stageDto : stageConfigDtos) {
-            List<JobConfigDto> jobConfigDtos = jobConfigService.getJobConfigsByStageID(stageDto.getId());
-            List<JobConfigResponse> jobConfigResponses = new ArrayList<>();
-            for (JobConfigDto jobConfigDto : jobConfigDtos) {
-                JobConfigResponse jobConfigResponse = jobConfigService.assembleJobConfigResponse(jobConfigDto);
-                jobConfigResponses.add(jobConfigResponse);
+            Long stageID = stageDto.getId();
+            List<JobRelationDto> headJobRelationDtos = jobRelationService.getAllHeadJobRelationByStageID(stageID);
+            List<JobRelationDto> allJobRelations = jobRelationService.getAllJobRelationByStageID(stageID);
+            Map<Long, JobRelationDto> jobRelationMap = new HashMap<>();
+            for (JobRelationDto jobRelationDto : allJobRelations) {
+                jobRelationMap.put(jobRelationDto.getJobID(), jobRelationDto);
+            }
+
+            List<List<JobConfigResponse>> jobConfigResponses = new ArrayList<>();
+            for (JobRelationDto jobRelationDto : headJobRelationDtos) {
+                List<JobConfigResponse> parallelJobConfigDtos = new ArrayList<>();
+                Long currentJobID = jobRelationDto.getJobID();
+                Long nextJobID = jobRelationDto.getNextJobID();
+                JobConfigDto currentJob = jobConfigService.getJobConfigByID(currentJobID);
+                JobConfigResponse currentJobResponse = jobConfigService.assembleJobConfigResponse(currentJob);
+                parallelJobConfigDtos.add(currentJobResponse);
+                while (jobRelationMap.containsKey(nextJobID)) {
+                    JobRelationDto nextRelationDto = jobRelationMap.get(nextJobID);
+                    currentJobID = nextRelationDto.getJobID();
+                    if(currentJobID == null || currentJobID == 0L) {
+                        break;
+                    }
+                    JobConfigDto next = jobConfigService.getJobConfigByID(currentJobID);
+                    JobConfigResponse nextOne = jobConfigService.assembleJobConfigResponse(next);
+                    parallelJobConfigDtos.add(nextOne);
+                    nextJobID = nextRelationDto.getNextJobID();
+                }
+                jobConfigResponses.add(parallelJobConfigDtos);
             }
             StageConfigResponse stageConfigResponse = stageConfigServiceImpl.assembleConfigResponse(stageDto, jobConfigResponses);
             stageConfigResponses.add(stageConfigResponse);

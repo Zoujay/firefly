@@ -13,6 +13,8 @@ public interface IJobRelationService {
 
     List<JobRelationDto> getAllHeadJobRelationByStageID(Long stageID);
 
+    List<JobRelationDto> getAllJobRelationByStageID(Long stageID);
+
     List<JobRelationDto> getAllTailJobRelationByStageID(Long stageID);
 
     void saveJobRelation(JobRelationDto jobRelationDto);
