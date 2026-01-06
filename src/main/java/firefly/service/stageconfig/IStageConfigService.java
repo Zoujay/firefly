@@ -15,7 +15,7 @@ public interface IStageConfigService {
     StageConfigDto getStageConfigByID(Long stageConfigID);
     StageConfigDto assembleStageConfigDto(StageModel stageModel);
     List<StageConfigDto> getStageConfigsByPipelineID(Long pipelineID);
-    StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<JobConfigResponse> jobs);
+    StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs);
     StageModel assembleStageModel(StageConfigRequest request, Long pipelineID);
 }
 

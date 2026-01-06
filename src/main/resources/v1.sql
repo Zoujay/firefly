@@ -31,7 +31,6 @@ CREATE TABLE `firefly`.`stage_config`
     `pipeline_id`     BIGINT(20) NOT NULL,
     `stage_uuid`      VARCHAR(64) NOT NULL,
     `stage_name`      VARCHAR(64) NOT NULL,
-    `is_job_parallel` TINYINT(1) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_stage_uuid` (`stage_uuid`),
     INDEX             `idx_stage_name` (`stage_name`),

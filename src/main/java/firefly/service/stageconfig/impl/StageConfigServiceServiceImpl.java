@@ -66,7 +66,7 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
     }
 
     @Override
-    public StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<JobConfigResponse> jobs) {
+    public StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs) {
         StageConfigResponse  stageConfigResponse = new StageConfigResponse();
         stageConfigResponse.setId(stageConfigDto.getId());
         stageConfigResponse.setPipelineID(stageConfigDto.getPipelineID());

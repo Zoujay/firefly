@@ -79,6 +79,16 @@ public class JobRelationServiceImpl implements IJobRelationService {
     }
 
     @Override
+    public List<JobRelationDto> getAllJobRelationByStageID(Long stageID) {
+        List<JobRelation> jobRelations = jobRelationDao.getJobRelationsByStageID(stageID);
+        List<JobRelationDto> result = new ArrayList<>();
+        for (JobRelation jobRelation : jobRelations) {
+            result.add(assembleJobRelationDto(jobRelation));
+        }
+        return result;
+    }
+
+    @Override
     public List<JobRelationDto> getAllTailJobRelationByStageID(Long stageID) {
         List<JobRelation> jobRelations = jobRelationDao.getAllTailJobRelationsByStageID(stageID);
         List<JobRelationDto> result = new ArrayList<>();
