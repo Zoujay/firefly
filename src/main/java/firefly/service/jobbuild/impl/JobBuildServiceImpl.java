@@ -2,11 +2,8 @@ package firefly.service.jobbuild.impl;
 
 import firefly.bean.dto.JobBuildDto;
 import firefly.bean.dto.JobRelationDto;
-import firefly.bean.dto.StageBuildDto;
-import firefly.bean.dto.StageConfigDto;
 import firefly.constant.BuildStatus;
 import firefly.dao.jobbuild.IJobBuildDao;
-import firefly.dao.jobconfig.IJobRelationDao;
 import firefly.model.job.JobBuild;
 import firefly.service.jobbuild.IJobBuildService;
 import firefly.service.jobconfig.IJobRelationService;
@@ -60,8 +57,8 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
     @Override
-    public JobBuildDto getJobBuildByJobConfigID(Long jobConfigID) {
-        Optional<JobBuild> jobBuildOptional = jobBuildDao.getJobBuildByJobConfigID(jobConfigID);
+    public JobBuildDto getJobBuildByJobConfigIDAndStageBuildID(Long jobConfigID, Long stageBuildID) {
+        Optional<JobBuild> jobBuildOptional = jobBuildDao.getJobBuildByJobConfigIDAndStageBuildID(jobConfigID, stageBuildID);
         return jobBuildOptional.map(this::assembleJobBuildDto).orElse(null);
     }
 

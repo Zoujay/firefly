@@ -74,6 +74,12 @@ public class StageBuildServiceImpl implements IStageBuildService {
         return res >= 1;
     }
 
+    @Override
+    public StageBuildDto getStageBuildByStageConfigID(Long stageConfigID) {
+        Optional<StageBuild> stageBuild = stageBuildDao.getStageBuildByStageConfigID(stageConfigID);
+        return stageBuild.map(this::assembleStageBuildDto).orElse(null);
+    }
+
 
     private StageBuild assembleStageBuild(StageBuildDto stageBuildDto) {
         StageBuild stageBuild = new StageBuild();

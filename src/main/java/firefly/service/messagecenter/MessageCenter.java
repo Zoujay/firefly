@@ -20,7 +20,6 @@ import firefly.service.stageconfig.IStageConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,15 +58,13 @@ public class MessageCenter {
         // step 1. modify pipeline status
         Long pipelineBuildID = pipelineMessage.getPipelineBuildID();
         BuildStatus buildStatus = pipelineMessage.getBuildStatus();
+        pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
-            pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
-            pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
             return true;
         }
-        Boolean result = pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
         // generate stage message
         TriggerStageMessage triggerStageMessage = this.assembleTriggerStageMessage(pipelineBuildID, buildStatus);
         kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
@@ -82,10 +79,10 @@ public class MessageCenter {
         Long stageConfigID = stageBuildDto.getStageConfigID();
         BuildStatus buildStatus = stageMessage.getBuildStatus();
         stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
+        StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
+        Long pipelineID = stageConfigDto.getPipelineID();
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
 
-            StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
-            Long pipelineID = stageConfigDto.getPipelineID();
             List<StageConfigDto> stageConfigDtos = stageConfigService.getStageConfigsByPipelineID(pipelineID);
             StageConfigDto lastStage = stageConfigDtos.getLast();
             if (lastStage.getId().equals(stageConfigID)) {
@@ -97,14 +94,24 @@ public class MessageCenter {
                         .setPipelineID(pipelineID);
                 kafkaTemplate.send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             }else {
-                TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(stageBuildID, buildStatus);
-                kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
+                // trigger next stage
+                Long nextStageConfigID = 0L;
+                for(int i = 0;i < stageConfigDtos.size();i++) {
+                    StageConfigDto dto = stageConfigDtos.get(i);
+                    if(stageConfigID.equals(dto.getId())) {
+                        nextStageConfigID = stageConfigDtos.get(i+1).getId();
+                        break;
+                    }
+                }
+                StageBuildDto next = stageBuildService.getStageBuildByStageConfigID(nextStageConfigID);
+                if(next != null) {
+                    TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(next.getStageBuildID(), buildStatus);
+                    kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
+                }
             }
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
-            StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
-            Long pipelineID = stageConfigDto.getPipelineID();
             Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
             TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
             triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
@@ -123,7 +130,6 @@ public class MessageCenter {
     }
 
 
-    @Transactional
     public Boolean onJobMessage(TriggerJobMessage jobMessage) {
         // step 1. modify job status
         Long jobBuildID = jobMessage.getJobBuildID();
@@ -142,8 +148,8 @@ public class MessageCenter {
             StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
             JobRelationDto jobRelationDto = jobRelationService.getNextJobRelation(
                     stageConfigDto.getId(), jobBuildDto.getJobConfigID());
-            Long triggerNextJobID = jobRelationDto.getJobID();
-            JobBuildDto nextJobBuildDto = jobBuildService.getJobBuildByJobConfigID(triggerNextJobID);
+            Long triggerNextJobID = jobRelationDto.getNextJobID();
+            JobBuildDto nextJobBuildDto = jobBuildService.getJobBuildByJobConfigIDAndStageBuildID(triggerNextJobID, stageBuildID);
             if(nextJobBuildDto != null) {
                 TriggerJobMessage triggerJobMessage = new TriggerJobMessage();
                 triggerJobMessage.setMessageUUID(UUID.randomUUID().toString());
@@ -172,7 +178,6 @@ public class MessageCenter {
         return PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).executePluginBuild(pluginBuildID, BuildStatus.RUNNING);
     }
 
-    @Transactional
     public Boolean onPluginMessage(TriggerPluginMessage pluginMessage) {
         PluginType pluginType = pluginMessage.getPluginType();
         Long pluginBuildID = pluginMessage.getPluginBuildID();

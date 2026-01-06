@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
@@ -19,5 +20,10 @@ public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
     @Modifying
     @Query("update StageBuild s set s.stageStatus = ?1 where s.id = ?2")
     Integer updateStageBuildStatusByID(BuildStatus status, Long id);
+
+
+    @Query("select s from StageBuild as s where s.stageID = ?1")
+    Optional<StageBuild> getStageBuildByStageConfigID(Long stageConfigID);
+
 
 }

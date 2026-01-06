@@ -5,6 +5,7 @@ import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -15,6 +16,7 @@ import java.util.concurrent.Semaphore;
 
 import static firefly.constant.KafkaConfiguration.*;
 
+@Slf4j
 @Component
 public class MessageListener {
 
@@ -36,15 +38,14 @@ public class MessageListener {
             Thread.startVirtualThread(() -> {
                 try {
                     SEMAPHORE.acquire();
+                    log.info("{} acquire semaphore, message UUID is {}", Thread.currentThread().getName(), triggerPipelineMessage.toString());
                     Boolean result = messageCenter.onPipelineMessage(triggerPipelineMessage);
                     // send stage message
                     // modify stage status
-                    if (result) {
-                        ack.acknowledge();
-                    }
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 } finally {
+                    ack.acknowledge();
                     SEMAPHORE.release();
                 }
             });
@@ -65,12 +66,10 @@ public class MessageListener {
                     Boolean result = messageCenter.onStageMessage(triggerStageMessage);
                     // send stage message
                     // modify stage status
-                    if (result) {
-                        ack.acknowledge();
-                    }
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 } finally {
+                    ack.acknowledge();
                     SEMAPHORE.release();
                 }
 
@@ -91,12 +90,10 @@ public class MessageListener {
                     Boolean result = messageCenter.onJobMessage(triggerJobMessage);
                     // send stage message
                     // modify stage status
-                    if (result) {
-                        ack.acknowledge();
-                    }
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 } finally {
+                    ack.acknowledge();
                     SEMAPHORE.release();
                 }
 
@@ -112,19 +109,17 @@ public class MessageListener {
             Thread.startVirtualThread(() -> {
                 try {
                     SEMAPHORE.acquire();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
                     TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
                     // modify pipeline status
                     Boolean result = messageCenter.onPluginMessage(triggerPluginMessage);
                     // send stage message
                     // modify stage status
-                    if (result) {
-                        ack.acknowledge();
-                    }
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    ack.acknowledge();
+                    SEMAPHORE.release();
                 }
-
             });
         }
 

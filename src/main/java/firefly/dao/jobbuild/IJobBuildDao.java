@@ -19,7 +19,7 @@ public interface IJobBuildDao extends JpaRepository<JobBuild, Long> {
     @Query("update JobBuild j set j.jobStatus = ?2 where j.id = ?1")
     Integer updateJobBuildStatusByID(Long jobBuildID, BuildStatus status);
 
-    @Query("select j from JobBuild as j where j.jobID = ?1")
-    Optional<JobBuild> getJobBuildByJobConfigID(Long jobConfigID);
+    @Query("select j from JobBuild as j where j.jobID = ?1 and j.stageBuildID = ?2 order by j.id desc limit 1")
+    Optional<JobBuild> getJobBuildByJobConfigIDAndStageBuildID(Long jobConfigID, Long stageBuildID);
 
 }
