@@ -39,7 +39,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
     @Override
     public Long getJobBuildID(Long pluginBuildID) {
         Long jobBuildID = textPluginBuildDao.getJobBuildIDByPluginBuildID(pluginBuildID);
-        if(jobBuildID == null) {
+        if (jobBuildID == null) {
             return -1L;
         }
         return jobBuildID;

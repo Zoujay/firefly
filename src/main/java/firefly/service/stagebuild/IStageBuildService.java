@@ -8,6 +8,7 @@ import java.util.List;
 public interface IStageBuildService {
 
     Long saveStageBuild(StageBuildDto stageBuildDto);
+
     StageBuildDto getStageBuildByID(Long id);
 
     StageBuildDto getFirstStageToRun(Long pipelineBuildID);

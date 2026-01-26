@@ -38,7 +38,7 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
     @Override
     public StageConfigDto getStageConfigByID(Long stageConfigID) {
         Optional<StageModel> stageModel = stageConfigDao.findById(stageConfigID);
-        if(stageModel.isEmpty()) {
+        if (stageModel.isEmpty()) {
             return null;
         }
         StageModel model = stageModel.get();
@@ -67,7 +67,7 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
 
     @Override
     public StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs) {
-        StageConfigResponse  stageConfigResponse = new StageConfigResponse();
+        StageConfigResponse stageConfigResponse = new StageConfigResponse();
         stageConfigResponse.setId(stageConfigDto.getId());
         stageConfigResponse.setPipelineID(stageConfigDto.getPipelineID());
         stageConfigResponse.setName(stageConfigDto.getName());
@@ -75,8 +75,6 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
         stageConfigResponse.setJobs(jobs);
         return stageConfigResponse;
     }
-
-
 
 
     public StageModel assembleStageModel(StageConfigRequest request, Long pipelineID) {

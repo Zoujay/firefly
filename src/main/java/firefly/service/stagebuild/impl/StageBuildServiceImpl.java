@@ -46,8 +46,8 @@ public class StageBuildServiceImpl implements IStageBuildService {
         }
         StageBuildDto stageBuildDto = new StageBuildDto();
         stageBuildDto.setPipelineBuildID(pipelineBuildID);
-        for(StageBuild stageBuild : stageBuilds) {
-            if(stageBuild.getStageStatus().name().equals(BuildStatus.PENDING.name())) {
+        for (StageBuild stageBuild : stageBuilds) {
+            if (stageBuild.getStageStatus().name().equals(BuildStatus.PENDING.name())) {
                 stageBuildDto.setStageBuildID(stageBuild.getId());
                 stageBuildDto.setPipelineBuildID(stageBuild.getPipelineBuildID());
                 stageBuildDto.setStatus(stageBuild.getStageStatus());
@@ -60,7 +60,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
     @Override
     public List<StageBuildDto> getStageBuildsByPipelineBuildID(Long pipelineBuildID) {
         List<StageBuild> stageBuilds = stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
-        if(CollectionUtils.isEmpty(stageBuilds)) {
+        if (CollectionUtils.isEmpty(stageBuilds)) {
             return Collections.emptyList();
         }
         List<StageBuildDto> result = new ArrayList<>();

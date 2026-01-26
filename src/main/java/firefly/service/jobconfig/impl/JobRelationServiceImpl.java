@@ -53,15 +53,15 @@ public class JobRelationServiceImpl implements IJobRelationService {
         List<JobRelation> jobRelations = jobRelationDao.getJobRelationsByStageID(stageID);
         Long nextJobRelationID = -1L;
         JobRelation nextJobRelation = null;
-        for(JobRelation jobRelation : jobRelations) {
-            if(jobRelation.getJobID().equals(jobID)) {
+        for (JobRelation jobRelation : jobRelations) {
+            if (jobRelation.getJobID().equals(jobID)) {
                 nextJobRelationID = jobRelation.getId();
                 break;
             }
         }
-        for(JobRelation jobRelation : jobRelations) {
-            if(jobRelation.getId().equals(nextJobRelationID)) {
-                nextJobRelation =  jobRelation;
+        for (JobRelation jobRelation : jobRelations) {
+            if (jobRelation.getId().equals(nextJobRelationID)) {
+                nextJobRelation = jobRelation;
             }
         }
         return nextJobRelation == null ? null : assembleJobRelationDto(nextJobRelation);

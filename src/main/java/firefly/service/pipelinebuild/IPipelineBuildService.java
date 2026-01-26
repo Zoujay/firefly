@@ -23,5 +23,4 @@ public interface IPipelineBuildService {
     BaseMessage buildMessage(PipelineBuildDto pipelineBuildDto, Long pipelineBuildID);
 
 
-
 }

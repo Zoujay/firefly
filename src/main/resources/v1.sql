@@ -1,25 +1,25 @@
 CREATE TABLE `firefly`.`pipeline_config`
 (
-    `id`            BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `pipeline_uuid` VARCHAR(64) NOT NULL DEFAULT "",
-    `pipeline_name` VARCHAR(64) NOT NULL DEFAULT "",
-    `trigger_mode`  VARCHAR(64) NOT NULL,
-    `trigger_match` VARCHAR(64) NOT NULL,
+    `id`             BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `pipeline_uuid`  VARCHAR(64) NOT NULL DEFAULT "",
+    `pipeline_name`  VARCHAR(64) NOT NULL DEFAULT "",
+    `trigger_mode`   VARCHAR(64) NOT NULL,
+    `trigger_match`  VARCHAR(64) NOT NULL,
     `trigger_origin` VARCHAR(64) NOT NULL,
-    `origin_id` BIGINT(20) NOT NULL DEFAULT -1,
+    `origin_id`      BIGINT(20) NOT NULL DEFAULT -1,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_pipeline_uuid` (`pipeline_uuid`),
-    INDEX           `idx_pipeline_name` (`pipeline_name`),
-    INDEX           `idx_trigger_origin` (`origin_id`, `trigger_origin`)
+    INDEX            `idx_pipeline_name` (`pipeline_name`),
+    INDEX            `idx_trigger_origin` (`origin_id`, `trigger_origin`)
 );
 
 
 CREATE TABLE `firefly`.`volcano_config`
 (
-    `id`            BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `id`          BIGINT(20) NOT NULL AUTO_INCREMENT,
     `pipeline_id` BIGINT(20) NOT NULL,
-    `ak` VARCHAR(1024) NOT NULL,
-    `sk` VARCHAR(1024) NOT NULL,
+    `ak`          VARCHAR(1024) NOT NULL,
+    `sk`          VARCHAR(1024) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_pipeline_id` (`pipeline_id`)
 );
@@ -27,14 +27,14 @@ CREATE TABLE `firefly`.`volcano_config`
 
 CREATE TABLE `firefly`.`stage_config`
 (
-    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `pipeline_id`     BIGINT(20) NOT NULL,
-    `stage_uuid`      VARCHAR(64) NOT NULL,
-    `stage_name`      VARCHAR(64) NOT NULL,
+    `id`          BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `pipeline_id` BIGINT(20) NOT NULL,
+    `stage_uuid`  VARCHAR(64) NOT NULL,
+    `stage_name`  VARCHAR(64) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_stage_uuid` (`stage_uuid`),
-    INDEX             `idx_stage_name` (`stage_name`),
-    INDEX             `idx_pipeline_id` (`pipeline_id`)
+    INDEX         `idx_stage_name` (`stage_name`),
+    INDEX         `idx_pipeline_id` (`pipeline_id`)
 );
 
 
@@ -63,13 +63,13 @@ CREATE TABLE `firefly`.`github_trigger`
 
 CREATE TABLE `firefly`.`volcano_trigger`
 (
-    `id`            BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `ak` VARCHAR(256) NOT NULL,
-    `sk` VARCHAR(256) NOT NULL,
+    `id`          BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `ak`          VARCHAR(256) NOT NULL,
+    `sk`          VARCHAR(256) NOT NULL,
     `pipeline_id` BIGINT(20) NOT NULL,
     PRIMARY KEY (`id`),
-    INDEX                `idx_pipeline_id` (`pipeline_id`),
-    INDEX                `idx_ak` (`ak`)
+    INDEX         `idx_pipeline_id` (`pipeline_id`),
+    INDEX         `idx_ak` (`ak`)
 );
 
 
@@ -131,13 +131,13 @@ CREATE TABLE `firefly`.`text_plugin_build`
 
 CREATE TABLE `firefly`.`volcano_engine`
 (
-    `id`                 BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `pipeline_id`          BIGINT(20) NOT NULL,
-    `ak`       VARCHAR(256) NOT NULL,
-    `sk` VARCHAR(256) NOT NULL,
+    `id`          BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `pipeline_id` BIGINT(20) NOT NULL,
+    `ak`          VARCHAR(256) NOT NULL,
+    `sk`          VARCHAR(256) NOT NULL,
     PRIMARY KEY (`id`),
-    INDEX                `idx_pipeline_id` (`pipeline_id`),
-    INDEX                `idx_ak` (`ak`)
+    INDEX         `idx_pipeline_id` (`pipeline_id`),
+    INDEX         `idx_ak` (`ak`)
 );
 
 

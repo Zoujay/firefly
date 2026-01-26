@@ -63,15 +63,14 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
 
-
     @Override
     public List<JobBuildDto> getHeadJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
         List<JobRelationDto> jobRelationDtos = jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
         List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
-        for(JobBuild build : jobBuilds) {
-            for(JobRelationDto jobRelationDto : jobRelationDtos) {
-                if(Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
+        for (JobBuild build : jobBuilds) {
+            for (JobRelationDto jobRelationDto : jobRelationDtos) {
+                if (Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
                     JobBuildDto jobBuildDto = this.assembleJobBuildDto(build);
                     jobBuildDtos.add(jobBuildDto);
                 }
@@ -85,9 +84,9 @@ public class JobBuildServiceImpl implements IJobBuildService {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
         List<JobRelationDto> jobRelationDtos = jobRelationService.getAllTailJobRelationByStageID(stageConfigID);
         List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
-        for(JobBuild build : jobBuilds) {
-            for(JobRelationDto jobRelationDto : jobRelationDtos) {
-                if(Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
+        for (JobBuild build : jobBuilds) {
+            for (JobRelationDto jobRelationDto : jobRelationDtos) {
+                if (Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
                     JobBuildDto jobBuildDto = this.assembleJobBuildDto(build);
                     jobBuildDtos.add(jobBuildDto);
                 }
@@ -102,7 +101,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
         int pending = 0;
         int failure = 0;
         int success = 0;
-        for(JobBuildDto jobBuildDto : jobBuildDtos) {
+        for (JobBuildDto jobBuildDto : jobBuildDtos) {
             switch (jobBuildDto.getStatus()) {
                 case SUCCESS -> success++;
                 case FAILURE -> failure++;
@@ -111,13 +110,13 @@ public class JobBuildServiceImpl implements IJobBuildService {
             }
         }
         int len = jobBuildDtos.size();
-        if(failure >= 1){
+        if (failure >= 1) {
             return BuildStatus.FAILURE;
         }
-        if(len == success) {
+        if (len == success) {
             return BuildStatus.SUCCESS;
         }
-        if(len == pending) {
+        if (len == pending) {
             return BuildStatus.PENDING;
         }
         return BuildStatus.RUNNING;

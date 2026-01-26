@@ -73,7 +73,7 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         }
         PipelineBuild pipelineBuild = entity.get();
         PipelineConfigDto pipelineConfigDto = pipelineConfig.getPipelineConfigDtoByID(pipelineBuild.getPipelineID());
-        PipelineBuildDto pipelineBuildDto = new  PipelineBuildDto();
+        PipelineBuildDto pipelineBuildDto = new PipelineBuildDto();
         pipelineBuildDto.setBuildStatus(pipelineBuild.getPipelineStatus())
                 .setPipelineID(pipelineBuild.getPipelineID())
                 .setTriggerOrigin(TriggerOrigin.valueOf(pipelineConfigDto.getTriggerOrigin()));
@@ -103,7 +103,7 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
     public Long buildPipeline(PipelineBuildDto pipelineBuildDto) {
         Long pipelineBuildId = this.savePipelineBuild(pipelineBuildDto);
         Long pipelineID = pipelineBuildDto.getPipelineID();
-        if(pipelineBuildId == null || pipelineBuildId <= 0L) {
+        if (pipelineBuildId == null || pipelineBuildId <= 0L) {
             System.out.println("trigger pipeline failed");
             return -1L;
         }

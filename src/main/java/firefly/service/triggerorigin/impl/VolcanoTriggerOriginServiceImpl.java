@@ -54,14 +54,14 @@ public class VolcanoTriggerOriginServiceImpl implements ITriggerOrigin {
 
     @Override
     public Long saveTriggerOrigin(JsonNode triggerOrigin, Long pipelineID) {
-        VolcanoTriggerDto volcanoTriggerDto = (VolcanoTriggerDto)this.parseTriggerOrigin(triggerOrigin);
+        VolcanoTriggerDto volcanoTriggerDto = (VolcanoTriggerDto) this.parseTriggerOrigin(triggerOrigin);
         VolcanoEngine volcanoEngine = this.assembleVolcanoEngine(volcanoTriggerDto, pipelineID);
         volcanoDao.save(volcanoEngine);
         return volcanoEngine.getId();
     }
 
     private VolcanoEngine assembleVolcanoEngine(VolcanoTriggerDto volcanoTriggerDto, Long pipelineID) {
-        VolcanoEngine volcanoEngine = new  VolcanoEngine();
+        VolcanoEngine volcanoEngine = new VolcanoEngine();
         volcanoEngine.setAk(volcanoTriggerDto.getAk())
                 .setSk(volcanoTriggerDto.getSk())
                 .setPipelineID(pipelineID);

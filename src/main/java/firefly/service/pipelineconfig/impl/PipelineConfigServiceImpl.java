@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
+
 @Service
 @Transactional
 public class PipelineConfigServiceImpl implements IPipelineConfigService {
@@ -129,7 +130,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
                 while (jobRelationMap.containsKey(nextJobID)) {
                     JobRelationDto nextRelationDto = jobRelationMap.get(nextJobID);
                     currentJobID = nextRelationDto.getJobID();
-                    if(currentJobID == null || currentJobID == 0L) {
+                    if (currentJobID == null || currentJobID == 0L) {
                         break;
                     }
                     JobConfigDto next = jobConfigService.getJobConfigByID(currentJobID);
