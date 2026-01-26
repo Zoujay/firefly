@@ -26,7 +26,7 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
     private IVolcanoTriggerDao volcanoTriggerDao;
 
     @Autowired
-    private KafkaTemplate<String,Object> kafkaTemplate;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Override
     public TriggerOrigin getTriggerType() {
@@ -62,7 +62,7 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
 
     }
 
-    public VolcanoTriggerEntity assembleVolcanoTriggerEntity(VolcanoMessageEntity volcanoMessageEntity ) {
+    public VolcanoTriggerEntity assembleVolcanoTriggerEntity(VolcanoMessageEntity volcanoMessageEntity) {
         VolcanoTriggerEntity volcanoTriggerEntity = new VolcanoTriggerEntity();
         volcanoTriggerEntity.setAk(volcanoMessageEntity.getAk())
                 .setSk(volcanoMessageEntity.getSk())

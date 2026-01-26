@@ -32,9 +32,9 @@ public class TriggerCenter implements ITriggerCenter, InitializingBean {
 
     @Override
     public void afterPropertiesSet() throws Exception {
-        for(ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage> trigger : triggers) {
+        for (ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage> trigger : triggers) {
             TriggerOrigin triggerOrigin = trigger.getTriggerType();
-            if(triggerOrigin == null) {
+            if (triggerOrigin == null) {
                 continue;
             }
             TRIGGER_MAP.put(triggerOrigin, trigger);

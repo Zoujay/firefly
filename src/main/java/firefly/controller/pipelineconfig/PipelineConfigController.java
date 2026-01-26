@@ -13,13 +13,13 @@ public class PipelineConfigController {
     private IPipelineConfigService pipelineConfig;
 
     @RequestMapping(value = "/create/pipeline", method = RequestMethod.POST)
-    public String CreatePipeline(@RequestBody PipelineConfigRequest pipelineConfigRequest){
+    public String CreatePipeline(@RequestBody PipelineConfigRequest pipelineConfigRequest) {
         return pipelineConfig.createPipeline(pipelineConfigRequest);
     }
 
 
     @RequestMapping(value = "/pipeline", method = RequestMethod.GET)
-    public PipelineConfigResponse GetPipeline(@RequestParam String uuid){
+    public PipelineConfigResponse GetPipeline(@RequestParam String uuid) {
         return pipelineConfig.getPipelineConfigByUUID(uuid);
     }
 

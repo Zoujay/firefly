@@ -7,6 +7,7 @@ public enum BuildStatus {
     FAILURE("failure");
 
     private String value;
+
     BuildStatus(String value) {
         this.value = value;
     }

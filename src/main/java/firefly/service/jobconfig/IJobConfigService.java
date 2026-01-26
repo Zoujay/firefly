@@ -11,11 +11,13 @@ public interface IJobConfigService {
     JobConfigDto createJobConfig(JobConfigRequest jobConfigRequest, Long stageID, Long pluginID);
 
     JobConfigDto getJobConfigByID(Long jobID);
+
     List<JobConfigDto> getJobConfigsByStageID(Long stageID);
 
     JobConfigDto getJobConfigByUUID(String jobUUID);
 
     JobModel assembleJobModel(JobConfigRequest request, Long stageID, Long pluginID);
+
     JobConfigDto assembleJobConfigDto(JobModel jobModel);
 
     JobConfigResponse assembleJobConfigResponse(JobConfigDto jobConfigDto);

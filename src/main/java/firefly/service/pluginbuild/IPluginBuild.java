@@ -8,10 +8,16 @@ import firefly.constant.PluginType;
 public interface IPluginBuild {
 
     PluginType getPluginType();
+
     Long getPluginBuildIDByJobBuildID(Long jobBuildID);
+
     Long getJobBuildID(Long pluginBuildID);
+
     Long savePluginBuild(JobBuildContext jobBuildContext);
+
     Boolean executePluginBuild(Long id, BuildStatus status);
+
     Boolean updatePluginBuild(Long id, BuildStatus status);
+
     TriggerPluginMessage triggerPluginBuild(Long pluginBuildID, BuildStatus status);
 }
