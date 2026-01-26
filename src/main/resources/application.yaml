@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: firefly
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/firefly
+    type: com.alibaba.druid.pool.DruidDataSource
+    username: root
+    password: zou
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+    druid:
+      initial-size: 2
+      max-active: 30
+      min-idle: 2
+      max-wait: 100
+      pool-prepared-statements: true
+      max-pool-prepared-statement-per-connection-size: 5
+      validation-query: select 1
+      validation-query-timeout: 1
+      test-on-borrow: true
+      test-on-return: true
+      test-while-idle: true
+      time-between-eviction-runs-millis: 10000
+      min-evictable-idle-time-millis: 30001
+      async-close-connection-enable: true
+      aop-patterns: com.alibaba.druid.spring.boot.demo.service.*
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+    show-sql: false
+    database: MYSQL
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    producer:
+      batch-size: 16384
+      acks: all
+      retries: 3
+      key-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+    listener:
+      ack-mode: manual
+      type: batch
+
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 1000
+      group-id: firefly
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+server:
+  port: 9999
