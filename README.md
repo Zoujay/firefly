@@ -1,5 +1,3 @@
-This is a bilingual README. You can switch between languages using the navigation links or by expanding/collapsing the sections below.
-
 [简体中文](#-简体中文) | [English](#-english)
 
 <details open>
@@ -239,3 +237,4 @@ You can start the project in one of two ways:
 After the project starts successfully, it will be available on port `9999`.
 
 </details>
+
