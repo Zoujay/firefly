@@ -79,6 +79,7 @@ public class MessageCenter {
         Long stageBuildID = stageMessage.getStageBuildID();
         StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
         Long stageConfigID = stageBuildDto.getStageConfigID();
+        Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
         BuildStatus buildStatus = stageMessage.getBuildStatus();
         stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
         StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
@@ -86,10 +87,19 @@ public class MessageCenter {
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
 
             List<StageConfigDto> stageConfigDtos = stageConfigService.getStageConfigsByPipelineID(pipelineID);
-            StageConfigDto lastStage = stageConfigDtos.getLast();
-            if (lastStage.getId().equals(stageConfigID)) {
+            int currentStageIndex = -1;
+            for (int i = 0; i < stageConfigDtos.size(); i++) {
+                if (stageConfigID.equals(stageConfigDtos.get(i).getId())) {
+                    currentStageIndex = i;
+                    break;
+                }
+            }
+            if (currentStageIndex < 0) {
+                throw new IllegalStateException(
+                        "Stage config " + stageConfigID + " does not belong to pipeline " + pipelineID);
+            }
+            if (currentStageIndex == stageConfigDtos.size() - 1) {
                 TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
-                Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
                 triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
                         .setMessageUUID(UUID.randomUUID().toString())
                         .setBuildStatus(buildStatus)
@@ -97,24 +107,18 @@ public class MessageCenter {
                 kafkaTemplate.send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             } else {
                 // trigger next stage
-                Long nextStageConfigID = 0L;
-                for (int i = 0; i < stageConfigDtos.size(); i++) {
-                    StageConfigDto dto = stageConfigDtos.get(i);
-                    if (stageConfigID.equals(dto.getId())) {
-                        nextStageConfigID = stageConfigDtos.get(i + 1).getId();
-                        break;
-                    }
-                }
-                StageBuildDto next = stageBuildService.getStageBuildByStageConfigID(nextStageConfigID);
+                Long nextStageConfigID = stageConfigDtos.get(currentStageIndex + 1).getId();
+                StageBuildDto next = stageBuildService.getStageBuildByStageConfigIDAndPipelineBuildID(
+                        nextStageConfigID, pipelineBuildID);
                 if (next != null) {
-                    TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(next.getStageBuildID(), buildStatus);
+                    TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(
+                            next.getStageBuildID(), BuildStatus.RUNNING);
                     kafkaTemplate.send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
                 }
             }
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
-            Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
             TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
             triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
                     .setMessageUUID(UUID.randomUUID().toString())

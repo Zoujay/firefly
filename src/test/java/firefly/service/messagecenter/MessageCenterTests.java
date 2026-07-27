@@ -20,7 +20,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import java.util.List;
+
 import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
+import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -81,5 +84,46 @@ class MessageCenterTests {
         verify(kafkaTemplate).send(eq(PIPELINE_TOPIC), captor.capture());
         assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
         assertEquals(30L, captor.getValue().getPipelineBuildID());
+    }
+
+    @Test
+    void triggersNextOrderedStageInTheSamePipelineBuild() {
+        StageBuildDto currentStageBuild = new StageBuildDto()
+                .setStageBuildID(10L)
+                .setStageConfigID(20L)
+                .setPipelineBuildID(30L)
+                .setStatus(BuildStatus.RUNNING);
+        StageBuildDto nextStageBuild = new StageBuildDto()
+                .setStageBuildID(11L)
+                .setStageConfigID(21L)
+                .setPipelineBuildID(30L)
+                .setStatus(BuildStatus.PENDING);
+        StageConfigDto currentStage = new StageConfigDto()
+                .setId(20L)
+                .setPipelineID(40L)
+                .setStageOrder(0);
+        StageConfigDto nextStage = new StageConfigDto()
+                .setId(21L)
+                .setPipelineID(40L)
+                .setStageOrder(1);
+        TriggerStageMessage message = new TriggerStageMessage()
+                .setMessageUUID("stage-success")
+                .setStageBuildID(10L)
+                .setBuildStatus(BuildStatus.SUCCESS);
+
+        when(stageBuildService.getStageBuildByID(10L)).thenReturn(currentStageBuild);
+        when(stageConfigService.getStageConfigByID(20L)).thenReturn(currentStage);
+        when(stageConfigService.getStageConfigsByPipelineID(40L))
+                .thenReturn(List.of(currentStage, nextStage));
+        when(stageBuildService.getStageBuildByStageConfigIDAndPipelineBuildID(21L, 30L))
+                .thenReturn(nextStageBuild);
+
+        messageCenter.onStageMessage(message);
+
+        ArgumentCaptor<TriggerStageMessage> captor =
+                ArgumentCaptor.forClass(TriggerStageMessage.class);
+        verify(kafkaTemplate).send(eq(STAGE_TOPIC), captor.capture());
+        assertEquals(11L, captor.getValue().getStageBuildID());
+        assertEquals(BuildStatus.RUNNING, captor.getValue().getBuildStatus());
     }
 }

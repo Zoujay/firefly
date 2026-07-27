@@ -61,8 +61,11 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
                 .saveTriggerOrigin(pipelineConfigRequest.getOriginInfo(), pipelineId);
         pipelineModel.setOriginID(originID);
         pipelineConfigDao.save(pipelineModel);
-        for (StageConfigRequest stageConfigRequest : pipelineConfigRequest.getStageConfigs()) {
-            StageConfigDto stageConfigDto = stageConfigServiceImpl.createStage(stageConfigRequest, pipelineId);
+        List<StageConfigRequest> stageConfigs = pipelineConfigRequest.getStageConfigs();
+        for (int stageOrder = 0; stageOrder < stageConfigs.size(); stageOrder++) {
+            StageConfigRequest stageConfigRequest = stageConfigs.get(stageOrder);
+            StageConfigDto stageConfigDto = stageConfigServiceImpl.createStage(
+                    stageConfigRequest, pipelineId, stageOrder);
             List<List<JobConfigRequest>> jobs = stageConfigRequest.getJobConfigs();
             for (List<JobConfigRequest> jobList : jobs) {
                 List<JobModel> jobModels = new ArrayList<>();

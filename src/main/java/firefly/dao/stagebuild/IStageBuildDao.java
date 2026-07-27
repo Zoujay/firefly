@@ -14,7 +14,11 @@ import java.util.Optional;
 @Repository
 public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
 
-    @Query("select s from StageBuild as s where s.pipelineBuildID = ?1")
+    @Query("""
+            select s from StageBuild as s, StageModel as c
+            where s.pipelineBuildID = ?1 and s.stageID = c.id
+            order by c.stageOrder asc
+            """)
     List<StageBuild> getStageBuildByPipelineBuildID(Long pipelineBuildID);
 
     @Modifying
@@ -22,8 +26,12 @@ public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
     Integer updateStageBuildStatusByID(BuildStatus status, Long id);
 
 
-    @Query("select s from StageBuild as s where s.stageID = ?1")
-    Optional<StageBuild> getStageBuildByStageConfigID(Long stageConfigID);
+    @Query("""
+            select s from StageBuild as s
+            where s.stageID = ?1 and s.pipelineBuildID = ?2
+            """)
+    Optional<StageBuild> getStageBuildByStageConfigIDAndPipelineBuildID(
+            Long stageConfigID, Long pipelineBuildID);
 
 
 }
