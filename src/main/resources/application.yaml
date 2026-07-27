@@ -3,7 +3,7 @@ spring:
     name: firefly
 
   datasource:
-    url: jdbc:mysql://localhost:3306/firefly
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/firefly}
     type: com.alibaba.druid.pool.DruidDataSource
     username: root
     password: zou
@@ -13,20 +13,21 @@ spring:
       initial-size: 2
       max-active: 30
       min-idle: 2
-      max-wait: 100
+      max-wait: 30000
       pool-prepared-statements: true
       max-pool-prepared-statement-per-connection-size: 5
-      validation-query: select 1
-      validation-query-timeout: 1
-      test-on-borrow: true
-      test-on-return: true
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-on-borrow: false
+      test-on-return: false
       test-while-idle: true
-      time-between-eviction-runs-millis: 10000
-      min-evictable-idle-time-millis: 30001
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
       async-close-connection-enable: true
-      aop-patterns: com.alibaba.druid.spring.boot.demo.service.*
+      aop-patterns: firefly.service.*
 
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: none
       naming:
@@ -34,27 +35,38 @@ spring:
     show-sql: false
     database: MYSQL
 
+  data:
+    jdbc:
+      repositories:
+        enabled: false
+    redis:
+      repositories:
+        enabled: false
+
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
     producer:
       batch-size: 16384
       acks: all
       retries: 3
-      key-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
     listener:
       ack-mode: manual
       type: batch
+      concurrency: 1
 
     consumer:
       auto-offset-reset: earliest
       enable-auto-commit: false
-      max-poll-records: 1000
+      max-poll-records: 200
       group-id: firefly
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 600000
 
 server:
-  port: 9999
+  port: ${SERVER_PORT:9999}
