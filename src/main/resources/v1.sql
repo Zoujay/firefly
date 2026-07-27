@@ -1,3 +1,6 @@
+-- Complete Firefly schema for new installations.
+-- All tables and Stage ordering constraints are defined in this file.
+
 CREATE TABLE `firefly`.`pipeline_config`
 (
     `id`             BIGINT(20) NOT NULL AUTO_INCREMENT,

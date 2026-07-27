@@ -73,8 +73,7 @@ firefly
     │   │   └── service          # 配置、构建、触发和消息处理
     │   └── resources
     │       ├── application.yaml # 应用配置
-    │       ├── v1.sql           # MySQL 表结构
-    │       └── v2.sql           # Stage 顺序字段升级脚本
+    │       └── v1.sql           # 完整 MySQL 表结构
     └── test                     # Spring 上下文和单元测试
 ```
 
@@ -106,14 +105,7 @@ docker run -d \
   mysql:8.4
 ```
 
-该命令会创建 `firefly` 数据库，并在首次启动时执行 `v1.sql`。
-
-如果数据库由旧版本的 `v1.sql` 创建，请执行 Stage 顺序升级脚本：
-
-```bash
-docker exec -i firefly-mysql mysql -uroot -pzou firefly \
-  < src/main/resources/v2.sql
-```
+该命令会创建 `firefly` 数据库，并在首次启动时执行包含全部表结构的 `v1.sql`。
 
 #### 启动 Kafka
 
@@ -349,8 +341,7 @@ firefly
     │   │   └── service          # Configuration, builds, triggers, and messaging
     │   └── resources
     │       ├── application.yaml # Application configuration
-    │       ├── v1.sql           # MySQL schema
-    │       └── v2.sql           # Stage ordering migration
+    │       └── v1.sql           # Complete MySQL schema
     └── test                     # Spring context and unit tests
 ```
 
@@ -382,14 +373,7 @@ docker run -d \
   mysql:8.4
 ```
 
-This creates the `firefly` database and runs `v1.sql` during the first startup.
-
-If the database was created with an earlier version of `v1.sql`, apply the Stage ordering migration:
-
-```bash
-docker exec -i firefly-mysql mysql -uroot -pzou firefly \
-  < src/main/resources/v2.sql
-```
+This creates the `firefly` database and runs `v1.sql`, which contains the complete schema, during the first startup.
 
 #### Start Kafka
 
