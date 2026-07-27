@@ -12,7 +12,6 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.concurrent.Semaphore;
 
 import static firefly.constant.KafkaConfiguration.*;
 
@@ -20,109 +19,52 @@ import static firefly.constant.KafkaConfiguration.*;
 @Component
 public class MessageListener {
 
-    private static final int MAX_VIRTUAL_THREAD_NUMBER = 1000;
-
     @Autowired
     private MessageCenter messageCenter;
 
-    private Gson gson = new Gson();
-
-    private static Semaphore SEMAPHORE = new Semaphore(MAX_VIRTUAL_THREAD_NUMBER);
+    private final Gson gson = new Gson();
 
     @KafkaListener(topics = PIPELINE_TOPIC)
     public void onPipelineMessage(List<String> messages, Acknowledgment ack) {
-        System.out.println("message is " + messages);
         for (String message : messages) {
             TriggerPipelineMessage triggerPipelineMessage = gson.fromJson(message, TriggerPipelineMessage.class);
-            // modify pipeline status
-            Thread.startVirtualThread(() -> {
-                try {
-                    SEMAPHORE.acquire();
-                    log.info("{} acquire semaphore, message UUID is {}", Thread.currentThread().getName(), triggerPipelineMessage.toString());
-                    Boolean result = messageCenter.onPipelineMessage(triggerPipelineMessage);
-                    // send stage message
-                    // modify stage status
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    ack.acknowledge();
-                    SEMAPHORE.release();
-                }
-            });
+            log.info("Processing pipeline message {}", triggerPipelineMessage.getMessageUUID());
+            messageCenter.onPipelineMessage(triggerPipelineMessage);
         }
+        ack.acknowledge();
     }
 
 
     @KafkaListener(topics = STAGE_TOPIC)
     public void onStageMessage(List<String> messages, Acknowledgment ack) {
-        System.out.println(messages);
         for (String message : messages) {
             TriggerStageMessage triggerStageMessage = gson.fromJson(message, TriggerStageMessage.class);
-            // modify pipeline status
-            Thread.startVirtualThread(() -> {
-
-                try {
-                    SEMAPHORE.acquire();
-                    Boolean result = messageCenter.onStageMessage(triggerStageMessage);
-                    // send stage message
-                    // modify stage status
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    ack.acknowledge();
-                    SEMAPHORE.release();
-                }
-
-            });
+            log.info("Processing stage message {}", triggerStageMessage.getMessageUUID());
+            messageCenter.onStageMessage(triggerStageMessage);
         }
+        ack.acknowledge();
     }
 
 
     @KafkaListener(topics = JOB_TOPIC)
     public void onJobMessage(List<String> messages, Acknowledgment ack) {
-        System.out.println(messages);
         for (String message : messages) {
-            Thread.startVirtualThread(() -> {
-                // modify pipeline status
-                try {
-                    SEMAPHORE.acquire();
-                    TriggerJobMessage triggerJobMessage = gson.fromJson(message, TriggerJobMessage.class);
-                    Boolean result = messageCenter.onJobMessage(triggerJobMessage);
-                    // send stage message
-                    // modify stage status
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    ack.acknowledge();
-                    SEMAPHORE.release();
-                }
-
-            });
+            TriggerJobMessage triggerJobMessage = gson.fromJson(message, TriggerJobMessage.class);
+            log.info("Processing job message {}", triggerJobMessage.getMessageUUID());
+            messageCenter.onJobMessage(triggerJobMessage);
         }
+        ack.acknowledge();
     }
 
 
     @KafkaListener(topics = PLUGIN_TOPIC)
     public void onPluginMessage(List<String> messages, Acknowledgment ack) {
-        System.out.println(messages);
         for (String message : messages) {
-            Thread.startVirtualThread(() -> {
-                try {
-                    SEMAPHORE.acquire();
-                    TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
-                    // modify pipeline status
-                    Boolean result = messageCenter.onPluginMessage(triggerPluginMessage);
-                    // send stage message
-                    // modify stage status
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    ack.acknowledge();
-                    SEMAPHORE.release();
-                }
-            });
+            TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
+            log.info("Processing plugin message {}", triggerPluginMessage.getMessageUUID());
+            messageCenter.onPluginMessage(triggerPluginMessage);
         }
-
+        ack.acknowledge();
     }
 
 

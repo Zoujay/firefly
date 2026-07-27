@@ -91,7 +91,8 @@ public class StageBuildServiceImpl implements IStageBuildService {
 
     private StageBuildDto assembleStageBuildDto(StageBuild stageBuild) {
         StageBuildDto stageBuildDto = new StageBuildDto();
-        stageBuildDto.setStatus(stageBuild.getStageStatus())
+        stageBuildDto.setStageBuildID(stageBuild.getId())
+                .setStatus(stageBuild.getStageStatus())
                 .setPipelineBuildID(stageBuild.getPipelineBuildID())
                 .setStageConfigID(stageBuild.getStageID());
         return stageBuildDto;
