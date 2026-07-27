@@ -118,7 +118,7 @@ public class MessageCenter {
             TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
             triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
                     .setMessageUUID(UUID.randomUUID().toString())
-                    .setBuildStatus(BuildStatus.SUCCESS)
+                    .setBuildStatus(BuildStatus.FAILURE)
                     .setPipelineID(pipelineID);
             kafkaTemplate.send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             return true;
