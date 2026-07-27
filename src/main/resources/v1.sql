@@ -29,10 +29,12 @@ CREATE TABLE `firefly`.`stage_config`
 (
     `id`          BIGINT(20) NOT NULL AUTO_INCREMENT,
     `pipeline_id` BIGINT(20) NOT NULL,
+    `stage_order` INT        NOT NULL,
     `stage_uuid`  VARCHAR(64) NOT NULL,
     `stage_name`  VARCHAR(64) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_stage_uuid` (`stage_uuid`),
+    UNIQUE INDEX `uidx_pipeline_stage_order` (`pipeline_id`, `stage_order`),
     INDEX         `idx_stage_name` (`stage_name`),
     INDEX         `idx_pipeline_id` (`pipeline_id`)
 );
@@ -90,6 +92,7 @@ CREATE TABLE `firefly`.`stage_build`
     `stage_id`          BIGINT(20) NOT NULL,
     `stage_status`      VARCHAR(64) NOT NULL,
     PRIMARY KEY (`id`),
+    UNIQUE INDEX       `uidx_pipeline_build_stage` (`pipeline_build_id`, `stage_id`),
     INDEX               `idx_pipeline_build_id` (`pipeline_build_id`),
     INDEX               `idx_stage_id` (`stage_id`)
 );

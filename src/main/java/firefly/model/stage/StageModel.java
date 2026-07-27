@@ -20,6 +20,9 @@ public class StageModel {
     @Column(name = "pipeline_id")
     private Long pipeline_id = 0L;
 
+    @Column(name = "stage_order", nullable = false)
+    private Integer stageOrder;
+
     @Column(name = "stage_uuid")
     private String stageUUID;
 

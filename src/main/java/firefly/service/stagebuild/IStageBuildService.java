@@ -17,6 +17,6 @@ public interface IStageBuildService {
 
     Boolean updateStageBuildStatusByID(BuildStatus status, Long id);
 
-    StageBuildDto getStageBuildByStageConfigID(Long stageConfigID);
+    StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(Long stageConfigID, Long pipelineBuildID);
 
 }

@@ -24,8 +24,8 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
 
 
     @Override
-    public StageConfigDto createStage(StageConfigRequest stageConfigRequest, Long pipelineID) {
-        StageModel model = this.assembleStageModel(stageConfigRequest, pipelineID);
+    public StageConfigDto createStage(StageConfigRequest stageConfigRequest, Long pipelineID, Integer stageOrder) {
+        StageModel model = this.assembleStageModel(stageConfigRequest, pipelineID, stageOrder);
         stageConfigDao.save(model);
         return this.assembleStageConfigDto(model);
     }
@@ -51,7 +51,8 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
                 stageModel.getId(),
                 stageModel.getPipeline_id(),
                 stageModel.getStageUUID(),
-                stageModel.getStageName()
+                stageModel.getStageName(),
+                stageModel.getStageOrder()
         );
     }
 
@@ -72,14 +73,16 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
         stageConfigResponse.setPipelineID(stageConfigDto.getPipelineID());
         stageConfigResponse.setName(stageConfigDto.getName());
         stageConfigResponse.setUuid(stageConfigDto.getUuid());
+        stageConfigResponse.setStageOrder(stageConfigDto.getStageOrder());
         stageConfigResponse.setJobs(jobs);
         return stageConfigResponse;
     }
 
 
-    public StageModel assembleStageModel(StageConfigRequest request, Long pipelineID) {
+    public StageModel assembleStageModel(StageConfigRequest request, Long pipelineID, Integer stageOrder) {
         StageModel model = new StageModel();
         model.setPipeline_id(pipelineID);
+        model.setStageOrder(stageOrder);
         model.setStageUUID(request.getUuid());
         model.setStageName(request.getName());
         return model;
