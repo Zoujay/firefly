@@ -2,16 +2,16 @@ package firefly.service.messagecenter;
 
 import firefly.constant.BuildStatus;
 import firefly.dao.message.IPipelineMessageDao;
+import firefly.support.FireflyIntegrationTest;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@SpringBootTest
+@FireflyIntegrationTest
 @Transactional
 class KafkaMessageJpaIntegrationTests {
 

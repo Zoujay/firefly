@@ -4,16 +4,16 @@ import firefly.constant.BuildStatus;
 import firefly.dao.stagebuild.IStageBuildDao;
 import firefly.model.stage.StageBuild;
 import firefly.model.stage.StageModel;
+import firefly.support.FireflyIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@SpringBootTest
+@FireflyIntegrationTest
 @Transactional
 class StageOrderIntegrationTests {
 
