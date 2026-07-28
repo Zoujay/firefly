@@ -15,7 +15,7 @@ import java.io.Serializable;
 @NoArgsConstructor
 @AllArgsConstructor
 @Accessors(chain = true)
-public class TriggerPluginMessage implements Serializable {
+public class TriggerPluginMessage implements Serializable, KafkaBusinessMessage {
 
     @Serial
     private static final long serialVersionUID = -4709514640861674239L;

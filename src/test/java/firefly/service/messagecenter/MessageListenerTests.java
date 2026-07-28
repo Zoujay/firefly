@@ -1,5 +1,6 @@
 package firefly.service.messagecenter;
 
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
@@ -8,7 +9,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.Acknowledgment;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,7 +21,7 @@ import static org.mockito.Mockito.*;
 class MessageListenerTests {
 
     @Mock
-    private MessageCenter messageCenter;
+    private KafkaMessageStore kafkaMessageStore;
 
     @Mock
     private Acknowledgment acknowledgment;
@@ -27,77 +30,78 @@ class MessageListenerTests {
     private MessageListener messageListener;
 
     @Test
-    void acknowledgesPipelineBatchAfterEveryMessageSucceeds() {
-        List<String> messages = List.of(
-                """
-                {"messageUUID":"pipeline-1","pipelineID":1,"pipelineBuildID":11,"buildStatus":"RUNNING"}
-                """,
-                """
-                {"messageUUID":"pipeline-2","pipelineID":2,"pipelineBuildID":22,"buildStatus":"RUNNING"}
-                """
+    void acknowledgesPipelineBatchAfterDatabaseSave() {
+        List<ConsumerRecord<String, String>> messages = List.of(
+                record("pipeline_message", 0, 10L, "pipeline-1"),
+                record("pipeline_message", 0, 11L, "pipeline-2")
         );
 
         messageListener.onPipelineMessage(messages, acknowledgment);
 
-        InOrder inOrder = inOrder(messageCenter, acknowledgment);
-        inOrder.verify(messageCenter, times(2)).onPipelineMessage(any());
+        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment);
+        inOrder.verify(kafkaMessageStore).savePipelineMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
     }
 
     @Test
-    void doesNotAcknowledgeBatchWhenProcessingFails() {
-        doThrow(new IllegalStateException("processing failed"))
-                .when(messageCenter).onPipelineMessage(any());
+    void doesNotAcknowledgeBatchWhenDatabaseSaveFails() {
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("pipeline_message", 0, 10L, "pipeline-1"));
+        doThrow(new IllegalStateException("database failed"))
+                .when(kafkaMessageStore).savePipelineMessages(messages);
 
         assertThrows(
                 IllegalStateException.class,
-                () -> messageListener.onPipelineMessage(
-                        List.of("""
-                                {"messageUUID":"pipeline-1","pipelineID":1,"pipelineBuildID":11,"buildStatus":"RUNNING"}
-                                """),
-                        acknowledgment
-                )
+                () -> messageListener.onPipelineMessage(messages, acknowledgment)
         );
 
         verify(acknowledgment, never()).acknowledge();
     }
 
     @Test
-    void acknowledgesStageBatchAfterProcessing() {
-        messageListener.onStageMessage(
-                List.of("""
-                        {"messageUUID":"stage-1","stageBuildID":11,"buildStatus":"RUNNING"}
-                        """),
-                acknowledgment
-        );
+    void acknowledgesStageBatchAfterDatabaseSave() {
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("stage_message", 1, 20L, "stage-1"));
 
-        verify(messageCenter).onStageMessage(any());
-        verify(acknowledgment).acknowledge();
+        messageListener.onStageMessage(messages, acknowledgment);
+
+        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment);
+        inOrder.verify(kafkaMessageStore).saveStageMessages(messages);
+        inOrder.verify(acknowledgment).acknowledge();
     }
 
     @Test
-    void acknowledgesJobBatchAfterProcessing() {
-        messageListener.onJobMessage(
-                List.of("""
-                        {"messageUUID":"job-1","jobBuildID":11,"buildStatus":"RUNNING"}
-                        """),
-                acknowledgment
-        );
+    void acknowledgesJobBatchAfterDatabaseSave() {
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("job_message", 2, 30L, "job-1"));
 
-        verify(messageCenter).onJobMessage(any());
-        verify(acknowledgment).acknowledge();
+        messageListener.onJobMessage(messages, acknowledgment);
+
+        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment);
+        inOrder.verify(kafkaMessageStore).saveJobMessages(messages);
+        inOrder.verify(acknowledgment).acknowledge();
     }
 
     @Test
-    void acknowledgesPluginBatchAfterProcessing() {
-        messageListener.onPluginMessage(
-                List.of("""
-                        {"messageUUID":"plugin-1","pluginType":"TEXT","pluginBuildID":11,"status":"SUCCESS"}
-                        """),
-                acknowledgment
-        );
+    void acknowledgesPluginBatchAfterDatabaseSave() {
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("plugin_message", 3, 40L, "plugin-1"));
 
-        verify(messageCenter).onPluginMessage(any());
-        verify(acknowledgment).acknowledge();
+        messageListener.onPluginMessage(messages, acknowledgment);
+
+        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment);
+        inOrder.verify(kafkaMessageStore).savePluginMessages(messages);
+        inOrder.verify(acknowledgment).acknowledge();
+    }
+
+    private ConsumerRecord<String, String> record(String topic, int partition, long offset, String key) {
+        String messageUUID = UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)).toString();
+        return new ConsumerRecord<>(
+                topic,
+                partition,
+                offset,
+                messageUUID,
+                "{\"messageUUID\":\"" + messageUUID + "\"}"
+        );
     }
 }

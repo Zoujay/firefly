@@ -6,13 +6,12 @@ import firefly.constant.BuildStatus;
 import firefly.constant.PluginType;
 import firefly.dao.pluginbuild.ITextPluginBuildDao;
 import firefly.model.plugin.TextPluginBuild;
+import firefly.service.messagecenter.BusinessMessageUUID;
 import firefly.service.pluginbuild.IPluginBuild;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.UUID;
 
 import static firefly.constant.KafkaConfiguration.PLUGIN_TOPIC;
 
@@ -63,7 +62,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         // execute
         System.out.println("mock trigger plugin build");
         TriggerPluginMessage triggerPluginMessage = this.triggerPluginBuild(id, BuildStatus.SUCCESS);
-        kafkaTemplate.send(PLUGIN_TOPIC, triggerPluginMessage);
+        kafkaTemplate.send(PLUGIN_TOPIC, triggerPluginMessage.getMessageUUID(), triggerPluginMessage);
         return true;
     }
 
@@ -80,10 +79,9 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
 
     @Override
     public TriggerPluginMessage triggerPluginBuild(Long pluginBuildID, BuildStatus status) {
-        UUID uuid = UUID.randomUUID();
         TriggerPluginMessage triggerPluginMessage = new TriggerPluginMessage();
         triggerPluginMessage.setPluginType(PluginType.TEXT)
-                .setMessageUUID(uuid.toString())
+                .setMessageUUID(BusinessMessageUUID.plugin(PluginType.TEXT, pluginBuildID, status))
                 .setPluginBuildID(pluginBuildID)
                 .setStatus(status);
         return triggerPluginMessage;

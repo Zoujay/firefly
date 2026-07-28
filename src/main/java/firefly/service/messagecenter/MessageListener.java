@@ -1,69 +1,54 @@
 package firefly.service.messagecenter;
 
-import com.google.gson.Gson;
-import firefly.bean.dto.message.TriggerJobMessage;
-import firefly.bean.dto.message.TriggerPipelineMessage;
-import firefly.bean.dto.message.TriggerPluginMessage;
-import firefly.bean.dto.message.TriggerStageMessage;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-import static firefly.constant.KafkaConfiguration.*;
+import static firefly.constant.KafkaConfiguration.JOB_TOPIC;
+import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
+import static firefly.constant.KafkaConfiguration.PLUGIN_TOPIC;
+import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class MessageListener {
 
-    @Autowired
-    private MessageCenter messageCenter;
-
-    private final Gson gson = new Gson();
+    private final KafkaMessageStore kafkaMessageStore;
 
     @KafkaListener(topics = PIPELINE_TOPIC)
-    public void onPipelineMessage(List<String> messages, Acknowledgment ack) {
-        for (String message : messages) {
-            TriggerPipelineMessage triggerPipelineMessage = gson.fromJson(message, TriggerPipelineMessage.class);
-            log.info("Processing pipeline message {}", triggerPipelineMessage.getMessageUUID());
-            messageCenter.onPipelineMessage(triggerPipelineMessage);
-        }
+    public void onPipelineMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
+        kafkaMessageStore.savePipelineMessages(messages);
+        log.info("Persisted pipeline message batch of {}", messages.size());
         ack.acknowledge();
     }
 
 
     @KafkaListener(topics = STAGE_TOPIC)
-    public void onStageMessage(List<String> messages, Acknowledgment ack) {
-        for (String message : messages) {
-            TriggerStageMessage triggerStageMessage = gson.fromJson(message, TriggerStageMessage.class);
-            log.info("Processing stage message {}", triggerStageMessage.getMessageUUID());
-            messageCenter.onStageMessage(triggerStageMessage);
-        }
+    public void onStageMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
+        kafkaMessageStore.saveStageMessages(messages);
+        log.info("Persisted stage message batch of {}", messages.size());
         ack.acknowledge();
     }
 
 
     @KafkaListener(topics = JOB_TOPIC)
-    public void onJobMessage(List<String> messages, Acknowledgment ack) {
-        for (String message : messages) {
-            TriggerJobMessage triggerJobMessage = gson.fromJson(message, TriggerJobMessage.class);
-            log.info("Processing job message {}", triggerJobMessage.getMessageUUID());
-            messageCenter.onJobMessage(triggerJobMessage);
-        }
+    public void onJobMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
+        kafkaMessageStore.saveJobMessages(messages);
+        log.info("Persisted job message batch of {}", messages.size());
         ack.acknowledge();
     }
 
 
     @KafkaListener(topics = PLUGIN_TOPIC)
-    public void onPluginMessage(List<String> messages, Acknowledgment ack) {
-        for (String message : messages) {
-            TriggerPluginMessage triggerPluginMessage = gson.fromJson(message, TriggerPluginMessage.class);
-            log.info("Processing plugin message {}", triggerPluginMessage.getMessageUUID());
-            messageCenter.onPluginMessage(triggerPluginMessage);
-        }
+    public void onPluginMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
+        kafkaMessageStore.savePluginMessages(messages);
+        log.info("Persisted plugin message batch of {}", messages.size());
         ack.acknowledge();
     }
 

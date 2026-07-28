@@ -25,6 +25,7 @@ import java.util.List;
 import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
 import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -81,9 +82,15 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerPipelineMessage> captor =
                 ArgumentCaptor.forClass(TriggerPipelineMessage.class);
-        verify(kafkaTemplate).send(eq(PIPELINE_TOPIC), captor.capture());
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(kafkaTemplate).send(eq(PIPELINE_TOPIC), keyCaptor.capture(), captor.capture());
         assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
         assertEquals(30L, captor.getValue().getPipelineBuildID());
+        assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
+        assertEquals(
+                BusinessMessageUUID.pipeline(30L, BuildStatus.FAILURE),
+                captor.getValue().getMessageUUID()
+        );
     }
 
     @Test
@@ -122,8 +129,12 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerStageMessage> captor =
                 ArgumentCaptor.forClass(TriggerStageMessage.class);
-        verify(kafkaTemplate).send(eq(STAGE_TOPIC), captor.capture());
+        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
         assertEquals(11L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.RUNNING, captor.getValue().getBuildStatus());
+        assertEquals(
+                BusinessMessageUUID.stage(11L, BuildStatus.RUNNING),
+                captor.getValue().getMessageUUID()
+        );
     }
 }

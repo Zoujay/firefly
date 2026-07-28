@@ -8,14 +8,13 @@ import firefly.constant.KafkaConfiguration;
 import firefly.constant.TriggerOrigin;
 import firefly.dao.triggermessage.IVolcanoTriggerDao;
 import firefly.model.trigger.VolcanoTriggerEntity;
+import firefly.service.messagecenter.BusinessMessageUUID;
 import firefly.service.trigger.AbstractTrigger;
 import firefly.service.trigger.ITrigger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.UUID;
 
 @Service
 @Transactional
@@ -53,12 +52,15 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
         // trigger pipeline
         // send message to message center
         TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
-        UUID uuid = UUID.randomUUID();
         triggerPipelineMessage.setPipelineBuildID(message.getPipelineBuildID())
-                .setMessageUUID(uuid.toString())
+                .setMessageUUID(BusinessMessageUUID.pipeline(message.getPipelineBuildID(), BuildStatus.RUNNING))
                 .setPipelineID(message.getPipelineID())
                 .setBuildStatus(BuildStatus.RUNNING);
-        kafkaTemplate.send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
+        kafkaTemplate.send(
+                KafkaConfiguration.PIPELINE_TOPIC,
+                triggerPipelineMessage.getMessageUUID(),
+                triggerPipelineMessage
+        );
 
     }
 

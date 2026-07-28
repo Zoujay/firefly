@@ -165,3 +165,71 @@ CREATE TABLE `firefly`.`job_relation`
     INDEX             `idx_next_job_id` (`next_job_id`),
     INDEX             `idx_previous_job_id` (`previous_job_id`)
 );
+
+
+CREATE TABLE `firefly`.`pipeline_message`
+(
+    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `message_uuid`    VARCHAR(36)  NOT NULL,
+    `topic`           VARCHAR(249) NOT NULL,
+    `kafka_partition` INT          NOT NULL,
+    `kafka_offset`    BIGINT       NOT NULL,
+    `message_key`     VARCHAR(512) NULL,
+    `payload`         LONGTEXT     NULL,
+    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_pipeline_message_uuid` (`message_uuid`),
+    UNIQUE INDEX `uidx_pipeline_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
+    INDEX        `idx_pipeline_message_received_at` (`received_at`)
+);
+
+
+CREATE TABLE `firefly`.`stage_message`
+(
+    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `message_uuid`    VARCHAR(36)  NOT NULL,
+    `topic`           VARCHAR(249) NOT NULL,
+    `kafka_partition` INT          NOT NULL,
+    `kafka_offset`    BIGINT       NOT NULL,
+    `message_key`     VARCHAR(512) NULL,
+    `payload`         LONGTEXT     NULL,
+    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_stage_message_uuid` (`message_uuid`),
+    UNIQUE INDEX `uidx_stage_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
+    INDEX        `idx_stage_message_received_at` (`received_at`)
+);
+
+
+CREATE TABLE `firefly`.`job_message`
+(
+    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `message_uuid`    VARCHAR(36)  NOT NULL,
+    `topic`           VARCHAR(249) NOT NULL,
+    `kafka_partition` INT          NOT NULL,
+    `kafka_offset`    BIGINT       NOT NULL,
+    `message_key`     VARCHAR(512) NULL,
+    `payload`         LONGTEXT     NULL,
+    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_job_message_uuid` (`message_uuid`),
+    UNIQUE INDEX `uidx_job_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
+    INDEX        `idx_job_message_received_at` (`received_at`)
+);
+
+
+CREATE TABLE `firefly`.`plugin_message`
+(
+    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `message_uuid`    VARCHAR(36)  NOT NULL,
+    `topic`           VARCHAR(249) NOT NULL,
+    `kafka_partition` INT          NOT NULL,
+    `kafka_offset`    BIGINT       NOT NULL,
+    `message_key`     VARCHAR(512) NULL,
+    `payload`         LONGTEXT     NULL,
+    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_plugin_message_uuid` (`message_uuid`),
+    UNIQUE INDEX `uidx_plugin_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
+    INDEX        `idx_plugin_message_received_at` (`received_at`)
+);
