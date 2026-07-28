@@ -1,94 +1,138 @@
 # Firefly
 
-[简体中文](#简体中文) | [English](#english)
+[简体中文](#简体中文) · [English](#english)
+
+Firefly 是一个基于 Spring Boot、Kafka 和 MySQL 的流水线编排服务。仓库包含流水线配置、Stage/Job 拓扑、构建记录、Kafka 消息归档以及状态推进逻辑。
+
+Firefly is a pipeline orchestration service built with Spring Boot, Kafka, and MySQL. The repository contains pipeline configuration, Stage/Job topology, build records, Kafka message archiving, and state-transition logic.
 
 ## 简体中文
 
-Firefly 是一个使用 Spring Boot、Kafka 和 MySQL 构建的轻量级消息驱动流水线编排引擎。它通过 Pipeline、Stage、Job 和 Plugin 四层模型描述工作流，并通过 Kafka 消息推进每一层的执行状态。
+### 项目概览
 
-### 核心能力
-
-- Pipeline 由多个按顺序执行的 Stage 组成。
-- 每个 Stage 可以包含一条或多条 Job 链，不同 Job 链可以并行推进。
-- Pipeline、Stage、Job 和 Plugin 的执行状态持久化到 MySQL。
-- Kafka 负责组件解耦和状态消息传递。
-- 提供 `TEXT` 插件用于演示插件配置和执行流程。
-- 提供 Pipeline 创建、查询和手动触发 API。
-- 支持 Volcano 触发来源及其访问配置。
-
-### 执行流程
+Firefly 使用四层领域模型描述执行过程：
 
 ```text
-Manual Trigger
-      |
-      v
-Pipeline Message
-      |
-      v
- Stage Message
-      |
-      v
-  Job Message
-      |
-      v
-Plugin Message
-      |
-      v
-Job -> Stage -> Pipeline status completion
+Pipeline
+└── Stage（按 stageOrder 串行）
+    └── Job Chain（多个链可并行）
+        └── Job（同一链内串行）
+            └── Plugin（由 Job 触发）
 ```
 
-1. 手动触发接口创建一次 Pipeline Build，并发送 Pipeline 消息。
-2. Pipeline 消息将 Pipeline 标记为运行中，并启动第一个 Stage。
-3. Stage 消息启动该 Stage 中的所有头部 Job。
-4. Job 消息执行对应插件。
-5. 插件完成后更新 Job；Job 链完成后更新 Stage。
-6. 当前 Stage 成功后启动下一个 Stage，直到 Pipeline 完成。
-7. 任一 Job 或 Stage 失败时，失败状态向上游传播。
+当前仓库实现了：
+
+- 创建和查询 Pipeline 配置。
+- 按请求中的 Stage 顺序持久化 `stageOrder`。
+- 使用二维 `jobConfigs` 表达 Job 拓扑：外层是可并行的 Job 链，内层是串行 Job。
+- 手动创建 Pipeline、Stage、Job 和 Plugin 构建记录。
+- 生成 Pipeline、Stage、Job 和 Plugin 业务消息 UUID。
+- 分别批量保存四类 Kafka 消息，并在数据库事务成功后手动 ACK。
+- 通过数据库唯一约束和业务 UUID 实现消息归档幂等。
+- 在 `MessageCenter` 中实现 Pipeline、Stage、Job 和 Plugin 的状态转换与后续消息生成。
+- 使用 Spring Data JPA 访问数据库。
+
+### 当前消息处理边界
+
+Kafka 有四个 Topic，每个 Topic 对应一个批量监听器和一张消息表：
+
+| Topic | 监听方法 | 归档表 |
+| --- | --- | --- |
+| `pipeline_message` | `onPipelineMessage` | `pipeline_message` |
+| `stage_message` | `onStageMessage` | `stage_message` |
+| `job_message` | `onJobMessage` | `job_message` |
+| `plugin_message` | `onPluginMessage` | `plugin_message` |
+
+当前监听链路是：
+
+```text
+Kafka 批量拉取
+  -> 按 messageUUID 去重
+  -> 分类写入消息表
+  -> 数据库事务提交
+  -> 手动 ACK
+```
+
+监听器当前只负责消息归档，不会自动调用 `MessageCenter`。`MessageCenter` 已包含状态更新、Stage 顺序推进、Job 链推进和后续 Kafka 消息发送逻辑，可由业务入口显式调用。
+
+消息归档规则：
+
+- 每次拉取最多 `200` 条消息。
+- Listener 使用批量模式和手动 ACK，单个 Listener 的 `concurrency` 为 `1`。
+- 每个应用实例包含四个 Listener 容器，分别消费四个 Topic。
+- `messageUUID` 必须是合法的 Java UUID。
+- 同一批次内按 `messageUUID` 去重。
+- 入库前查询已经存在的 UUID，仅保存新消息。
+- 每张消息表同时约束 `message_uuid` 和 `(topic, kafka_partition, kafka_offset)` 唯一。
+- 数据库写入成功后 ACK；写入异常时不会执行 ACK。
+
+业务消息 UUID 由消息类型、构建 ID、状态等稳定字段生成，因此同一个业务事件重复生成时仍可被幂等识别。
+
+### Stage 与 Job 顺序
+
+- Pipeline 中的 Stage 按 `stage_order` 从小到大执行。
+- Stage 成功后，`MessageCenter` 只查找同一个 `pipelineBuild` 中的下一个 Stage。
+- 最后一个 Stage 成功后生成 Pipeline 成功消息。
+- 任意 Stage 失败后生成 Pipeline 失败消息。
+- `jobConfigs` 的每个内层数组是一条串行链。
+- 不同内层数组代表不同 Job 链，可以并行。
+- Job 成功后推进同一链中的下一个 Job。
+- 每条链的尾 Job 完成后参与 Stage 完成状态汇总。
+- 当前唯一的 Plugin 类型是 `TEXT`，Plugin 由 Job 触发。
 
 ### 技术栈
 
-- Java 25
-- Spring Boot 3.5.4
-- Spring Data JPA
-- Spring Kafka
-- MySQL 8.4
-- Apache Kafka 3.9
-- Maven 3.9+
-- Docker
+| 组件 | 版本或说明 |
+| --- | --- |
+| Java | 25 |
+| Maven | 3.9+ |
+| Spring Boot | 3.5.4 |
+| Spring Data JPA | 数据持久化 |
+| Spring Kafka | 批量消费与消息生产 |
+| MySQL | 推荐 8.4 |
+| Kafka | 示例使用 3.9.1，KRaft 单节点 |
+| Druid | 1.2.27 |
 
-### 项目结构
+### 目录结构
 
 ```text
-firefly
-├── pom.xml
-├── README.md
-└── src
-    ├── main
-    │   ├── java/firefly
-    │   │   ├── bean             # DTO、请求和响应对象
-    │   │   ├── constant         # 状态、插件和触发类型
-    │   │   ├── controller       # REST API
-    │   │   ├── dao              # JPA Repository
-    │   │   ├── model            # 数据库实体
-    │   │   └── service          # 配置、构建、触发和消息处理
-    │   └── resources
-    │       ├── application.yaml # 应用配置
-    │       └── v1.sql           # 完整 MySQL 表结构
-    └── test                     # Spring 上下文和单元测试
+src/main/java/firefly
+├── FireflyApplication.java
+├── bean/
+│   ├── dto/                # 服务层数据传输对象
+│   └── vo/                 # API 请求与响应对象
+├── constant/               # 状态、触发方式、Topic 和 Plugin 类型
+├── controller/             # Pipeline 配置与手动触发接口
+├── dao/                    # Spring Data JPA Repository
+├── model/                  # JPA Entity
+└── service/                # 配置、构建、触发、消息归档和 MessageCenter
+
+src/main/resources
+├── application.yaml        # 默认配置及环境变量入口
+└── v1.sql                  # 完整的新库初始化脚本
 ```
 
-### 本地环境
+### 快速开始
 
-请先确认 Java 和 Maven 使用 Java 25：
+#### 1. 环境要求
+
+请先安装：
+
+- JDK 25
+- Maven 3.9 或更高版本
+- Docker
+
+确认版本：
 
 ```bash
 java -version
 mvn -version
+docker version
 ```
 
-#### 启动 MySQL
+#### 2. 启动 MySQL
 
-在仓库根目录执行：
+以下命令会创建数据库 `firefly`，并在数据卷第一次初始化时执行 `v1.sql`：
 
 ```bash
 docker volume create firefly-mysql-data
@@ -105,9 +149,9 @@ docker run -d \
   mysql:8.4
 ```
 
-该命令会创建 `firefly` 数据库，并在首次启动时执行包含全部表结构的 `v1.sql`。
+`docker-entrypoint-initdb.d` 只会在空数据目录初始化时执行。已经存在的数据库需要单独执行最新的 `v1.sql`，或者重新创建开发数据卷。
 
-#### 启动 Kafka
+#### 3. 启动 Kafka
 
 ```bash
 docker run -d \
@@ -129,7 +173,7 @@ docker run -d \
   apache/kafka:3.9.1
 ```
 
-创建 Firefly 使用的 Topic：
+创建四个 Topic：
 
 ```bash
 for topic in pipeline_message stage_message job_message plugin_message; do
@@ -143,55 +187,67 @@ for topic in pipeline_message stage_message job_message plugin_message; do
 done
 ```
 
-检查容器状态：
+检查容器：
 
 ```bash
-docker ps --filter name=firefly-mysql --filter name=firefly-kafka
+docker exec firefly-mysql mysqladmin ping -uroot -pzou
+docker exec firefly-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --list
 ```
 
-### 构建与测试
+#### 4. 构建并启动
 
 ```bash
-mvn test
-mvn clean package
-```
-
-构建成功后，可执行 JAR 位于：
-
-```text
-target/firefly-0.0.1-SNAPSHOT.jar
-```
-
-### 启动应用
-
-使用 Maven：
-
-```bash
+mvn clean verify
 mvn spring-boot:run
 ```
 
-或运行打包后的 JAR：
+也可以先打包再运行：
 
 ```bash
+mvn clean package
 java -jar target/firefly-0.0.1-SNAPSHOT.jar
 ```
 
-服务默认监听：
+服务默认监听 `http://localhost:9999`。
 
-```text
-http://localhost:9999
+### 配置
+
+主要配置都可以通过环境变量覆盖：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `SERVER_PORT` | `9999` | HTTP 端口 |
+| `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | JDBC 地址 |
+| `SPRING_DATASOURCE_USERNAME` | `root` | MySQL 用户名 |
+| `SPRING_DATASOURCE_PASSWORD` | `zou` | MySQL 密码 |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka Broker |
+
+例如：
+
+```bash
+SERVER_PORT=8080 \
+SPRING_DATASOURCE_PASSWORD=zou \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
+mvn spring-boot:run
 ```
+
+JPA 的 `ddl-auto` 设置为 `none`，应用不会自动建表，数据库结构以 `src/main/resources/v1.sql` 为准。
 
 ### API
 
-#### 创建 Pipeline
+#### 创建 Pipeline 配置
 
 ```http
 POST /create/pipeline
 Content-Type: application/json
 ```
 
-示例：
+下面的示例包含两个顺序 Stage：
+
+- 第一个 Stage 有一条 Job 链，链内两个 Job 串行。
+- 第二个 Stage 有两条 Job 链，每条链一个 Job，两条链可并行。
 
 ```bash
 curl -X POST http://localhost:9999/create/pipeline \
@@ -199,164 +255,276 @@ curl -X POST http://localhost:9999/create/pipeline \
   -d '{
     "uuid": "1111111111111111111111111111111111111111111111111111111111111111",
     "name": "demo-pipeline",
+    "stageConfigs": [
+      {
+        "uuid": "2222222222222222222222222222222222222222222222222222222222222222",
+        "name": "stage-one-demo",
+        "jobConfigs": [
+          [
+            {
+              "uuid": "4444444444444444444444444444444444444444444444444444444444444444",
+              "name": "stage1-job1",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 1 job 1\"}"
+            },
+            {
+              "uuid": "5555555555555555555555555555555555555555555555555555555555555555",
+              "name": "stage1-job2",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 1 job 2\"}"
+            }
+          ]
+        ]
+      },
+      {
+        "uuid": "3333333333333333333333333333333333333333333333333333333333333333",
+        "name": "stage-two-demo",
+        "jobConfigs": [
+          [
+            {
+              "uuid": "6666666666666666666666666666666666666666666666666666666666666666",
+              "name": "stage2-job1",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 2 chain 1\"}"
+            }
+          ],
+          [
+            {
+              "uuid": "7777777777777777777777777777777777777777777777777777777777777777",
+              "name": "stage2-job2",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 2 chain 2\"}"
+            }
+          ]
+        ]
+      }
+    ],
     "triggerModel": "MANUAL",
     "triggerMatch": "ACCURATE",
     "triggerOrigin": "VOLCANO",
     "originInfo": {
       "ak": "local-ak",
       "sk": "local-sk"
-    },
-    "stageConfigs": [
-      {
-        "uuid": "2222222222222222222222222222222222222222222222222222222222222222",
-        "name": "build-stage",
-        "jobConfigs": [
-          [
-            {
-              "uuid": "3333333333333333333333333333333333333333333333333333333333333333",
-              "name": "first-text-job",
-              "pluginType": "TEXT",
-              "pluginRaw": {
-                "text": "hello firefly"
-              }
-            },
-            {
-              "uuid": "4444444444444444444444444444444444444444444444444444444444444444",
-              "name": "second-text-job",
-              "pluginType": "TEXT",
-              "pluginRaw": {
-                "text": "pipeline completed"
-              }
-            }
-          ]
-        ]
-      }
-    ]
+    }
   }'
 ```
 
-`jobConfigs` 的外层列表表示并行 Job 链，内层列表表示同一条链中按顺序执行的 Job。
+接口返回请求中的 Pipeline UUID。
 
-#### 查询 Pipeline
+#### 查询 Pipeline 配置
 
 ```bash
 curl 'http://localhost:9999/pipeline?uuid=1111111111111111111111111111111111111111111111111111111111111111'
 ```
 
-响应中的 `id` 是手动触发时使用的 `pipelineId`。
+响应包含：
+
+- Pipeline 的 `id`、`uuid` 和 `name`。
+- 按 `stageOrder` 排序的 Stage。
+- 以二维数组返回的 Job 链。
+- Plugin 配置中的 `jobConfigID`。
+- `triggerOrigin`、`triggerMode` 和 `triggerMatch`。
 
 #### 手动触发 Pipeline
+
+请求中的 `pipelineId` 是查询 Pipeline 配置时返回的数据库 ID，`uuid` 是本次构建的 64 位业务标识：
 
 ```bash
 curl -X POST http://localhost:9999/manual_trigger/pipeline \
   -H 'Content-Type: application/json' \
   -d '{
     "pipelineId": 1,
-    "uuid": "5555555555555555555555555555555555555555555555555555555555555555",
+    "uuid": "8888888888888888888888888888888888888888888888888888888888888888",
     "triggerModel": "MANUAL",
     "triggerMatch": "ACCURATE",
     "triggerOrigin": "VOLCANO"
   }'
 ```
 
-接口返回本次执行的 Pipeline Build ID。
+接口会创建完整的构建记录，保存 Volcano 触发记录，发送 Pipeline `RUNNING` 消息，并返回 Pipeline Build ID。按照当前监听器接线方式，该消息随后会进入 `pipeline_message` 表完成归档。
+
+### 参数校验
+
+- Pipeline、Stage、Job 和构建请求的 `uuid` 长度必须是 `64`。
+- Pipeline、Stage 和 Job 名称长度必须是 `10` 到 `64`。
+- Stage 和 Job 使用级联校验。
+- Trigger、Plugin 类型和必要的集合字段不能为空。
+- Controller 使用 `@Valid`，非法请求返回 HTTP `400`。
+
+### 数据库
+
+`v1.sql` 是完整的新库建表脚本，共包含 17 张表：
+
+| 类型 | 表 |
+| --- | --- |
+| 配置与拓扑 | `pipeline_config`, `stage_config`, `job_config`, `job_relation`, `text_plugin_config`, `volcano_engine` |
+| 触发记录 | `github_trigger`, `volcano_trigger`, `volcano_config` |
+| 构建记录 | `pipeline_build`, `stage_build`, `job_build`, `text_plugin_build` |
+| Kafka 消息归档 | `pipeline_message`, `stage_message`, `job_message`, `plugin_message` |
+
+其中：
+
+- `stage_config` 使用 `(pipeline_id, stage_order)` 保证同一 Pipeline 内 Stage 顺序唯一。
+- `stage_build` 使用 `(pipeline_build_id, stage_id)` 避免同一构建重复创建 Stage Build。
+- `text_plugin_config` 使用 `job_config_id` 关联 Job 配置。
+- 四张消息表保存 Topic、Partition、Offset、Key、Payload、接收时间和业务消息 UUID。
+
+### 测试
+
+运行完整测试：
+
+```bash
+mvn clean verify
+```
+
+测试覆盖应用启动、参数校验、Pipeline 响应组装、Stage 顺序、消息 UUID、批量去重、ACK 行为、Plugin 映射以及 `MessageCenter` 状态转换。
 
 ### 容器管理
 
 ```bash
+# 查看状态
+docker ps --filter name=firefly
+
+# 停止
 docker stop firefly-mysql firefly-kafka
+
+# 再次启动
 docker start firefly-mysql firefly-kafka
+
+# 查看日志
+docker logs firefly-mysql
+docker logs firefly-kafka
 ```
 
 ---
 
 ## English
 
-Firefly is a lightweight, message-driven pipeline orchestration engine built with Spring Boot, Kafka, and MySQL. It models workflows through four layers—Pipeline, Stage, Job, and Plugin—and advances their execution state through Kafka messages.
+### Overview
 
-### Core capabilities
-
-- A Pipeline contains multiple Stages that run in sequence.
-- A Stage can contain one or more Job chains, and separate chains can advance in parallel.
-- Pipeline, Stage, Job, and Plugin execution states are persisted in MySQL.
-- Kafka decouples components and transports state messages.
-- A `TEXT` plugin demonstrates plugin configuration and execution.
-- REST APIs are available for creating, querying, and manually triggering Pipelines.
-- Volcano is supported as a trigger origin with its access configuration.
-
-### Execution flow
+Firefly models an execution as four domain layers:
 
 ```text
-Manual Trigger
-      |
-      v
-Pipeline Message
-      |
-      v
- Stage Message
-      |
-      v
-  Job Message
-      |
-      v
-Plugin Message
-      |
-      v
-Job -> Stage -> Pipeline status completion
+Pipeline
+└── Stage (serial by stageOrder)
+    └── Job Chain (multiple chains may run in parallel)
+        └── Job (serial within a chain)
+            └── Plugin (triggered by a Job)
 ```
 
-1. The manual trigger API creates a Pipeline Build and publishes a Pipeline message.
-2. The Pipeline message marks the Pipeline as running and starts its first Stage.
-3. The Stage message starts every head Job in that Stage.
-4. Each Job message executes its configured plugin.
-5. Plugin completion updates the Job, and completed Job chains update the Stage.
-6. A successful Stage starts the next Stage until the Pipeline completes.
-7. A Job or Stage failure is propagated to its parent execution.
+The repository currently implements:
+
+- Pipeline configuration creation and lookup.
+- Persistence of Stage order from the request as `stageOrder`.
+- A two-dimensional `jobConfigs` structure: the outer list contains parallel-capable chains, while each inner list is a serial Job chain.
+- Manual creation of Pipeline, Stage, Job, and Plugin build records.
+- Business message UUID generation for Pipeline, Stage, Job, and Plugin events.
+- Classified batch persistence of all four Kafka message types, followed by manual ACK after a successful database transaction.
+- Idempotent message archiving through business UUIDs and database unique constraints.
+- Pipeline, Stage, Job, and Plugin state-transition and follow-up message logic in `MessageCenter`.
+- Database access through Spring Data JPA.
+
+### Current message-processing boundary
+
+Kafka uses four topics. Each topic has one batch listener and one archive table:
+
+| Topic | Listener method | Archive table |
+| --- | --- | --- |
+| `pipeline_message` | `onPipelineMessage` | `pipeline_message` |
+| `stage_message` | `onStageMessage` | `stage_message` |
+| `job_message` | `onJobMessage` | `job_message` |
+| `plugin_message` | `onPluginMessage` | `plugin_message` |
+
+The current listener flow is:
+
+```text
+Kafka batch poll
+  -> deduplicate by messageUUID
+  -> persist in the classified message table
+  -> commit the database transaction
+  -> acknowledge manually
+```
+
+The listeners currently archive messages only; they do not invoke `MessageCenter` automatically. `MessageCenter` contains callable logic for status updates, ordered Stage progression, Job-chain progression, and follow-up Kafka messages.
+
+Archiving rules:
+
+- A poll returns at most `200` records.
+- Listeners use batch mode and manual acknowledgment, with `concurrency: 1` per listener.
+- Each application instance has four listener containers, one for each topic.
+- `messageUUID` must be a valid Java UUID.
+- Duplicate UUIDs within the same batch are removed.
+- Existing UUIDs are queried before only new messages are saved.
+- Every message table uniquely constrains both `message_uuid` and `(topic, kafka_partition, kafka_offset)`.
+- ACK occurs after the database write succeeds; an exception prevents ACK.
+
+Business message UUIDs are derived from stable fields such as message type, build ID, and status. Repeated generation of the same business event can therefore be recognized idempotently.
+
+### Stage and Job ordering
+
+- Stages in a Pipeline execute in ascending `stage_order`.
+- After a Stage succeeds, `MessageCenter` finds only the next Stage in the same `pipelineBuild`.
+- Completion of the last Stage produces a successful Pipeline message.
+- Failure of any Stage produces a failed Pipeline message.
+- Each inner array in `jobConfigs` is one serial chain.
+- Different inner arrays represent different Job chains and may run in parallel.
+- A successful Job advances the next Job in the same chain.
+- The tail Job of every chain participates in the Stage completion aggregation.
+- `TEXT` is currently the only Plugin type, and a Plugin is triggered by a Job.
 
 ### Technology stack
 
-- Java 25
-- Spring Boot 3.5.4
-- Spring Data JPA
-- Spring Kafka
-- MySQL 8.4
-- Apache Kafka 3.9
-- Maven 3.9+
-- Docker
+| Component | Version or purpose |
+| --- | --- |
+| Java | 25 |
+| Maven | 3.9+ |
+| Spring Boot | 3.5.4 |
+| Spring Data JPA | Database persistence |
+| Spring Kafka | Batch consumption and message production |
+| MySQL | 8.4 recommended |
+| Kafka | The example uses 3.9.1 in single-node KRaft mode |
+| Druid | 1.2.27 |
 
-### Project structure
+### Project layout
 
 ```text
-firefly
-├── pom.xml
-├── README.md
-└── src
-    ├── main
-    │   ├── java/firefly
-    │   │   ├── bean             # DTOs, request, and response objects
-    │   │   ├── constant         # Status, plugin, and trigger types
-    │   │   ├── controller       # REST APIs
-    │   │   ├── dao              # JPA repositories
-    │   │   ├── model            # Database entities
-    │   │   └── service          # Configuration, builds, triggers, and messaging
-    │   └── resources
-    │       ├── application.yaml # Application configuration
-    │       └── v1.sql           # Complete MySQL schema
-    └── test                     # Spring context and unit tests
+src/main/java/firefly
+├── FireflyApplication.java
+├── bean/
+│   ├── dto/                # Service-layer data transfer objects
+│   └── vo/                 # API request and response models
+├── constant/               # Statuses, triggers, topics, and Plugin types
+├── controller/             # Pipeline configuration and manual-trigger APIs
+├── dao/                    # Spring Data JPA repositories
+├── model/                  # JPA entities
+└── service/                # Configuration, builds, triggers, archiving, MessageCenter
+
+src/main/resources
+├── application.yaml        # Defaults and environment-variable entry points
+└── v1.sql                  # Complete schema for a new database
 ```
 
-### Local environment
+### Quick start
 
-Verify that Java and Maven both use Java 25:
+#### 1. Prerequisites
+
+Install:
+
+- JDK 25
+- Maven 3.9 or newer
+- Docker
+
+Check the installations:
 
 ```bash
 java -version
 mvn -version
+docker version
 ```
 
-#### Start MySQL
+#### 2. Start MySQL
 
-Run the following commands from the repository root:
+The following commands create the `firefly` database and execute `v1.sql` when the volume is initialized for the first time:
 
 ```bash
 docker volume create firefly-mysql-data
@@ -373,9 +541,9 @@ docker run -d \
   mysql:8.4
 ```
 
-This creates the `firefly` database and runs `v1.sql`, which contains the complete schema, during the first startup.
+Scripts in `docker-entrypoint-initdb.d` run only when an empty data directory is initialized. For an existing database, execute the latest `v1.sql` separately or recreate the development volume.
 
-#### Start Kafka
+#### 3. Start Kafka
 
 ```bash
 docker run -d \
@@ -397,7 +565,7 @@ docker run -d \
   apache/kafka:3.9.1
 ```
 
-Create the topics used by Firefly:
+Create the four topics:
 
 ```bash
 for topic in pipeline_message stage_message job_message plugin_message; do
@@ -414,52 +582,64 @@ done
 Check the containers:
 
 ```bash
-docker ps --filter name=firefly-mysql --filter name=firefly-kafka
+docker exec firefly-mysql mysqladmin ping -uroot -pzou
+docker exec firefly-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --list
 ```
 
-### Build and test
+#### 4. Build and run
 
 ```bash
-mvn test
-mvn clean package
-```
-
-The executable JAR is generated at:
-
-```text
-target/firefly-0.0.1-SNAPSHOT.jar
-```
-
-### Run the application
-
-With Maven:
-
-```bash
+mvn clean verify
 mvn spring-boot:run
 ```
 
-Or with the packaged JAR:
+Alternatively, package and run the executable JAR:
 
 ```bash
+mvn clean package
 java -jar target/firefly-0.0.1-SNAPSHOT.jar
 ```
 
-The service listens on:
+The service listens on `http://localhost:9999` by default.
 
-```text
-http://localhost:9999
+### Configuration
+
+The main settings can be overridden with environment variables:
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `SERVER_PORT` | `9999` | HTTP port |
+| `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | `root` | MySQL username |
+| `SPRING_DATASOURCE_PASSWORD` | `zou` | MySQL password |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka brokers |
+
+Example:
+
+```bash
+SERVER_PORT=8080 \
+SPRING_DATASOURCE_PASSWORD=zou \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
+mvn spring-boot:run
 ```
+
+JPA uses `ddl-auto: none`, so the application does not create tables automatically. The schema is defined by `src/main/resources/v1.sql`.
 
 ### API
 
-#### Create a Pipeline
+#### Create a Pipeline configuration
 
 ```http
 POST /create/pipeline
 Content-Type: application/json
 ```
 
-Example:
+The following example contains two ordered Stages:
+
+- The first Stage has one Job chain with two serial Jobs.
+- The second Stage has two Job chains with one Job each; those chains may run in parallel.
 
 ```bash
 curl -X POST http://localhost:9999/create/pipeline \
@@ -467,71 +647,143 @@ curl -X POST http://localhost:9999/create/pipeline \
   -d '{
     "uuid": "1111111111111111111111111111111111111111111111111111111111111111",
     "name": "demo-pipeline",
+    "stageConfigs": [
+      {
+        "uuid": "2222222222222222222222222222222222222222222222222222222222222222",
+        "name": "stage-one-demo",
+        "jobConfigs": [
+          [
+            {
+              "uuid": "4444444444444444444444444444444444444444444444444444444444444444",
+              "name": "stage1-job1",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 1 job 1\"}"
+            },
+            {
+              "uuid": "5555555555555555555555555555555555555555555555555555555555555555",
+              "name": "stage1-job2",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 1 job 2\"}"
+            }
+          ]
+        ]
+      },
+      {
+        "uuid": "3333333333333333333333333333333333333333333333333333333333333333",
+        "name": "stage-two-demo",
+        "jobConfigs": [
+          [
+            {
+              "uuid": "6666666666666666666666666666666666666666666666666666666666666666",
+              "name": "stage2-job1",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 2 chain 1\"}"
+            }
+          ],
+          [
+            {
+              "uuid": "7777777777777777777777777777777777777777777777777777777777777777",
+              "name": "stage2-job2",
+              "pluginType": "TEXT",
+              "pluginRaw": "{\"text\":\"stage 2 chain 2\"}"
+            }
+          ]
+        ]
+      }
+    ],
     "triggerModel": "MANUAL",
     "triggerMatch": "ACCURATE",
     "triggerOrigin": "VOLCANO",
     "originInfo": {
       "ak": "local-ak",
       "sk": "local-sk"
-    },
-    "stageConfigs": [
-      {
-        "uuid": "2222222222222222222222222222222222222222222222222222222222222222",
-        "name": "build-stage",
-        "jobConfigs": [
-          [
-            {
-              "uuid": "3333333333333333333333333333333333333333333333333333333333333333",
-              "name": "first-text-job",
-              "pluginType": "TEXT",
-              "pluginRaw": {
-                "text": "hello firefly"
-              }
-            },
-            {
-              "uuid": "4444444444444444444444444444444444444444444444444444444444444444",
-              "name": "second-text-job",
-              "pluginType": "TEXT",
-              "pluginRaw": {
-                "text": "pipeline completed"
-              }
-            }
-          ]
-        ]
-      }
-    ]
+    }
   }'
 ```
 
-The outer `jobConfigs` list represents parallel Job chains. Jobs in each inner list run sequentially.
+The endpoint returns the Pipeline UUID supplied in the request.
 
-#### Query a Pipeline
+#### Query a Pipeline configuration
 
 ```bash
 curl 'http://localhost:9999/pipeline?uuid=1111111111111111111111111111111111111111111111111111111111111111'
 ```
 
-The response `id` is the `pipelineId` used by the manual trigger API.
+The response contains:
+
+- Pipeline `id`, `uuid`, and `name`.
+- Stages sorted by `stageOrder`.
+- Job chains represented as a two-dimensional array.
+- `jobConfigID` in the Plugin configuration.
+- `triggerOrigin`, `triggerMode`, and `triggerMatch`.
 
 #### Manually trigger a Pipeline
+
+`pipelineId` is the database ID returned by the Pipeline query endpoint. `uuid` is the 64-character business identifier of this build:
 
 ```bash
 curl -X POST http://localhost:9999/manual_trigger/pipeline \
   -H 'Content-Type: application/json' \
   -d '{
     "pipelineId": 1,
-    "uuid": "5555555555555555555555555555555555555555555555555555555555555555",
+    "uuid": "8888888888888888888888888888888888888888888888888888888888888888",
     "triggerModel": "MANUAL",
     "triggerMatch": "ACCURATE",
     "triggerOrigin": "VOLCANO"
   }'
 ```
 
-The response is the Pipeline Build ID for this execution.
+The endpoint creates the complete build records, stores the Volcano trigger record, publishes a Pipeline `RUNNING` message, and returns the Pipeline Build ID. With the current listener wiring, that message is then archived in `pipeline_message`.
+
+### Validation
+
+- Pipeline, Stage, Job, and build-request `uuid` values must contain exactly `64` characters.
+- Pipeline, Stage, and Job names must contain between `10` and `64` characters.
+- Stage and Job objects use cascading validation.
+- Trigger values, Plugin types, and required collection fields cannot be null.
+- Controllers use `@Valid`, and invalid requests return HTTP `400`.
+
+### Database
+
+`v1.sql` is the complete schema for a new database and creates 17 tables:
+
+| Category | Tables |
+| --- | --- |
+| Configuration and topology | `pipeline_config`, `stage_config`, `job_config`, `job_relation`, `text_plugin_config`, `volcano_engine` |
+| Trigger records | `github_trigger`, `volcano_trigger`, `volcano_config` |
+| Build records | `pipeline_build`, `stage_build`, `job_build`, `text_plugin_build` |
+| Kafka message archive | `pipeline_message`, `stage_message`, `job_message`, `plugin_message` |
+
+Notable constraints:
+
+- `stage_config` uses `(pipeline_id, stage_order)` to keep Stage order unique within a Pipeline.
+- `stage_build` uses `(pipeline_build_id, stage_id)` to prevent duplicate Stage Builds in the same Pipeline Build.
+- `text_plugin_config` references the Job configuration through `job_config_id`.
+- The four message tables store the topic, partition, offset, key, payload, received time, and business message UUID.
+
+### Tests
+
+Run the complete test suite:
+
+```bash
+mvn clean verify
+```
+
+The suite covers application startup, request validation, Pipeline response assembly, Stage ordering, message UUIDs, batch deduplication, ACK behavior, Plugin mapping, and `MessageCenter` state transitions.
 
 ### Container management
 
 ```bash
+# Show status
+docker ps --filter name=firefly
+
+# Stop
 docker stop firefly-mysql firefly-kafka
+
+# Start again
 docker start firefly-mysql firefly-kafka
+
+# Inspect logs
+docker logs firefly-mysql
+docker logs firefly-kafka
 ```
