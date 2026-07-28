@@ -1,6 +1,7 @@
 package firefly.bean.vo.request;
 
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -20,5 +21,6 @@ public class StageConfigRequest implements Serializable {
     @Size(min = 10, max = 64)
     private String name;
     @NotNull
+    @Valid
     private List<List<JobConfigRequest>> jobConfigs;
 }

@@ -163,7 +163,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         pipelineConfigDto.setTriggerMode(pipelineModel.getTriggerMode().name());
         pipelineConfigDto.setTriggerMatch(pipelineModel.getTriggerMatch().name());
         pipelineConfigDto.setName(pipelineModel.getPipelineName());
-        pipelineConfigDto.setName(pipelineModel.getTriggerOrigin().name());
+        pipelineConfigDto.setTriggerOrigin(pipelineModel.getTriggerOrigin().name());
         return pipelineConfigDto;
     }
 

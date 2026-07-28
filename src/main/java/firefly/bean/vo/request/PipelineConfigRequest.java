@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import firefly.constant.TriggerMatch;
 import firefly.constant.TriggerModel;
 import firefly.constant.TriggerOrigin;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -38,5 +39,6 @@ public class PipelineConfigRequest implements Serializable {
     @NotNull
     private JsonNode originInfo;
     @NotNull
+    @Valid
     private List<StageConfigRequest> stageConfigs;
 }
