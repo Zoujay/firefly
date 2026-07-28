@@ -50,21 +50,23 @@ Kafka 批量拉取
   -> 按 messageUUID 去重
   -> 分类写入消息表
   -> 数据库事务提交
-  -> 手动 ACK
+  -> 手动立即 ACK
+  -> 反序列化并调用 MessageCenter
 ```
 
-监听器当前只负责消息归档，不会自动调用 `MessageCenter`。`MessageCenter` 已包含状态更新、Stage 顺序推进、Job 链推进和后续 Kafka 消息发送逻辑，可由业务入口显式调用。
+Listener 在消息成功归档并 ACK 后调用 `MessageCenter`。`MessageCenter` 负责状态更新、Stage 顺序推进、Job 链推进和后续 Kafka 消息发送。单条消息解析或业务处理失败不会撤销 ACK，也不会阻塞同批其他消息；归档记录保留用于人工处理。
 
 消息归档规则：
 
 - 每次拉取最多 `200` 条消息。
-- Listener 使用批量模式和手动 ACK，单个 Listener 的 `concurrency` 为 `1`。
+- Listener 使用批量模式和手动立即 ACK，单个 Listener 的 `concurrency` 为 `1`。
 - 每个应用实例包含四个 Listener 容器，分别消费四个 Topic。
 - `messageUUID` 必须是合法的 Java UUID。
 - 同一批次内按 `messageUUID` 去重。
 - 入库前查询已经存在的 UUID，仅保存新消息。
 - 每张消息表同时约束 `message_uuid` 和 `(topic, kafka_partition, kafka_offset)` 唯一。
 - 数据库写入成功后 ACK；写入异常时不会执行 ACK。
+- ACK 后再执行状态推进，因此业务处理失败不会触发 Kafka 重投。
 
 业务消息 UUID 由消息类型、构建 ID、状态等稳定字段生成，因此同一个业务事件重复生成时仍可被幂等识别。
 
@@ -341,7 +343,7 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
   }'
 ```
 
-接口会创建完整的构建记录，保存 Volcano 触发记录，发送 Pipeline `RUNNING` 消息，并返回 Pipeline Build ID。按照当前监听器接线方式，该消息随后会进入 `pipeline_message` 表完成归档。
+接口会创建完整的构建记录，保存 Volcano 触发记录，发送 Pipeline `RUNNING` 消息，并返回 Pipeline Build ID。该消息随后会进入 `pipeline_message` 表完成归档，并由 `MessageCenter` 开始推进构建状态。
 
 ### 参数校验
 
@@ -377,7 +379,7 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
 mvn clean verify
 ```
 
-测试覆盖应用启动、参数校验、Pipeline 响应组装、Stage 顺序、消息 UUID、批量去重、ACK 行为、Plugin 映射以及 `MessageCenter` 状态转换。
+测试覆盖应用启动、参数校验、Pipeline 响应组装、Stage 顺序、消息 UUID、批量去重、ACK 行为、Plugin 映射以及 `MessageCenter` 状态转换。Spring 集成测试使用 Testcontainers 自动启动并初始化独立的 MySQL 8.4；消息接线测试使用 Embedded Kafka 验证四个 Topic 从真实 Listener 到 `MessageCenter` 的生产调用链。
 
 ### 容器管理
 
@@ -442,21 +444,23 @@ Kafka batch poll
   -> deduplicate by messageUUID
   -> persist in the classified message table
   -> commit the database transaction
-  -> acknowledge manually
+  -> acknowledge immediately
+  -> deserialize and invoke MessageCenter
 ```
 
-The listeners currently archive messages only; they do not invoke `MessageCenter` automatically. `MessageCenter` contains callable logic for status updates, ordered Stage progression, Job-chain progression, and follow-up Kafka messages.
+After a message has been archived and acknowledged, the listener invokes `MessageCenter`. `MessageCenter` performs status updates, ordered Stage progression, Job-chain progression, and follow-up Kafka publishing. A parsing or business-processing failure does not undo the ACK or block other records in the batch; the archived record remains available for manual handling.
 
 Archiving rules:
 
 - A poll returns at most `200` records.
-- Listeners use batch mode and manual acknowledgment, with `concurrency: 1` per listener.
+- Listeners use batch mode and manual immediate acknowledgment, with `concurrency: 1` per listener.
 - Each application instance has four listener containers, one for each topic.
 - `messageUUID` must be a valid Java UUID.
 - Duplicate UUIDs within the same batch are removed.
 - Existing UUIDs are queried before only new messages are saved.
 - Every message table uniquely constrains both `message_uuid` and `(topic, kafka_partition, kafka_offset)`.
-- ACK occurs after the database write succeeds; an exception prevents ACK.
+- ACK occurs after the database write succeeds; a database exception prevents ACK.
+- Status progression runs after ACK, so a business-processing failure does not cause Kafka redelivery.
 
 Business message UUIDs are derived from stable fields such as message type, build ID, and status. Repeated generation of the same business event can therefore be recognized idempotently.
 
@@ -733,7 +737,7 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
   }'
 ```
 
-The endpoint creates the complete build records, stores the Volcano trigger record, publishes a Pipeline `RUNNING` message, and returns the Pipeline Build ID. With the current listener wiring, that message is then archived in `pipeline_message`.
+The endpoint creates the complete build records, stores the Volcano trigger record, publishes a Pipeline `RUNNING` message, and returns the Pipeline Build ID. That message is then archived in `pipeline_message`, after which `MessageCenter` starts advancing the build state.
 
 ### Validation
 
@@ -769,7 +773,7 @@ Run the complete test suite:
 mvn clean verify
 ```
 
-The suite covers application startup, request validation, Pipeline response assembly, Stage ordering, message UUIDs, batch deduplication, ACK behavior, Plugin mapping, and `MessageCenter` state transitions.
+The suite covers application startup, request validation, Pipeline response assembly, Stage ordering, message UUIDs, batch deduplication, ACK behavior, Plugin mapping, and `MessageCenter` state transitions. Spring integration tests use Testcontainers to start and initialize an isolated MySQL 8.4 instance. The message-wiring test uses Embedded Kafka to verify the production path from all four topics through the real listeners to `MessageCenter`.
 
 ### Container management
 

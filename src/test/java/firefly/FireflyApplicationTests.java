@@ -1,9 +1,9 @@
 package firefly;
 
+import firefly.support.FireflyIntegrationTest;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+@FireflyIntegrationTest
 class FireflyApplicationTests {
 
     @Test
