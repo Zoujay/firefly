@@ -1,106 +1,104 @@
 package firefly.service.messagecenter;
 
+import firefly.constant.BuildStatus;
+import firefly.dao.message.IJobMessageDao;
+import firefly.dao.message.IPipelineMessageDao;
+import firefly.dao.message.IPluginMessageDao;
+import firefly.dao.message.IStageMessageDao;
+import firefly.model.message.PipelineMessage;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaMessageStoreTests {
 
     @Mock
-    private JdbcTemplate jdbcTemplate;
+    private IPipelineMessageDao pipelineMessageDao;
+
+    @Mock
+    private IStageMessageDao stageMessageDao;
+
+    @Mock
+    private IJobMessageDao jobMessageDao;
+
+    @Mock
+    private IPluginMessageDao pluginMessageDao;
 
     @Captor
-    private ArgumentCaptor<List<Object[]>> argumentsCaptor;
+    private ArgumentCaptor<Iterable<PipelineMessage>> pipelineMessagesCaptor;
 
+    @InjectMocks
     private KafkaMessageStore kafkaMessageStore;
 
-    @BeforeEach
-    void setUp() {
-        kafkaMessageStore = new KafkaMessageStore(jdbcTemplate);
-    }
-
     @Test
-    void savesKafkaMetadataAndPayloadInPipelineTable() {
-        String messageUUID = BusinessMessageUUID.pipeline(11L, firefly.constant.BuildStatus.RUNNING);
+    void savesKafkaMetadataAndPayloadWithJpa() {
+        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
         ConsumerRecord<String, String> message = new ConsumerRecord<>(
                 "pipeline_message",
                 2,
                 42L,
                 "pipeline-key",
-                "{\"messageUUID\":\"" + messageUUID + "\"}"
+                payload
         );
-        when(jdbcTemplate.batchUpdate(anyString(), anyList(), any(int[].class)))
-                .thenReturn(new int[]{1});
+        when(pipelineMessageDao.findExistingMessageUUIDs(anyList())).thenReturn(java.util.Set.of());
 
         kafkaMessageStore.savePipelineMessages(List.of(message));
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).batchUpdate(sqlCaptor.capture(), argumentsCaptor.capture(), any(int[].class));
-        assertTrue(sqlCaptor.getValue().contains("`pipeline_message`"));
-        assertTrue(sqlCaptor.getValue().contains("ON DUPLICATE KEY UPDATE"));
-        assertArrayEquals(
-                new Object[]{
-                        messageUUID,
-                        "pipeline_message",
-                        2,
-                        42L,
-                        "pipeline-key",
-                        "{\"messageUUID\":\"" + messageUUID + "\"}"
-                },
-                argumentsCaptor.getValue().getFirst()
-        );
+        verify(pipelineMessageDao).saveAll(pipelineMessagesCaptor.capture());
+        PipelineMessage savedMessage = pipelineMessagesCaptor.getValue().iterator().next();
+        assertEquals(messageUUID, savedMessage.getMessageUUID());
+        assertEquals("pipeline_message", savedMessage.getTopic());
+        assertEquals(2, savedMessage.getKafkaPartition());
+        assertEquals(42L, savedMessage.getKafkaOffset());
+        assertEquals("pipeline-key", savedMessage.getMessageKey());
+        assertEquals(payload, savedMessage.getPayload());
     }
 
     @Test
-    void usesDedicatedTableForEveryMessageType() {
-        when(jdbcTemplate.batchUpdate(anyString(), anyList(), any(int[].class)))
-                .thenReturn(new int[]{1});
-        String messageUUID = BusinessMessageUUID.pipeline(11L, firefly.constant.BuildStatus.RUNNING);
-        ConsumerRecord<String, String> message =
-                new ConsumerRecord<>(
-                        "topic",
-                        0,
-                        1L,
-                        null,
-                        "{\"messageUUID\":\"" + messageUUID + "\"}"
-                );
+    void usesDedicatedJpaRepositoryForEveryMessageType() {
+        when(stageMessageDao.findExistingMessageUUIDs(anyList())).thenReturn(java.util.Set.of());
+        when(jobMessageDao.findExistingMessageUUIDs(anyList())).thenReturn(java.util.Set.of());
+        when(pluginMessageDao.findExistingMessageUUIDs(anyList())).thenReturn(java.util.Set.of());
+        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        ConsumerRecord<String, String> message = record("topic", 0, 1L, messageUUID);
 
         kafkaMessageStore.saveStageMessages(List.of(message));
         kafkaMessageStore.saveJobMessages(List.of(message));
         kafkaMessageStore.savePluginMessages(List.of(message));
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate, org.mockito.Mockito.times(3))
-                .batchUpdate(sqlCaptor.capture(), anyList(), any(int[].class));
-        assertTrue(sqlCaptor.getAllValues().get(0).contains("`stage_message`"));
-        assertTrue(sqlCaptor.getAllValues().get(1).contains("`job_message`"));
-        assertTrue(sqlCaptor.getAllValues().get(2).contains("`plugin_message`"));
+        verify(stageMessageDao).saveAll(anyList());
+        verify(jobMessageDao).saveAll(anyList());
+        verify(pluginMessageDao).saveAll(anyList());
     }
 
     @Test
-    void skipsDatabaseCallForEmptyBatch() {
+    void skipsJpaForEmptyBatch() {
         kafkaMessageStore.savePipelineMessages(List.of());
 
-        verify(jdbcTemplate, never()).batchUpdate(anyString(), anyList(), any(int[].class));
+        verifyNoInteractions(
+                pipelineMessageDao,
+                stageMessageDao,
+                jobMessageDao,
+                pluginMessageDao
+        );
     }
 
     @Test
@@ -113,6 +111,71 @@ class KafkaMessageStoreTests {
                 () -> kafkaMessageStore.savePipelineMessages(List.of(message))
         );
 
-        verify(jdbcTemplate, never()).batchUpdate(anyString(), anyList(), any(int[].class));
+        verifyNoInteractions(
+                pipelineMessageDao,
+                stageMessageDao,
+                jobMessageDao,
+                pluginMessageDao
+        );
+    }
+
+    @Test
+    void doesNotSaveBusinessUUIDThatAlreadyExists() {
+        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        PipelineMessage existingMessage = new PipelineMessage(
+                messageUUID,
+                "pipeline_message",
+                0,
+                1L,
+                messageUUID,
+                "{\"messageUUID\":\"" + messageUUID + "\"}"
+        );
+        when(pipelineMessageDao.findExistingMessageUUIDs(anyList()))
+                .thenReturn(java.util.Set.of(existingMessage.getMessageUUID()));
+
+        kafkaMessageStore.savePipelineMessages(
+                List.of(record("pipeline_message", 0, 2L, messageUUID))
+        );
+
+        verify(pipelineMessageDao, never()).saveAll(anyList());
+    }
+
+    @Test
+    void removesDuplicateBusinessUUIDsWithinTheSameBatch() {
+        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        when(pipelineMessageDao.findExistingMessageUUIDs(anyList())).thenReturn(java.util.Set.of());
+
+        kafkaMessageStore.savePipelineMessages(List.of(
+                record("pipeline_message", 0, 1L, messageUUID),
+                record("pipeline_message", 0, 2L, messageUUID)
+        ));
+
+        verify(pipelineMessageDao).saveAll(pipelineMessagesCaptor.capture());
+        Iterable<PipelineMessage> savedMessages = pipelineMessagesCaptor.getValue();
+        assertTrue(hasOnlyOne(savedMessages));
+    }
+
+    private boolean hasOnlyOne(Iterable<PipelineMessage> messages) {
+        var iterator = messages.iterator();
+        if (!iterator.hasNext()) {
+            return false;
+        }
+        iterator.next();
+        return !iterator.hasNext();
+    }
+
+    private ConsumerRecord<String, String> record(
+            String topic,
+            int partition,
+            long offset,
+            String messageUUID
+    ) {
+        return new ConsumerRecord<>(
+                topic,
+                partition,
+                offset,
+                messageUUID,
+                "{\"messageUUID\":\"" + messageUUID + "\"}"
+        );
     }
 }
