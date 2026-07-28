@@ -115,11 +115,11 @@ CREATE TABLE `firefly`.`job_build`
 
 CREATE TABLE `firefly`.`text_plugin_config`
 (
-    `id`     BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `job_id` BIGINT(20) NOT NULL,
-    `text`   VARCHAR(64) NOT NULL,
+    `id`            BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `job_config_id` BIGINT(20) NOT NULL,
+    `text`          VARCHAR(64) NOT NULL,
     PRIMARY KEY (`id`),
-    INDEX    `idx_job_id` (`job_id`)
+    INDEX    `idx_job_config_id` (`job_config_id`)
 );
 
 CREATE TABLE `firefly`.`text_plugin_build`

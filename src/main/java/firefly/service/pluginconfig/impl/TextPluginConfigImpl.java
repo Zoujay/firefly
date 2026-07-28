@@ -28,24 +28,24 @@ public class TextPluginConfigImpl implements IPluginConfig {
     }
 
 
-    public TextPluginConfigDto parseJobConfigRequest(JsonNode pluginRaw, Long JobID) {
+    public TextPluginConfigDto parseJobConfigRequest(JsonNode pluginRaw, Long jobConfigID) {
         Gson gson = new Gson();
         TextPluginConfigDto pluginConfigDto = gson.fromJson(pluginRaw.toString(), TextPluginConfigDto.class);
-        pluginConfigDto.setJobID(JobID);
+        pluginConfigDto.setJobConfigID(jobConfigID);
         return pluginConfigDto;
     }
 
-    public TextPluginModel parsePluginRequest(JsonNode pluginRaw, Long jobID) {
-        TextPluginConfigDto request = this.parseJobConfigRequest(pluginRaw, jobID);
+    public TextPluginModel parsePluginRequest(JsonNode pluginRaw, Long jobConfigID) {
+        TextPluginConfigDto request = this.parseJobConfigRequest(pluginRaw, jobConfigID);
         TextPluginModel model = new TextPluginModel();
         model.setText(request.getText());
-        model.setJobID(jobID);
+        model.setJobConfigID(jobConfigID);
         return model;
     }
 
     @Override
-    public Long savePlugin(JsonNode pluginRaw, Long jobID) {
-        TextPluginModel model = this.parsePluginRequest(pluginRaw, jobID);
+    public Long savePlugin(JsonNode pluginRaw, Long jobConfigID) {
+        TextPluginModel model = this.parsePluginRequest(pluginRaw, jobConfigID);
         textPluginConfigDao.save(model);
         return model.getId();
     }
@@ -65,6 +65,7 @@ public class TextPluginConfigImpl implements IPluginConfig {
         TextPluginConfigDto textPluginConfigDto = new TextPluginConfigDto();
         textPluginConfigDto.setText(textPluginModel.getText());
         textPluginConfigDto.setID(textPluginModel.getId());
+        textPluginConfigDto.setJobConfigID(textPluginModel.getJobConfigID());
         return textPluginConfigDto;
     }
 }

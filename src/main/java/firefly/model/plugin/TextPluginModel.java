@@ -18,8 +18,8 @@ public class TextPluginModel extends BasePluginModel {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "job_id")
-    private Long jobID;
+    @Column(name = "job_config_id")
+    private Long jobConfigID;
 
     @Column(name = "text")
     private String text;

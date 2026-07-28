@@ -14,5 +14,5 @@ public class TextPluginConfigDto extends AbstractPluginDto implements Serializab
     @Serial
     private static final long serialVersionUID = -195154578987742967L;
     private String text;
-    private Long jobID;
+    private Long jobConfigID;
 }
