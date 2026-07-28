@@ -4,77 +4,144 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
+import firefly.dao.message.IJobMessageDao;
+import firefly.dao.message.IKafkaMessageDao;
+import firefly.dao.message.IPipelineMessageDao;
+import firefly.dao.message.IPluginMessageDao;
+import firefly.dao.message.IStageMessageDao;
+import firefly.model.message.JobMessage;
+import firefly.model.message.KafkaMessage;
+import firefly.model.message.PipelineMessage;
+import firefly.model.message.PluginMessage;
+import firefly.model.message.StageMessage;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Types;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 
 @Service
 public class KafkaMessageStore {
 
-    private static final int[] COLUMN_TYPES = {
-            Types.VARCHAR,
-            Types.VARCHAR,
-            Types.INTEGER,
-            Types.BIGINT,
-            Types.VARCHAR,
-            Types.LONGVARCHAR
-    };
+    @Autowired
+    private IPipelineMessageDao pipelineMessageDao;
 
-    private final JdbcTemplate jdbcTemplate;
+    @Autowired
+    private IStageMessageDao stageMessageDao;
 
-    public KafkaMessageStore(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private IJobMessageDao jobMessageDao;
+
+    @Autowired
+    private IPluginMessageDao pluginMessageDao;
 
     @Transactional
     public void savePipelineMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages("pipeline_message", messages);
+        saveMessages(messages, pipelineMessageDao, this::toPipelineMessage);
     }
 
     @Transactional
     public void saveStageMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages("stage_message", messages);
+        saveMessages(messages, stageMessageDao, this::toStageMessage);
     }
 
     @Transactional
     public void saveJobMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages("job_message", messages);
+        saveMessages(messages, jobMessageDao, this::toJobMessage);
     }
 
     @Transactional
     public void savePluginMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages("plugin_message", messages);
+        saveMessages(messages, pluginMessageDao, this::toPluginMessage);
     }
 
-    private void saveMessages(String tableName, List<ConsumerRecord<String, String>> messages) {
+    private <T extends KafkaMessage> void saveMessages(
+            List<ConsumerRecord<String, String>> messages,
+            IKafkaMessageDao<T> messageDao,
+            Function<StoredKafkaMessage, T> entityFactory
+    ) {
         if (messages.isEmpty()) {
             return;
         }
 
-        String sql = """
-                INSERT INTO `%s`
-                    (`message_uuid`, `topic`, `kafka_partition`, `kafka_offset`, `message_key`, `payload`)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE `id` = `id`
-                """.formatted(tableName);
+        Map<String, StoredKafkaMessage> uniqueMessages = new LinkedHashMap<>();
+        for (ConsumerRecord<String, String> message : messages) {
+            String messageUUID = extractMessageUUID(message);
+            uniqueMessages.putIfAbsent(
+                    messageUUID,
+                    new StoredKafkaMessage(
+                            messageUUID,
+                            message.topic(),
+                            message.partition(),
+                            message.offset(),
+                            message.key(),
+                            message.value()
+                    )
+            );
+        }
 
-        List<Object[]> batchArguments = messages.stream()
-                .map(message -> new Object[]{
-                        extractMessageUUID(message),
-                        message.topic(),
-                        message.partition(),
-                        message.offset(),
-                        message.key(),
-                        message.value()
-                })
+        Set<String> existingMessageUUIDs =
+                messageDao.findExistingMessageUUIDs(List.copyOf(uniqueMessages.keySet()));
+
+        List<T> newMessages = uniqueMessages.entrySet()
+                .stream()
+                .filter(entry -> !existingMessageUUIDs.contains(entry.getKey()))
+                .map(Map.Entry::getValue)
+                .map(entityFactory)
                 .toList();
+        if (!newMessages.isEmpty()) {
+            messageDao.saveAll(newMessages);
+        }
+    }
 
-        jdbcTemplate.batchUpdate(sql, batchArguments, COLUMN_TYPES);
+    private PipelineMessage toPipelineMessage(StoredKafkaMessage message) {
+        return new PipelineMessage(
+                message.messageUUID(),
+                message.topic(),
+                message.kafkaPartition(),
+                message.kafkaOffset(),
+                message.messageKey(),
+                message.payload()
+        );
+    }
+
+    private StageMessage toStageMessage(StoredKafkaMessage message) {
+        return new StageMessage(
+                message.messageUUID(),
+                message.topic(),
+                message.kafkaPartition(),
+                message.kafkaOffset(),
+                message.messageKey(),
+                message.payload()
+        );
+    }
+
+    private JobMessage toJobMessage(StoredKafkaMessage message) {
+        return new JobMessage(
+                message.messageUUID(),
+                message.topic(),
+                message.kafkaPartition(),
+                message.kafkaOffset(),
+                message.messageKey(),
+                message.payload()
+        );
+    }
+
+    private PluginMessage toPluginMessage(StoredKafkaMessage message) {
+        return new PluginMessage(
+                message.messageUUID(),
+                message.topic(),
+                message.kafkaPartition(),
+                message.kafkaOffset(),
+                message.messageKey(),
+                message.payload()
+        );
     }
 
     private String extractMessageUUID(ConsumerRecord<String, String> message) {
@@ -112,5 +179,15 @@ public class KafkaMessageStore {
         String description = "Invalid Kafka business message at "
                 + message.topic() + "-" + message.partition() + "@" + message.offset() + ": " + reason;
         return new IllegalArgumentException(description, cause);
+    }
+
+    private record StoredKafkaMessage(
+            String messageUUID,
+            String topic,
+            Integer kafkaPartition,
+            Long kafkaOffset,
+            String messageKey,
+            String payload
+    ) {
     }
 }
