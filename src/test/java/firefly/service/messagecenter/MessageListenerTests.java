@@ -64,6 +64,7 @@ class MessageListenerTests {
                 record("pipeline_message", 0, 10L, first),
                 record("pipeline_message", 0, 11L, second)
         );
+        when(kafkaMessageStore.savePipelineMessages(messages)).thenReturn(saved(messages));
 
         messageListener.onPipelineMessage(messages, acknowledgment);
 
@@ -83,8 +84,8 @@ class MessageListenerTests {
                 .setBuildStatus(BuildStatus.RUNNING);
         List<ConsumerRecord<String, String>> messages =
                 List.of(record("pipeline_message", 0, 10L, pipelineMessage));
-        org.mockito.Mockito.doThrow(new IllegalStateException("database failed"))
-                .when(kafkaMessageStore).savePipelineMessages(messages);
+        when(kafkaMessageStore.savePipelineMessages(messages))
+                .thenThrow(new IllegalStateException("database failed"));
 
         assertThrows(
                 IllegalStateException.class,
@@ -103,6 +104,7 @@ class MessageListenerTests {
                 .setBuildStatus(BuildStatus.RUNNING);
         List<ConsumerRecord<String, String>> messages =
                 List.of(record("stage_message", 1, 20L, stageMessage));
+        when(kafkaMessageStore.saveStageMessages(messages)).thenReturn(saved(messages));
 
         messageListener.onStageMessage(messages, acknowledgment);
 
@@ -120,6 +122,7 @@ class MessageListenerTests {
                 .setBuildStatus(BuildStatus.RUNNING);
         List<ConsumerRecord<String, String>> messages =
                 List.of(record("job_message", 2, 30L, jobMessage));
+        when(kafkaMessageStore.saveJobMessages(messages)).thenReturn(saved(messages));
 
         messageListener.onJobMessage(messages, acknowledgment);
 
@@ -138,6 +141,7 @@ class MessageListenerTests {
                 .setStatus(BuildStatus.SUCCESS);
         List<ConsumerRecord<String, String>> messages =
                 List.of(record("plugin_message", 3, 40L, pluginMessage));
+        when(kafkaMessageStore.savePluginMessages(messages)).thenReturn(saved(messages));
 
         messageListener.onPluginMessage(messages, acknowledgment);
 
@@ -163,6 +167,7 @@ class MessageListenerTests {
                 record("pipeline_message", 0, 10L, failed),
                 record("pipeline_message", 0, 11L, succeeded)
         );
+        when(kafkaMessageStore.savePipelineMessages(messages)).thenReturn(saved(messages));
         when(messageCenter.onPipelineMessage(failed))
                 .thenThrow(new IllegalStateException("business processing failed"));
 
@@ -185,11 +190,60 @@ class MessageListenerTests {
                         "{not-valid-json"
                 )
         );
+        when(kafkaMessageStore.savePipelineMessages(messages)).thenReturn(saved(messages));
 
         assertDoesNotThrow(() -> messageListener.onPipelineMessage(messages, acknowledgment));
 
         verify(acknowledgment).acknowledge();
         verify(messageCenter, never()).onPipelineMessage(any());
+    }
+
+    @Test
+    void acknowledgesDuplicateMessageWithoutDispatchingIt() throws Exception {
+        TriggerPipelineMessage duplicate = new TriggerPipelineMessage()
+                .setMessageUUID(UUID.randomUUID().toString())
+                .setPipelineID(1L)
+                .setPipelineBuildID(10L)
+                .setBuildStatus(BuildStatus.RUNNING);
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("pipeline_message", 0, 10L, duplicate));
+        when(kafkaMessageStore.savePipelineMessages(messages))
+                .thenReturn(new KafkaMessageSaveResult(List.of(), 1));
+
+        messageListener.onPipelineMessage(messages, acknowledgment);
+
+        verify(acknowledgment).acknowledge();
+        verify(messageCenter, never()).onPipelineMessage(any());
+    }
+
+    @Test
+    void dispatchesOnlyNewMessagesFromMixedBatch() throws Exception {
+        TriggerPipelineMessage duplicate = new TriggerPipelineMessage()
+                .setMessageUUID(UUID.randomUUID().toString())
+                .setPipelineID(1L)
+                .setPipelineBuildID(10L)
+                .setBuildStatus(BuildStatus.RUNNING);
+        TriggerPipelineMessage newMessage = new TriggerPipelineMessage()
+                .setMessageUUID(UUID.randomUUID().toString())
+                .setPipelineID(2L)
+                .setPipelineBuildID(20L)
+                .setBuildStatus(BuildStatus.RUNNING);
+        List<ConsumerRecord<String, String>> messages = List.of(
+                record("pipeline_message", 0, 10L, duplicate),
+                record("pipeline_message", 0, 11L, newMessage)
+        );
+        when(kafkaMessageStore.savePipelineMessages(messages))
+                .thenReturn(new KafkaMessageSaveResult(List.of(messages.get(1)), 1));
+
+        messageListener.onPipelineMessage(messages, acknowledgment);
+
+        verify(acknowledgment).acknowledge();
+        verify(messageCenter, never()).onPipelineMessage(duplicate);
+        verify(messageCenter).onPipelineMessage(newMessage);
+    }
+
+    private KafkaMessageSaveResult saved(List<ConsumerRecord<String, String>> messages) {
+        return new KafkaMessageSaveResult(messages, 0);
     }
 
     private ConsumerRecord<String, String> record(
