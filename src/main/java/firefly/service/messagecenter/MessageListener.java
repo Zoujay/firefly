@@ -5,6 +5,7 @@ import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
+import firefly.constant.MessageCategory;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,7 +43,7 @@ public class MessageListener {
                 messages,
                 TriggerPipelineMessage.class,
                 messageCenter::onPipelineMessage,
-                "pipeline"
+                MessageCategory.PIPELINE
         );
     }
 
@@ -56,7 +57,7 @@ public class MessageListener {
                 messages,
                 TriggerStageMessage.class,
                 messageCenter::onStageMessage,
-                "stage"
+                MessageCategory.STAGE
         );
     }
 
@@ -70,7 +71,7 @@ public class MessageListener {
                 messages,
                 TriggerJobMessage.class,
                 messageCenter::onJobMessage,
-                "job"
+                MessageCategory.JOB
         );
     }
 
@@ -84,7 +85,7 @@ public class MessageListener {
                 messages,
                 TriggerPluginMessage.class,
                 messageCenter::onPluginMessage,
-                "plugin"
+                MessageCategory.PLUGIN
         );
     }
 
@@ -92,7 +93,7 @@ public class MessageListener {
             List<ConsumerRecord<String, String>> messages,
             Class<T> messageType,
             Function<T, Boolean> handler,
-            String messageCategory
+            MessageCategory messageCategory
     ) {
         for (ConsumerRecord<String, String> record : messages) {
             try {
