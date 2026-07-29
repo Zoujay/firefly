@@ -83,6 +83,7 @@ CREATE TABLE `firefly`.`pipeline_build`
     `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
     `pipeline_id`     BIGINT(20) NOT NULL,
     `pipeline_status` VARCHAR(64) NOT NULL,
+    `execution_attempt` INT      NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     INDEX             `idx_pipeline_id` (`pipeline_id`)
 );
@@ -94,6 +95,7 @@ CREATE TABLE `firefly`.`stage_build`
     `pipeline_build_id` BIGINT(20) NOT NULL,
     `stage_id`          BIGINT(20) NOT NULL,
     `stage_status`      VARCHAR(64) NOT NULL,
+    `execution_attempt` INT         NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     UNIQUE INDEX       `uidx_pipeline_build_stage` (`pipeline_build_id`, `stage_id`),
     INDEX               `idx_pipeline_build_id` (`pipeline_build_id`),
@@ -107,6 +109,7 @@ CREATE TABLE `firefly`.`job_build`
     `stage_build_id` BIGINT(20) NOT NULL,
     `job_id`         BIGINT(20) NOT NULL,
     `job_status`     VARCHAR(64) NOT NULL,
+    `execution_attempt` INT      NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     INDEX            `idx_stage_build_id` (`stage_build_id`),
     INDEX            `idx_job_id` (`job_id`)
@@ -128,6 +131,7 @@ CREATE TABLE `firefly`.`text_plugin_build`
     `plugin_id`          BIGINT(20) NOT NULL,
     `job_build_id`       BIGINT(20) NOT NULL,
     `text_plugin_status` VARCHAR(64) NOT NULL,
+    `execution_attempt`  INT         NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     INDEX                `idx_plugin_id` (`plugin_id`),
     INDEX                `idx_job_build_id` (`job_build_id`)

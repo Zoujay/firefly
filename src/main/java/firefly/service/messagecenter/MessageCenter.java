@@ -60,7 +60,12 @@ public class MessageCenter {
         // step 1. modify pipeline status
         Long pipelineBuildID = pipelineMessage.getPipelineBuildID();
         BuildStatus buildStatus = pipelineMessage.getBuildStatus();
-        Boolean updated = pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
+        Integer executionAttempt = pipelineMessage.getExecutionAttempt();
+        Boolean updated = pipelineBuildService.updatePipelineBuildStatus(
+                pipelineBuildID,
+                buildStatus,
+                executionAttempt
+        );
         if (!Boolean.TRUE.equals(updated)) {
             throw new IllegalStateException(
                     "Failed to update pipeline build: pipelineBuildID="
@@ -73,7 +78,8 @@ public class MessageCenter {
             return true;
         }
         // generate stage message
-        TriggerStageMessage triggerStageMessage = this.assembleTriggerStageMessage(pipelineBuildID, buildStatus);
+        TriggerStageMessage triggerStageMessage =
+                this.assembleTriggerStageMessage(pipelineBuildID, buildStatus);
         send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
         return true;
     }
@@ -86,7 +92,12 @@ public class MessageCenter {
         Long stageConfigID = stageBuildDto.getStageConfigID();
         Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
         BuildStatus buildStatus = stageMessage.getBuildStatus();
-        Boolean updated = stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
+        Integer executionAttempt = stageMessage.getExecutionAttempt();
+        Boolean updated = stageBuildService.updateStageBuildStatusByID(
+                buildStatus,
+                stageBuildID,
+                executionAttempt
+        );
         if (!Boolean.TRUE.equals(updated)) {
             throw new IllegalStateException(
                     "Failed to update stage build: stageBuildID="
@@ -108,39 +119,68 @@ public class MessageCenter {
                 throw new IllegalStateException(
                         "Stage config " + stageConfigID + " does not belong to pipeline " + pipelineID);
             }
-            if (currentStageIndex == stageConfigDtos.size() - 1) {
+            StageBuildDto nextStageBuild = null;
+            for (int i = currentStageIndex + 1; i < stageConfigDtos.size(); i++) {
+                Long nextStageConfigID = stageConfigDtos.get(i).getId();
+                StageBuildDto candidate =
+                        stageBuildService.getStageBuildByStageConfigIDAndPipelineBuildID(
+                                nextStageConfigID,
+                                pipelineBuildID
+                        );
+                if (candidate == null) {
+                    throw new IllegalStateException(
+                            "Stage build not found: pipelineBuildID="
+                                    + pipelineBuildID
+                                    + ", stageConfigID="
+                                    + nextStageConfigID
+                    );
+                }
+                if (candidate.getStatus() != BuildStatus.SUCCESS) {
+                    nextStageBuild = candidate;
+                    break;
+                }
+            }
+            if (nextStageBuild == null) {
                 TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
                 triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
-                        .setMessageUUID(BusinessMessageUUID.pipeline(pipelineBuildID, buildStatus))
+                        .setMessageUUID(BusinessMessageUUID.pipeline(
+                                pipelineBuildID,
+                                executionAttempt,
+                                buildStatus))
                         .setBuildStatus(buildStatus)
+                        .setExecutionAttempt(executionAttempt)
                         .setPipelineID(pipelineID);
                 send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             } else {
-                // trigger next stage
-                Long nextStageConfigID = stageConfigDtos.get(currentStageIndex + 1).getId();
-                StageBuildDto next = stageBuildService.getStageBuildByStageConfigIDAndPipelineBuildID(
-                        nextStageConfigID, pipelineBuildID);
-                if (next != null) {
-                    TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(
-                            next.getStageBuildID(), BuildStatus.RUNNING);
-                    send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
-                }
+                TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(
+                        nextStageBuild.getStageBuildID(),
+                        BuildStatus.RUNNING,
+                        nextStageBuild.getExecutionAttempt());
+                send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
             }
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
             TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
             triggerPipelineMessage.setPipelineBuildID(pipelineBuildID)
-                    .setMessageUUID(BusinessMessageUUID.pipeline(pipelineBuildID, BuildStatus.FAILURE))
+                    .setMessageUUID(BusinessMessageUUID.pipeline(
+                            pipelineBuildID,
+                            executionAttempt,
+                            BuildStatus.FAILURE))
                     .setBuildStatus(BuildStatus.FAILURE)
+                    .setExecutionAttempt(executionAttempt)
                     .setPipelineID(pipelineID);
             send(KafkaConfiguration.PIPELINE_TOPIC, triggerPipelineMessage);
             return true;
         }
         // assemble job message
-        List<TriggerJobMessage> jobMessages = this.assembleTriggerHeadJobMessages(stageConfigID, stageBuildID);
+        List<TriggerJobMessage> jobMessages =
+                this.assembleTriggerRunnableJobMessages(stageConfigID, stageBuildID);
         for (TriggerJobMessage jobMessage : jobMessages) {
             send(KafkaConfiguration.JOB_TOPIC, jobMessage);
+        }
+        if (jobMessages.isEmpty()) {
+            completeStageIfReady(stageConfigID, stageBuildID, executionAttempt);
         }
         return true;
     }
@@ -150,15 +190,24 @@ public class MessageCenter {
         // step 1. modify job status
         Long jobBuildID = jobMessage.getJobBuildID();
         BuildStatus buildStatus = jobMessage.getBuildStatus();
+        Integer executionAttempt = jobMessage.getExecutionAttempt();
         JobBuildDto jobBuildDto = jobBuildService.getJobBuildByID(jobBuildID);
         Long stageBuildID = jobBuildDto.getStageBuildID();
-        Boolean result = jobBuildService.updateJobBuildStatus(jobBuildID, buildStatus);
+        Boolean result = jobBuildService.updateJobBuildStatus(
+                jobBuildID,
+                buildStatus,
+                executionAttempt
+        );
         if (!Boolean.TRUE.equals(result)) {
             throw new IllegalStateException(
                     "Failed to update job build: jobBuildID="
                             + jobBuildID + ", status=" + buildStatus);
         }
-        TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(stageBuildID, BuildStatus.RUNNING);
+        TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(
+                stageBuildID,
+                BuildStatus.RUNNING,
+                executionAttempt
+        );
         StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
         if (buildStatus == BuildStatus.SUCCESS) {
             // todo check stage status
@@ -167,15 +216,20 @@ public class MessageCenter {
             }
             Long stageConfigID = stageBuildDto.getStageConfigID();
             StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
-            JobRelationDto jobRelationDto = jobRelationService.getNextJobRelation(
-                    stageConfigDto.getId(), jobBuildDto.getJobConfigID());
-            Long triggerNextJobID = jobRelationDto.getNextJobID();
-            JobBuildDto nextJobBuildDto = jobBuildService.getJobBuildByJobConfigIDAndStageBuildID(triggerNextJobID, stageBuildID);
+            JobBuildDto nextJobBuildDto = findNextRunnableJob(
+                    stageConfigDto.getId(),
+                    stageBuildID,
+                    jobBuildDto.getJobConfigID()
+            );
             if (nextJobBuildDto != null) {
                 TriggerJobMessage triggerJobMessage = new TriggerJobMessage();
                 Long nextJobBuildID = nextJobBuildDto.getJobBuildID();
-                triggerJobMessage.setMessageUUID(BusinessMessageUUID.job(nextJobBuildID, BuildStatus.RUNNING));
+                triggerJobMessage.setMessageUUID(BusinessMessageUUID.job(
+                        nextJobBuildID,
+                        nextJobBuildDto.getExecutionAttempt(),
+                        BuildStatus.RUNNING));
                 triggerJobMessage.setJobBuildID(nextJobBuildID);
+                triggerJobMessage.setExecutionAttempt(nextJobBuildDto.getExecutionAttempt());
                 triggerJobMessage.setBuildStatus(BuildStatus.RUNNING);
                 send(KafkaConfiguration.JOB_TOPIC, triggerJobMessage);
             } else {
@@ -187,7 +241,8 @@ public class MessageCenter {
                 Boolean transitioned = stageBuildService.transitionStageBuildStatus(
                         stageBuildID,
                         BuildStatus.RUNNING,
-                        status);
+                        status,
+                        executionAttempt);
                 if (!Boolean.TRUE.equals(transitioned)) {
                     log.debug(
                             "Stage {} terminal transition has already been handled, target={}",
@@ -196,7 +251,10 @@ public class MessageCenter {
                     return true;
                 }
                 triggerStageMessage.setBuildStatus(status);
-                triggerStageMessage.setMessageUUID(BusinessMessageUUID.stage(stageBuildID, status));
+                triggerStageMessage.setMessageUUID(BusinessMessageUUID.stage(
+                        stageBuildID,
+                        executionAttempt,
+                        status));
                 send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
             }
             return true;
@@ -205,7 +263,8 @@ public class MessageCenter {
             Boolean transitioned = stageBuildService.transitionStageBuildStatus(
                     stageBuildID,
                     BuildStatus.RUNNING,
-                    BuildStatus.FAILURE);
+                    BuildStatus.FAILURE,
+                    executionAttempt);
             if (!Boolean.TRUE.equals(transitioned)) {
                 log.debug(
                         "Stage {} failure transition has already been handled",
@@ -213,7 +272,10 @@ public class MessageCenter {
                 return true;
             }
             triggerStageMessage.setBuildStatus(BuildStatus.FAILURE);
-            triggerStageMessage.setMessageUUID(BusinessMessageUUID.stage(stageBuildID, BuildStatus.FAILURE));
+            triggerStageMessage.setMessageUUID(BusinessMessageUUID.stage(
+                    stageBuildID,
+                    executionAttempt,
+                    BuildStatus.FAILURE));
             send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
             return true;
         }
@@ -222,7 +284,11 @@ public class MessageCenter {
         JobConfigDto jobConfigDto = jobConfigService.getJobConfigByID(jobConfigID);
         PluginType pluginType = jobConfigDto.getPluginType();
         Long pluginBuildID = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).getPluginBuildIDByJobBuildID(jobBuildID);
-        return PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).executePluginBuild(pluginBuildID, BuildStatus.RUNNING);
+        return PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).executePluginBuild(
+                pluginBuildID,
+                BuildStatus.RUNNING,
+                executionAttempt
+        );
     }
 
     private boolean isTerminalStatus(BuildStatus status) {
@@ -233,6 +299,7 @@ public class MessageCenter {
         PluginType pluginType = pluginMessage.getPluginType();
         Long pluginBuildID = pluginMessage.getPluginBuildID();
         BuildStatus status = pluginMessage.getStatus();
+        Integer executionAttempt = pluginMessage.getExecutionAttempt();
 
         IPluginBuild pluginBuildService = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType);
         if (pluginBuildService == null) {
@@ -253,7 +320,11 @@ public class MessageCenter {
                     "Job build not found for pluginBuildID=" + pluginBuildID);
         }
 
-        Boolean pluginResult = pluginBuildService.updatePluginBuild(pluginBuildID, status);
+        Boolean pluginResult = pluginBuildService.updatePluginBuild(
+                pluginBuildID,
+                status,
+                executionAttempt
+        );
         if (!Boolean.TRUE.equals(pluginResult)) {
             throw new IllegalStateException(
                     "Failed to update plugin build: pluginBuildID="
@@ -263,16 +334,28 @@ public class MessageCenter {
         TriggerJobMessage triggerJobMessage = new TriggerJobMessage();
         triggerJobMessage.setJobBuildID(jobBuildID)
                 .setBuildStatus(status)
-                .setMessageUUID(BusinessMessageUUID.job(jobBuildID, status));
+                .setExecutionAttempt(executionAttempt)
+                .setMessageUUID(BusinessMessageUUID.job(
+                        jobBuildID,
+                        executionAttempt,
+                        status));
         send(KafkaConfiguration.JOB_TOPIC, triggerJobMessage);
         return true;
     }
 
 
-    private TriggerStageMessage assembleTriggerStageByJobMessage(Long stageBuildID, BuildStatus status) {
+    private TriggerStageMessage assembleTriggerStageByJobMessage(
+            Long stageBuildID,
+            BuildStatus status,
+            Integer executionAttempt
+    ) {
         TriggerStageMessage stageMessage = new TriggerStageMessage();
-        stageMessage.setMessageUUID(BusinessMessageUUID.stage(stageBuildID, status))
+        stageMessage.setMessageUUID(BusinessMessageUUID.stage(
+                        stageBuildID,
+                        executionAttempt,
+                        status))
                 .setStageBuildID(stageBuildID)
+                .setExecutionAttempt(executionAttempt)
                 .setBuildStatus(status);
         return stageMessage;
     }
@@ -283,26 +366,93 @@ public class MessageCenter {
 
         StageBuildDto stageBuildDto = stageBuildService.getFirstStageToRun(pipelineBuildID);
         Long stageBuildID = stageBuildDto.getStageBuildID();
-        stageMessage.setMessageUUID(BusinessMessageUUID.stage(stageBuildID, status))
+        Integer executionAttempt = stageBuildDto.getExecutionAttempt();
+        stageMessage.setMessageUUID(BusinessMessageUUID.stage(
+                        stageBuildID,
+                        executionAttempt,
+                        status))
                 .setStageBuildID(stageBuildID)
+                .setExecutionAttempt(executionAttempt)
                 .setBuildStatus(status);
         return stageMessage;
 
     }
 
 
-    private List<TriggerJobMessage> assembleTriggerHeadJobMessages(Long stageConfigID, Long stageBuildID) {
+    private List<TriggerJobMessage> assembleTriggerRunnableJobMessages(
+            Long stageConfigID,
+            Long stageBuildID
+    ) {
         List<TriggerJobMessage> triggerJobMessageList = new ArrayList<>();
-        List<JobBuildDto> jobBuildDtos = jobBuildService.getHeadJobBuildsByStageBuildID(stageConfigID, stageBuildID);
+        List<JobBuildDto> jobBuildDtos =
+                jobBuildService.getRunnableJobBuildsByStageBuildID(stageConfigID, stageBuildID);
         for (JobBuildDto jobBuildDto : jobBuildDtos) {
             TriggerJobMessage jobMessage = new TriggerJobMessage();
             Long jobBuildID = jobBuildDto.getJobBuildID();
-            jobMessage.setMessageUUID(BusinessMessageUUID.job(jobBuildID, BuildStatus.RUNNING))
+            Integer executionAttempt = jobBuildDto.getExecutionAttempt();
+            jobMessage.setMessageUUID(BusinessMessageUUID.job(
+                            jobBuildID,
+                            executionAttempt,
+                            BuildStatus.RUNNING))
                     .setJobBuildID(jobBuildID)
+                    .setExecutionAttempt(executionAttempt)
                     .setBuildStatus(BuildStatus.RUNNING);
             triggerJobMessageList.add(jobMessage);
         }
         return triggerJobMessageList;
+    }
+
+    private JobBuildDto findNextRunnableJob(
+            Long stageConfigID,
+            Long stageBuildID,
+            Long currentJobConfigID
+    ) {
+        JobRelationDto relation =
+                jobRelationService.getNextJobRelation(stageConfigID, currentJobConfigID);
+        while (relation != null && relation.getNextJobID() != null && relation.getNextJobID() > 0L) {
+            Long nextJobConfigID = relation.getNextJobID();
+            JobBuildDto candidate =
+                    jobBuildService.getJobBuildByJobConfigIDAndStageBuildID(
+                            nextJobConfigID,
+                            stageBuildID
+                    );
+            if (candidate == null) {
+                return null;
+            }
+            if (candidate.getStatus() != BuildStatus.SUCCESS) {
+                return candidate;
+            }
+            relation = jobRelationService.getNextJobRelation(stageConfigID, nextJobConfigID);
+        }
+        return null;
+    }
+
+    private void completeStageIfReady(
+            Long stageConfigID,
+            Long stageBuildID,
+            Integer executionAttempt
+    ) {
+        List<JobBuildDto> tailJobs =
+                jobBuildService.getTailJobBuildsByStageBuildID(stageConfigID, stageBuildID);
+        BuildStatus status = jobBuildService.calculateStageStatus(tailJobs);
+        if (status != BuildStatus.SUCCESS) {
+            return;
+        }
+        Boolean transitioned = stageBuildService.transitionStageBuildStatus(
+                stageBuildID,
+                BuildStatus.RUNNING,
+                BuildStatus.SUCCESS,
+                executionAttempt
+        );
+        if (!Boolean.TRUE.equals(transitioned)) {
+            return;
+        }
+        TriggerStageMessage stageMessage = assembleTriggerStageByJobMessage(
+                stageBuildID,
+                BuildStatus.SUCCESS,
+                executionAttempt
+        );
+        send(KafkaConfiguration.STAGE_TOPIC, stageMessage);
     }
 
     private void send(String topic, KafkaBusinessMessage message) {

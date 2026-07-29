@@ -50,6 +50,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
             if (stageBuild.getStageStatus().name().equals(BuildStatus.PENDING.name())) {
                 stageBuildDto.setStageBuildID(stageBuild.getId());
                 stageBuildDto.setPipelineBuildID(stageBuild.getPipelineBuildID());
+                stageBuildDto.setExecutionAttempt(stageBuild.getExecutionAttempt());
                 stageBuildDto.setStatus(stageBuild.getStageStatus());
                 return stageBuildDto;
             }
@@ -69,8 +70,16 @@ public class StageBuildServiceImpl implements IStageBuildService {
     }
 
     @Override
-    public Boolean updateStageBuildStatusByID(BuildStatus status, Long id) {
-        Integer res = stageBuildDao.updateStageBuildStatusByID(status, id);
+    public Boolean updateStageBuildStatusByID(
+            BuildStatus status,
+            Long id,
+            Integer executionAttempt
+    ) {
+        Integer res = stageBuildDao.updateStageBuildStatusByID(
+                status,
+                id,
+                executionAttempt
+        );
         return res >= 1;
     }
 
@@ -78,11 +87,13 @@ public class StageBuildServiceImpl implements IStageBuildService {
     public Boolean transitionStageBuildStatus(
             Long stageBuildID,
             BuildStatus expectedStatus,
-            BuildStatus targetStatus) {
+            BuildStatus targetStatus,
+            Integer executionAttempt) {
         Integer affectedRows = stageBuildDao.transitionStageBuildStatus(
                 stageBuildID,
                 expectedStatus,
-                targetStatus);
+                targetStatus,
+                executionAttempt);
         return affectedRows == 1;
     }
 
@@ -99,6 +110,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
         StageBuild stageBuild = new StageBuild();
         stageBuild.setStageStatus(stageBuildDto.getStatus())
                 .setPipelineBuildID(stageBuildDto.getPipelineBuildID())
+                .setExecutionAttempt(stageBuildDto.getExecutionAttempt())
                 .setStageID(stageBuildDto.getStageConfigID());
         return stageBuild;
     }
@@ -108,6 +120,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
         stageBuildDto.setStageBuildID(stageBuild.getId())
                 .setStatus(stageBuild.getStageStatus())
                 .setPipelineBuildID(stageBuild.getPipelineBuildID())
+                .setExecutionAttempt(stageBuild.getExecutionAttempt())
                 .setStageConfigID(stageBuild.getStageID());
         return stageBuildDto;
     }

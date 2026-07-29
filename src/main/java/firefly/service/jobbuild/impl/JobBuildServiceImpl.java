@@ -14,7 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -51,8 +53,16 @@ public class JobBuildServiceImpl implements IJobBuildService {
     }
 
     @Override
-    public Boolean updateJobBuildStatus(Long jobBuildID, BuildStatus status) {
-        int result = jobBuildDao.updateJobBuildStatusByID(jobBuildID, status);
+    public Boolean updateJobBuildStatus(
+            Long jobBuildID,
+            BuildStatus status,
+            Integer executionAttempt
+    ) {
+        int result = jobBuildDao.updateJobBuildStatusByID(
+                jobBuildID,
+                status,
+                executionAttempt
+        );
         return result == 1;
     }
 
@@ -77,6 +87,37 @@ public class JobBuildServiceImpl implements IJobBuildService {
             }
         }
         return jobBuildDtos;
+    }
+
+    @Override
+    public List<JobBuildDto> getRunnableJobBuildsByStageBuildID(
+            Long stageConfigID,
+            Long stageBuildID
+    ) {
+        List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
+        Map<Long, JobBuild> jobBuildByConfigID = new HashMap<>();
+        for (JobBuild jobBuild : jobBuilds) {
+            jobBuildByConfigID.put(jobBuild.getJobID(), jobBuild);
+        }
+
+        List<JobBuildDto> runnableJobs = new ArrayList<>();
+        List<JobRelationDto> headRelations =
+                jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
+        for (JobRelationDto headRelation : headRelations) {
+            List<JobRelationDto> chain =
+                    jobRelationService.getJobRelationByStageIDAndHeadJobID(
+                            stageConfigID,
+                            headRelation.getJobID()
+                    );
+            for (JobRelationDto relation : chain) {
+                JobBuild jobBuild = jobBuildByConfigID.get(relation.getJobID());
+                if (jobBuild != null && jobBuild.getJobStatus() != BuildStatus.SUCCESS) {
+                    runnableJobs.add(assembleJobBuildDto(jobBuild));
+                    break;
+                }
+            }
+        }
+        return runnableJobs;
     }
 
     @Override
@@ -127,6 +168,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
         JobBuild jobBuild = new JobBuild();
         jobBuild.setStageBuildID(jobBuildDto.getStageBuildID())
                 .setJobID(jobBuildDto.getJobConfigID())
+                .setExecutionAttempt(jobBuildDto.getExecutionAttempt())
                 .setJobStatus(status);
         return jobBuild;
     }
@@ -136,6 +178,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
         dto.setStageBuildID(jobBuild.getStageBuildID())
                 .setJobConfigID(jobBuild.getJobID())
                 .setJobBuildID(jobBuild.getId())
+                .setExecutionAttempt(jobBuild.getExecutionAttempt())
                 .setStatus(jobBuild.getJobStatus());
         return dto;
     }

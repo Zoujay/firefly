@@ -15,4 +15,5 @@ public class BaseMessage {
     private Long pipelineID;
     private TriggerOrigin triggerOrigin;
     private Long triggerID;
+    private Integer executionAttempt = 0;
 }

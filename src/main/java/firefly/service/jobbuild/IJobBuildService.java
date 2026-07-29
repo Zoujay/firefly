@@ -11,11 +11,17 @@ public interface IJobBuildService {
 
     JobBuildDto getJobBuildByID(Long jobBuildID);
 
-    Boolean updateJobBuildStatus(Long jobBuildID, BuildStatus status);
+    Boolean updateJobBuildStatus(
+            Long jobBuildID,
+            BuildStatus status,
+            Integer executionAttempt
+    );
 
     JobBuildDto getJobBuildByJobConfigIDAndStageBuildID(Long jobConfigID, Long stageBuildID);
 
     List<JobBuildDto> getHeadJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
+
+    List<JobBuildDto> getRunnableJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
 
     List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
 

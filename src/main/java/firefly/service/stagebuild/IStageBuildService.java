@@ -15,12 +15,17 @@ public interface IStageBuildService {
 
     List<StageBuildDto> getStageBuildsByPipelineBuildID(Long pipelineBuildID);
 
-    Boolean updateStageBuildStatusByID(BuildStatus status, Long id);
+    Boolean updateStageBuildStatusByID(
+            BuildStatus status,
+            Long id,
+            Integer executionAttempt
+    );
 
     Boolean transitionStageBuildStatus(
             Long stageBuildID,
             BuildStatus expectedStatus,
-            BuildStatus targetStatus);
+            BuildStatus targetStatus,
+            Integer executionAttempt);
 
     StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(Long stageConfigID, Long pipelineBuildID);
 

@@ -28,4 +28,7 @@ public class TextPluginBuild extends BasePluginBuild {
     @Enumerated(EnumType.STRING)
     @Column(name = "text_plugin_status")
     private BuildStatus textPluginStatus;
+
+    @Column(name = "execution_attempt", nullable = false)
+    private Integer executionAttempt = 0;
 }

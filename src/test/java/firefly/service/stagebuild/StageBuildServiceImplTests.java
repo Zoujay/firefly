@@ -69,19 +69,22 @@ class StageBuildServiceImplTests {
         when(stageBuildDao.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS))
+                BuildStatus.SUCCESS,
+                0))
                 .thenReturn(1);
 
         Boolean transitioned = stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS);
+                BuildStatus.SUCCESS,
+                0);
 
         assertTrue(transitioned);
         verify(stageBuildDao).transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS);
+                BuildStatus.SUCCESS,
+                0);
     }
 
     @Test
@@ -89,13 +92,15 @@ class StageBuildServiceImplTests {
         when(stageBuildDao.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS))
+                BuildStatus.SUCCESS,
+                0))
                 .thenReturn(0);
 
         Boolean transitioned = stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS);
+                BuildStatus.SUCCESS,
+                0);
 
         assertFalse(transitioned);
     }

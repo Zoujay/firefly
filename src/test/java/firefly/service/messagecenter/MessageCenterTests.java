@@ -109,10 +109,11 @@ class MessageCenterTests {
         TriggerStageMessage message = new TriggerStageMessage()
                 .setMessageUUID("stage-failure")
                 .setStageBuildID(10L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.FAILURE);
 
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
-        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L))
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L, 0))
                 .thenReturn(true);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(stageConfig);
 
@@ -126,7 +127,7 @@ class MessageCenterTests {
         assertEquals(30L, captor.getValue().getPipelineBuildID());
         assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
         assertEquals(
-                BusinessMessageUUID.pipeline(30L, BuildStatus.FAILURE),
+                BusinessMessageUUID.pipeline(30L, 0, BuildStatus.FAILURE),
                 captor.getValue().getMessageUUID()
         );
     }
@@ -154,10 +155,11 @@ class MessageCenterTests {
         TriggerStageMessage message = new TriggerStageMessage()
                 .setMessageUUID("stage-success")
                 .setStageBuildID(10L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.SUCCESS);
 
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(currentStageBuild);
-        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.SUCCESS, 10L))
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.SUCCESS, 10L, 0))
                 .thenReturn(true);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(currentStage);
         when(stageConfigService.getStageConfigsByPipelineID(40L))
@@ -173,7 +175,7 @@ class MessageCenterTests {
         assertEquals(11L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.RUNNING, captor.getValue().getBuildStatus());
         assertEquals(
-                BusinessMessageUUID.stage(11L, BuildStatus.RUNNING),
+                BusinessMessageUUID.stage(11L, 0, BuildStatus.RUNNING),
                 captor.getValue().getMessageUUID()
         );
     }
@@ -184,7 +186,8 @@ class MessageCenterTests {
         when(stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS))
+                BuildStatus.SUCCESS,
+                0))
                 .thenReturn(true);
 
         messageCenter.onJobMessage(message);
@@ -195,7 +198,7 @@ class MessageCenterTests {
         assertEquals(10L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.SUCCESS, captor.getValue().getBuildStatus());
         assertEquals(
-                BusinessMessageUUID.stage(10L, BuildStatus.SUCCESS),
+                BusinessMessageUUID.stage(10L, 0, BuildStatus.SUCCESS),
                 captor.getValue().getMessageUUID()
         );
     }
@@ -206,7 +209,8 @@ class MessageCenterTests {
         when(stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.SUCCESS))
+                BuildStatus.SUCCESS,
+                0))
                 .thenReturn(false);
 
         messageCenter.onJobMessage(message);
@@ -232,7 +236,7 @@ class MessageCenterTests {
     void doesNotPublishJobMessageWhenPluginUpdateFails() {
         TriggerPluginMessage message = pluginMessage(BuildStatus.FAILURE);
         when(pluginBuildService.getJobBuildID(70L)).thenReturn(50L);
-        when(pluginBuildService.updatePluginBuild(70L, BuildStatus.FAILURE))
+        when(pluginBuildService.updatePluginBuild(70L, BuildStatus.FAILURE, 0))
                 .thenReturn(false);
 
         assertThrows(
@@ -255,7 +259,8 @@ class MessageCenterTests {
 
         verify(pluginBuildService, never()).updatePluginBuild(
                 eq(70L),
-                eq(BuildStatus.FAILURE)
+                eq(BuildStatus.FAILURE),
+                eq(0)
         );
         verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
     }
@@ -272,7 +277,8 @@ class MessageCenterTests {
         verify(pluginBuildService, never()).getJobBuildID(70L);
         verify(pluginBuildService, never()).updatePluginBuild(
                 eq(70L),
-                eq(BuildStatus.RUNNING)
+                eq(BuildStatus.RUNNING),
+                eq(0)
         );
         verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
     }
@@ -292,15 +298,17 @@ class MessageCenterTests {
         TriggerJobMessage message = new TriggerJobMessage()
                 .setMessageUUID("job-failure")
                 .setJobBuildID(50L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.FAILURE);
         when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
-        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE))
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE, 0))
                 .thenReturn(true);
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
         when(stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
-                BuildStatus.FAILURE
+                BuildStatus.FAILURE,
+                0
         )).thenReturn(true);
 
         messageCenter.onJobMessage(message);
@@ -311,7 +319,7 @@ class MessageCenterTests {
         assertEquals(10L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
         assertEquals(
-                BusinessMessageUUID.stage(10L, BuildStatus.FAILURE),
+                BusinessMessageUUID.stage(10L, 0, BuildStatus.FAILURE),
                 captor.getValue().getMessageUUID()
         );
     }
@@ -326,9 +334,10 @@ class MessageCenterTests {
         TriggerJobMessage message = new TriggerJobMessage()
                 .setMessageUUID("job-failure")
                 .setJobBuildID(50L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.FAILURE);
         when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
-        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE))
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE, 0))
                 .thenReturn(false);
 
         assertThrows(
@@ -340,7 +349,8 @@ class MessageCenterTests {
         verify(stageBuildService, never()).transitionStageBuildStatus(
                 eq(10L),
                 eq(BuildStatus.RUNNING),
-                eq(BuildStatus.FAILURE)
+                eq(BuildStatus.FAILURE),
+                eq(0)
         );
         verify(kafkaTemplate, never()).send(eq(STAGE_TOPIC), anyString(), any());
     }
@@ -355,9 +365,10 @@ class MessageCenterTests {
         TriggerStageMessage message = new TriggerStageMessage()
                 .setMessageUUID("stage-failure")
                 .setStageBuildID(10L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.FAILURE);
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
-        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L))
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L, 0))
                 .thenReturn(false);
 
         assertThrows(
@@ -375,8 +386,9 @@ class MessageCenterTests {
                 .setMessageUUID("pipeline-failure")
                 .setPipelineBuildID(30L)
                 .setPipelineID(40L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.FAILURE);
-        when(pipelineBuildService.updatePipelineBuildStatus(30L, BuildStatus.FAILURE))
+        when(pipelineBuildService.updatePipelineBuildStatus(30L, BuildStatus.FAILURE, 0))
                 .thenReturn(false);
 
         assertThrows(
@@ -388,7 +400,7 @@ class MessageCenterTests {
     private void assertPluginTerminalStatusPropagates(BuildStatus status) {
         TriggerPluginMessage message = pluginMessage(status);
         when(pluginBuildService.getJobBuildID(70L)).thenReturn(50L);
-        when(pluginBuildService.updatePluginBuild(70L, status)).thenReturn(true);
+        when(pluginBuildService.updatePluginBuild(70L, status, 0)).thenReturn(true);
 
         messageCenter.onPluginMessage(message);
 
@@ -399,7 +411,7 @@ class MessageCenterTests {
         assertEquals(50L, captor.getValue().getJobBuildID());
         assertEquals(status, captor.getValue().getBuildStatus());
         assertEquals(
-                BusinessMessageUUID.job(50L, status),
+                BusinessMessageUUID.job(50L, 0, status),
                 captor.getValue().getMessageUUID()
         );
         assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
@@ -407,9 +419,10 @@ class MessageCenterTests {
 
     private TriggerPluginMessage pluginMessage(BuildStatus status) {
         return new TriggerPluginMessage()
-                .setMessageUUID(BusinessMessageUUID.plugin(PluginType.TEXT, 70L, status))
+                .setMessageUUID(BusinessMessageUUID.plugin(PluginType.TEXT, 70L, 0, status))
                 .setPluginType(PluginType.TEXT)
                 .setPluginBuildID(70L)
+                .setExecutionAttempt(0)
                 .setStatus(status);
     }
 
@@ -440,14 +453,12 @@ class MessageCenterTests {
         );
 
         when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
-        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.SUCCESS))
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.SUCCESS, 0))
                 .thenReturn(true);
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(stageConfig);
         when(jobRelationService.getNextJobRelation(20L, 60L))
                 .thenReturn(tailRelation);
-        when(jobBuildService.getJobBuildByJobConfigIDAndStageBuildID(0L, 10L))
-                .thenReturn(null);
         when(jobBuildService.getTailJobBuildsByStageBuildID(20L, 10L))
                 .thenReturn(tailJobs);
         when(jobBuildService.calculateStageStatus(tailJobs))
@@ -456,6 +467,7 @@ class MessageCenterTests {
         return new TriggerJobMessage()
                 .setMessageUUID("tail-job-success")
                 .setJobBuildID(50L)
+                .setExecutionAttempt(0)
                 .setBuildStatus(BuildStatus.SUCCESS);
     }
 }

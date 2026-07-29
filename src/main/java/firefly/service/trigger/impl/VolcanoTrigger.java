@@ -53,8 +53,12 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
         // send message to message center
         TriggerPipelineMessage triggerPipelineMessage = new TriggerPipelineMessage();
         triggerPipelineMessage.setPipelineBuildID(message.getPipelineBuildID())
-                .setMessageUUID(BusinessMessageUUID.pipeline(message.getPipelineBuildID(), BuildStatus.RUNNING))
+                .setMessageUUID(BusinessMessageUUID.pipeline(
+                        message.getPipelineBuildID(),
+                        message.getExecutionAttempt(),
+                        BuildStatus.RUNNING))
                 .setPipelineID(message.getPipelineID())
+                .setExecutionAttempt(message.getExecutionAttempt())
                 .setBuildStatus(BuildStatus.RUNNING);
         kafkaTemplate.send(
                 KafkaConfiguration.PIPELINE_TOPIC,

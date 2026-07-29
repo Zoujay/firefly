@@ -32,7 +32,8 @@ class StageBuildStateTransitionIntegrationTests {
         StageBuild stageBuild = stageBuildDao.saveAndFlush(new StageBuild()
                 .setPipelineBuildID(9101L)
                 .setStageID(9201L)
-                .setStageStatus(BuildStatus.RUNNING));
+                .setStageStatus(BuildStatus.RUNNING)
+                .setExecutionAttempt(1));
 
         int taskCount = 20;
         CountDownLatch ready = new CountDownLatch(taskCount);
@@ -47,7 +48,8 @@ class StageBuildStateTransitionIntegrationTests {
                     return stageBuildService.transitionStageBuildStatus(
                             stageBuild.getId(),
                             BuildStatus.RUNNING,
-                            BuildStatus.SUCCESS);
+                            BuildStatus.SUCCESS,
+                            1);
                 }));
             }
 
@@ -68,6 +70,32 @@ class StageBuildStateTransitionIntegrationTests {
                             .orElseThrow()
                             .getStageStatus()
             );
+        } finally {
+            stageBuildDao.deleteById(stageBuild.getId());
+        }
+    }
+
+    @Test
+    void rejectsAStatusTransitionFromAnOlderExecutionAttempt() {
+        StageBuild stageBuild = stageBuildDao.saveAndFlush(new StageBuild()
+                .setPipelineBuildID(9102L)
+                .setStageID(9202L)
+                .setStageStatus(BuildStatus.RUNNING)
+                .setExecutionAttempt(2));
+
+        try {
+            Boolean transitioned = stageBuildService.transitionStageBuildStatus(
+                    stageBuild.getId(),
+                    BuildStatus.RUNNING,
+                    BuildStatus.SUCCESS,
+                    1
+            );
+
+            assertEquals(false, transitioned);
+            StageBuild persisted = stageBuildDao.findById(stageBuild.getId())
+                    .orElseThrow();
+            assertEquals(BuildStatus.RUNNING, persisted.getStageStatus());
+            assertEquals(2, persisted.getExecutionAttempt());
         } finally {
             stageBuildDao.deleteById(stageBuild.getId());
         }

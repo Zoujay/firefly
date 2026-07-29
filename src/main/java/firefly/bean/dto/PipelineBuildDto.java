@@ -17,4 +17,5 @@ public class PipelineBuildDto {
     private Long pipelineID;
     private String pipelineUUID;
     private BuildStatus buildStatus;
+    private Integer executionAttempt = 0;
 }

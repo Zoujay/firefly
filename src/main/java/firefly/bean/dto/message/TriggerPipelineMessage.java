@@ -25,4 +25,6 @@ public class TriggerPipelineMessage implements Serializable, KafkaBusinessMessag
     private Long pipelineBuildID;
 
     private BuildStatus buildStatus;
+
+    private Integer executionAttempt = 0;
 }

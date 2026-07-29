@@ -26,4 +26,7 @@ public class PipelineBuild {
     @Column(name = "pipeline_status")
     private BuildStatus pipelineStatus;
 
+    @Column(name = "execution_attempt", nullable = false)
+    private Integer executionAttempt = 0;
+
 }
