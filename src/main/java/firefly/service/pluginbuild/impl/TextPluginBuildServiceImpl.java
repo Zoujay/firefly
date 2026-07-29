@@ -38,8 +38,9 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
     @Override
     public Long getJobBuildID(Long pluginBuildID) {
         Long jobBuildID = textPluginBuildDao.getJobBuildIDByPluginBuildID(pluginBuildID);
-        if (jobBuildID == null) {
-            return -1L;
+        if (jobBuildID == null || jobBuildID <= 0L) {
+            throw new IllegalStateException(
+                    "Job build not found for pluginBuildID=" + pluginBuildID);
         }
         return jobBuildID;
     }

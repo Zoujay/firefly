@@ -6,15 +6,21 @@ import firefly.bean.dto.StageBuildDto;
 import firefly.bean.dto.StageConfigDto;
 import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
+import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
 import firefly.constant.BuildStatus;
+import firefly.constant.PluginType;
 import firefly.service.jobbuild.IJobBuildService;
 import firefly.service.jobconfig.IJobConfigService;
 import firefly.service.jobconfig.IJobRelationService;
 import firefly.service.pipelinebuild.IPipelineBuildService;
 import firefly.service.pipelineconfig.IPipelineConfigService;
+import firefly.service.pluginbuild.IPluginBuild;
+import firefly.service.pluginparser.PluginServiceParser;
 import firefly.service.stagebuild.IStageBuildService;
 import firefly.service.stageconfig.IStageConfigService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,9 +31,12 @@ import org.springframework.kafka.core.KafkaTemplate;
 
 import java.util.List;
 
+import static firefly.constant.KafkaConfiguration.JOB_TOPIC;
 import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
 import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -61,8 +70,31 @@ class MessageCenterTests {
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
 
+    @Mock
+    private IPluginBuild pluginBuildService;
+
     @InjectMocks
     private MessageCenter messageCenter;
+
+    private IPluginBuild previousTextPluginBuildService;
+
+    @BeforeEach
+    void registerPluginBuildService() {
+        previousTextPluginBuildService =
+                PluginServiceParser.PLUGIN_BUILD_MAP.put(PluginType.TEXT, pluginBuildService);
+    }
+
+    @AfterEach
+    void restorePluginBuildService() {
+        if (previousTextPluginBuildService == null) {
+            PluginServiceParser.PLUGIN_BUILD_MAP.remove(PluginType.TEXT);
+        } else {
+            PluginServiceParser.PLUGIN_BUILD_MAP.put(
+                    PluginType.TEXT,
+                    previousTextPluginBuildService
+            );
+        }
+    }
 
     @Test
     void propagatesStageFailureToPipeline() {
@@ -80,6 +112,8 @@ class MessageCenterTests {
                 .setBuildStatus(BuildStatus.FAILURE);
 
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L))
+                .thenReturn(true);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(stageConfig);
 
         messageCenter.onStageMessage(message);
@@ -123,6 +157,8 @@ class MessageCenterTests {
                 .setBuildStatus(BuildStatus.SUCCESS);
 
         when(stageBuildService.getStageBuildByID(10L)).thenReturn(currentStageBuild);
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.SUCCESS, 10L))
+                .thenReturn(true);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(currentStage);
         when(stageConfigService.getStageConfigsByPipelineID(40L))
                 .thenReturn(List.of(currentStage, nextStage));
@@ -180,6 +216,201 @@ class MessageCenterTests {
                 anyString(),
                 org.mockito.ArgumentMatchers.any(TriggerStageMessage.class)
         );
+    }
+
+    @Test
+    void propagatesPluginSuccessToJob() {
+        assertPluginTerminalStatusPropagates(BuildStatus.SUCCESS);
+    }
+
+    @Test
+    void propagatesPluginFailureToJob() {
+        assertPluginTerminalStatusPropagates(BuildStatus.FAILURE);
+    }
+
+    @Test
+    void doesNotPublishJobMessageWhenPluginUpdateFails() {
+        TriggerPluginMessage message = pluginMessage(BuildStatus.FAILURE);
+        when(pluginBuildService.getJobBuildID(70L)).thenReturn(50L);
+        when(pluginBuildService.updatePluginBuild(70L, BuildStatus.FAILURE))
+                .thenReturn(false);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onPluginMessage(message)
+        );
+
+        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+    }
+
+    @Test
+    void doesNotUpdatePluginOrPublishJobWhenJobMappingIsMissing() {
+        TriggerPluginMessage message = pluginMessage(BuildStatus.FAILURE);
+        when(pluginBuildService.getJobBuildID(70L)).thenReturn(-1L);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onPluginMessage(message)
+        );
+
+        verify(pluginBuildService, never()).updatePluginBuild(
+                eq(70L),
+                eq(BuildStatus.FAILURE)
+        );
+        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+    }
+
+    @Test
+    void rejectsNonTerminalPluginMessageWithoutPublishingJob() {
+        TriggerPluginMessage message = pluginMessage(BuildStatus.RUNNING);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onPluginMessage(message)
+        );
+
+        verify(pluginBuildService, never()).getJobBuildID(70L);
+        verify(pluginBuildService, never()).updatePluginBuild(
+                eq(70L),
+                eq(BuildStatus.RUNNING)
+        );
+        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+    }
+
+    @Test
+    void propagatesJobFailureToStageWhenJobUpdateSucceeds() {
+        JobBuildDto jobBuild = new JobBuildDto()
+                .setJobBuildID(50L)
+                .setJobConfigID(60L)
+                .setStageBuildID(10L)
+                .setStatus(BuildStatus.RUNNING);
+        StageBuildDto stageBuild = new StageBuildDto()
+                .setStageBuildID(10L)
+                .setStageConfigID(20L)
+                .setPipelineBuildID(30L)
+                .setStatus(BuildStatus.RUNNING);
+        TriggerJobMessage message = new TriggerJobMessage()
+                .setMessageUUID("job-failure")
+                .setJobBuildID(50L)
+                .setBuildStatus(BuildStatus.FAILURE);
+        when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE))
+                .thenReturn(true);
+        when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageBuildService.transitionStageBuildStatus(
+                10L,
+                BuildStatus.RUNNING,
+                BuildStatus.FAILURE
+        )).thenReturn(true);
+
+        messageCenter.onJobMessage(message);
+
+        ArgumentCaptor<TriggerStageMessage> captor =
+                ArgumentCaptor.forClass(TriggerStageMessage.class);
+        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
+        assertEquals(10L, captor.getValue().getStageBuildID());
+        assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
+        assertEquals(
+                BusinessMessageUUID.stage(10L, BuildStatus.FAILURE),
+                captor.getValue().getMessageUUID()
+        );
+    }
+
+    @Test
+    void doesNotChangeStageWhenJobUpdateFails() {
+        JobBuildDto jobBuild = new JobBuildDto()
+                .setJobBuildID(50L)
+                .setJobConfigID(60L)
+                .setStageBuildID(10L)
+                .setStatus(BuildStatus.RUNNING);
+        TriggerJobMessage message = new TriggerJobMessage()
+                .setMessageUUID("job-failure")
+                .setJobBuildID(50L)
+                .setBuildStatus(BuildStatus.FAILURE);
+        when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE))
+                .thenReturn(false);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onJobMessage(message)
+        );
+
+        verify(stageBuildService, never()).getStageBuildByID(10L);
+        verify(stageBuildService, never()).transitionStageBuildStatus(
+                eq(10L),
+                eq(BuildStatus.RUNNING),
+                eq(BuildStatus.FAILURE)
+        );
+        verify(kafkaTemplate, never()).send(eq(STAGE_TOPIC), anyString(), any());
+    }
+
+    @Test
+    void doesNotChangePipelineWhenStageUpdateFails() {
+        StageBuildDto stageBuild = new StageBuildDto()
+                .setStageBuildID(10L)
+                .setStageConfigID(20L)
+                .setPipelineBuildID(30L)
+                .setStatus(BuildStatus.RUNNING);
+        TriggerStageMessage message = new TriggerStageMessage()
+                .setMessageUUID("stage-failure")
+                .setStageBuildID(10L)
+                .setBuildStatus(BuildStatus.FAILURE);
+        when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageBuildService.updateStageBuildStatusByID(BuildStatus.FAILURE, 10L))
+                .thenReturn(false);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onStageMessage(message)
+        );
+
+        verify(stageConfigService, never()).getStageConfigByID(20L);
+        verify(kafkaTemplate, never()).send(eq(PIPELINE_TOPIC), anyString(), any());
+    }
+
+    @Test
+    void rejectsPipelineMessageWhenPipelineUpdateFails() {
+        TriggerPipelineMessage message = new TriggerPipelineMessage()
+                .setMessageUUID("pipeline-failure")
+                .setPipelineBuildID(30L)
+                .setPipelineID(40L)
+                .setBuildStatus(BuildStatus.FAILURE);
+        when(pipelineBuildService.updatePipelineBuildStatus(30L, BuildStatus.FAILURE))
+                .thenReturn(false);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageCenter.onPipelineMessage(message)
+        );
+    }
+
+    private void assertPluginTerminalStatusPropagates(BuildStatus status) {
+        TriggerPluginMessage message = pluginMessage(status);
+        when(pluginBuildService.getJobBuildID(70L)).thenReturn(50L);
+        when(pluginBuildService.updatePluginBuild(70L, status)).thenReturn(true);
+
+        messageCenter.onPluginMessage(message);
+
+        ArgumentCaptor<TriggerJobMessage> captor =
+                ArgumentCaptor.forClass(TriggerJobMessage.class);
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(kafkaTemplate).send(eq(JOB_TOPIC), keyCaptor.capture(), captor.capture());
+        assertEquals(50L, captor.getValue().getJobBuildID());
+        assertEquals(status, captor.getValue().getBuildStatus());
+        assertEquals(
+                BusinessMessageUUID.job(50L, status),
+                captor.getValue().getMessageUUID()
+        );
+        assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
+    }
+
+    private TriggerPluginMessage pluginMessage(BuildStatus status) {
+        return new TriggerPluginMessage()
+                .setMessageUUID(BusinessMessageUUID.plugin(PluginType.TEXT, 70L, status))
+                .setPluginType(PluginType.TEXT)
+                .setPluginBuildID(70L)
+                .setStatus(status);
     }
 
     private TriggerJobMessage prepareTailJobSuccess() {
