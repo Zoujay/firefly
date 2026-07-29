@@ -6,6 +6,11 @@ target/
 mvnw
 mvnw.cmd
 
+.env
+.env.*
+!.env.example
+.DS_Store
+
 ### STS ###
 .apt_generated
 .classpath
