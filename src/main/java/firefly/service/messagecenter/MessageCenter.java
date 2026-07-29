@@ -15,6 +15,7 @@ import firefly.service.jobconfig.IJobConfigService;
 import firefly.service.jobconfig.IJobRelationService;
 import firefly.service.pipelinebuild.IPipelineBuildService;
 import firefly.service.pipelineconfig.IPipelineConfigService;
+import firefly.service.pluginbuild.IPluginBuild;
 import firefly.service.pluginparser.PluginServiceParser;
 import firefly.service.stagebuild.IStageBuildService;
 import firefly.service.stageconfig.IStageConfigService;
@@ -25,7 +26,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 @Slf4j
 @Service
@@ -60,7 +60,12 @@ public class MessageCenter {
         // step 1. modify pipeline status
         Long pipelineBuildID = pipelineMessage.getPipelineBuildID();
         BuildStatus buildStatus = pipelineMessage.getBuildStatus();
-        pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
+        Boolean updated = pipelineBuildService.updatePipelineBuildStatus(pipelineBuildID, buildStatus);
+        if (!Boolean.TRUE.equals(updated)) {
+            throw new IllegalStateException(
+                    "Failed to update pipeline build: pipelineBuildID="
+                            + pipelineBuildID + ", status=" + buildStatus);
+        }
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
             return true;
         }
@@ -81,7 +86,12 @@ public class MessageCenter {
         Long stageConfigID = stageBuildDto.getStageConfigID();
         Long pipelineBuildID = stageBuildDto.getPipelineBuildID();
         BuildStatus buildStatus = stageMessage.getBuildStatus();
-        stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
+        Boolean updated = stageBuildService.updateStageBuildStatusByID(buildStatus, stageBuildID);
+        if (!Boolean.TRUE.equals(updated)) {
+            throw new IllegalStateException(
+                    "Failed to update stage build: stageBuildID="
+                            + stageBuildID + ", status=" + buildStatus);
+        }
         StageConfigDto stageConfigDto = stageConfigService.getStageConfigByID(stageConfigID);
         Long pipelineID = stageConfigDto.getPipelineID();
         if (buildStatus.equals(BuildStatus.SUCCESS)) {
@@ -143,6 +153,11 @@ public class MessageCenter {
         JobBuildDto jobBuildDto = jobBuildService.getJobBuildByID(jobBuildID);
         Long stageBuildID = jobBuildDto.getStageBuildID();
         Boolean result = jobBuildService.updateJobBuildStatus(jobBuildID, buildStatus);
+        if (!Boolean.TRUE.equals(result)) {
+            throw new IllegalStateException(
+                    "Failed to update job build: jobBuildID="
+                            + jobBuildID + ", status=" + buildStatus);
+        }
         TriggerStageMessage triggerStageMessage = this.assembleTriggerStageByJobMessage(stageBuildID, BuildStatus.RUNNING);
         StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
         if (buildStatus == BuildStatus.SUCCESS) {
@@ -218,21 +233,37 @@ public class MessageCenter {
         PluginType pluginType = pluginMessage.getPluginType();
         Long pluginBuildID = pluginMessage.getPluginBuildID();
         BuildStatus status = pluginMessage.getStatus();
-        Boolean pluginResult = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).updatePluginBuild(pluginBuildID, status);
-        System.out.println("update plugin build status");
-        Long jobBuildID = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).getJobBuildID(pluginBuildID);
+
+        IPluginBuild pluginBuildService = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType);
+        if (pluginBuildService == null) {
+            throw new IllegalStateException("Unsupported plugin type: " + pluginType);
+        }
+        if (pluginBuildID == null || pluginBuildID <= 0L) {
+            throw new IllegalStateException("Invalid plugin build ID: " + pluginBuildID);
+        }
+        if (!isTerminalStatus(status)) {
+            throw new IllegalStateException(
+                    "Plugin message is not terminal: pluginBuildID="
+                            + pluginBuildID + ", status=" + status);
+        }
+
+        Long jobBuildID = pluginBuildService.getJobBuildID(pluginBuildID);
+        if (jobBuildID == null || jobBuildID <= 0L) {
+            throw new IllegalStateException(
+                    "Job build not found for pluginBuildID=" + pluginBuildID);
+        }
+
+        Boolean pluginResult = pluginBuildService.updatePluginBuild(pluginBuildID, status);
+        if (!Boolean.TRUE.equals(pluginResult)) {
+            throw new IllegalStateException(
+                    "Failed to update plugin build: pluginBuildID="
+                            + pluginBuildID + ", status=" + status);
+        }
+
         TriggerJobMessage triggerJobMessage = new TriggerJobMessage();
         triggerJobMessage.setJobBuildID(jobBuildID)
-                .setBuildStatus(BuildStatus.SUCCESS)
-                .setMessageUUID(BusinessMessageUUID.job(jobBuildID, BuildStatus.SUCCESS));
-        if (pluginResult) {
-            if (Objects.requireNonNull(status) == BuildStatus.SUCCESS) {
-                triggerJobMessage.setBuildStatus(BuildStatus.SUCCESS);
-            } else {
-                triggerJobMessage.setBuildStatus(BuildStatus.FAILURE);
-                triggerJobMessage.setMessageUUID(BusinessMessageUUID.job(jobBuildID, BuildStatus.FAILURE));
-            }
-        }
+                .setBuildStatus(status)
+                .setMessageUUID(BusinessMessageUUID.job(jobBuildID, status));
         send(KafkaConfiguration.JOB_TOPIC, triggerJobMessage);
         return true;
     }
