@@ -1,7 +1,10 @@
 package firefly.service.messagecenter;
 
+import firefly.bean.dto.JobBuildDto;
+import firefly.bean.dto.JobRelationDto;
 import firefly.bean.dto.StageBuildDto;
 import firefly.bean.dto.StageConfigDto;
+import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
 import firefly.constant.BuildStatus;
@@ -27,6 +30,7 @@ import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -136,5 +140,91 @@ class MessageCenterTests {
                 BusinessMessageUUID.stage(11L, BuildStatus.RUNNING),
                 captor.getValue().getMessageUUID()
         );
+    }
+
+    @Test
+    void publishesStageSuccessOnlyWhenAtomicTransitionWins() {
+        TriggerJobMessage message = prepareTailJobSuccess();
+        when(stageBuildService.transitionStageBuildStatus(
+                10L,
+                BuildStatus.RUNNING,
+                BuildStatus.SUCCESS))
+                .thenReturn(true);
+
+        messageCenter.onJobMessage(message);
+
+        ArgumentCaptor<TriggerStageMessage> captor =
+                ArgumentCaptor.forClass(TriggerStageMessage.class);
+        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
+        assertEquals(10L, captor.getValue().getStageBuildID());
+        assertEquals(BuildStatus.SUCCESS, captor.getValue().getBuildStatus());
+        assertEquals(
+                BusinessMessageUUID.stage(10L, BuildStatus.SUCCESS),
+                captor.getValue().getMessageUUID()
+        );
+    }
+
+    @Test
+    void doesNotPublishStageSuccessWhenAnotherThreadWonAtomicTransition() {
+        TriggerJobMessage message = prepareTailJobSuccess();
+        when(stageBuildService.transitionStageBuildStatus(
+                10L,
+                BuildStatus.RUNNING,
+                BuildStatus.SUCCESS))
+                .thenReturn(false);
+
+        messageCenter.onJobMessage(message);
+
+        verify(kafkaTemplate, never()).send(
+                eq(STAGE_TOPIC),
+                anyString(),
+                org.mockito.ArgumentMatchers.any(TriggerStageMessage.class)
+        );
+    }
+
+    private TriggerJobMessage prepareTailJobSuccess() {
+        JobBuildDto jobBuild = new JobBuildDto()
+                .setJobBuildID(50L)
+                .setJobConfigID(60L)
+                .setStageBuildID(10L)
+                .setStatus(BuildStatus.RUNNING);
+        StageBuildDto stageBuild = new StageBuildDto()
+                .setStageBuildID(10L)
+                .setStageConfigID(20L)
+                .setPipelineBuildID(30L)
+                .setStatus(BuildStatus.RUNNING);
+        StageConfigDto stageConfig = new StageConfigDto()
+                .setId(20L)
+                .setPipelineID(40L);
+        JobRelationDto tailRelation = new JobRelationDto()
+                .setStageID(20L)
+                .setJobID(60L)
+                .setNextJobID(0L);
+        List<JobBuildDto> tailJobs = List.of(
+                new JobBuildDto()
+                        .setJobBuildID(50L)
+                        .setJobConfigID(60L)
+                        .setStageBuildID(10L)
+                        .setStatus(BuildStatus.SUCCESS)
+        );
+
+        when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
+        when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.SUCCESS))
+                .thenReturn(true);
+        when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageConfigService.getStageConfigByID(20L)).thenReturn(stageConfig);
+        when(jobRelationService.getNextJobRelation(20L, 60L))
+                .thenReturn(tailRelation);
+        when(jobBuildService.getJobBuildByJobConfigIDAndStageBuildID(0L, 10L))
+                .thenReturn(null);
+        when(jobBuildService.getTailJobBuildsByStageBuildID(20L, 10L))
+                .thenReturn(tailJobs);
+        when(jobBuildService.calculateStageStatus(tailJobs))
+                .thenReturn(BuildStatus.SUCCESS);
+
+        return new TriggerJobMessage()
+                .setMessageUUID("tail-job-success")
+                .setJobBuildID(50L)
+                .setBuildStatus(BuildStatus.SUCCESS);
     }
 }

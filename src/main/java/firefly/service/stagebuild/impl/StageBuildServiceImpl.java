@@ -75,6 +75,18 @@ public class StageBuildServiceImpl implements IStageBuildService {
     }
 
     @Override
+    public Boolean transitionStageBuildStatus(
+            Long stageBuildID,
+            BuildStatus expectedStatus,
+            BuildStatus targetStatus) {
+        Integer affectedRows = stageBuildDao.transitionStageBuildStatus(
+                stageBuildID,
+                expectedStatus,
+                targetStatus);
+        return affectedRows == 1;
+    }
+
+    @Override
     public StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(
             Long stageConfigID, Long pipelineBuildID) {
         Optional<StageBuild> stageBuild =
