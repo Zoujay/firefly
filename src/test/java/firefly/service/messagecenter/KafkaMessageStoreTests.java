@@ -41,7 +41,7 @@ class KafkaMessageStoreTests {
 
     @Test
     void savesKafkaMetadataAndPayloadWithJpa() {
-        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(11L, 0, BuildStatus.RUNNING);
         String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
         ConsumerRecord<String, String> message = new ConsumerRecord<>(
                 "pipeline_message",
@@ -75,7 +75,7 @@ class KafkaMessageStoreTests {
 
     @Test
     void usesDedicatedJpaRepositoryForEveryMessageType() {
-        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(11L, 0, BuildStatus.RUNNING);
         ConsumerRecord<String, String> message = record("topic", 0, 1L, messageUUID);
         String payload = message.value();
         when(stageMessageDao.insertIfAbsent(messageUUID, "topic", 0, 1L, messageUUID, payload))
@@ -126,7 +126,7 @@ class KafkaMessageStoreTests {
 
     @Test
     void doesNotSaveBusinessUUIDThatAlreadyExists() {
-        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(11L, 0, BuildStatus.RUNNING);
         ConsumerRecord<String, String> message = record("pipeline_message", 0, 2L, messageUUID);
         when(pipelineMessageDao.insertIfAbsent(
                 messageUUID,
@@ -145,7 +145,7 @@ class KafkaMessageStoreTests {
 
     @Test
     void removesDuplicateBusinessUUIDsWithinTheSameBatch() {
-        String messageUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(11L, 0, BuildStatus.RUNNING);
         ConsumerRecord<String, String> first = record("pipeline_message", 0, 1L, messageUUID);
         ConsumerRecord<String, String> second = record("pipeline_message", 0, 2L, messageUUID);
         when(pipelineMessageDao.insertIfAbsent(
@@ -174,8 +174,8 @@ class KafkaMessageStoreTests {
 
     @Test
     void returnsOnlyNewMessagesFromMixedBatch() {
-        String duplicateUUID = BusinessMessageUUID.pipeline(11L, BuildStatus.RUNNING);
-        String newUUID = BusinessMessageUUID.pipeline(12L, BuildStatus.RUNNING);
+        String duplicateUUID = BusinessMessageUUID.pipeline(11L, 0, BuildStatus.RUNNING);
+        String newUUID = BusinessMessageUUID.pipeline(12L, 0, BuildStatus.RUNNING);
         ConsumerRecord<String, String> duplicate =
                 record("pipeline_message", 0, 1L, duplicateUUID);
         ConsumerRecord<String, String> newMessage =

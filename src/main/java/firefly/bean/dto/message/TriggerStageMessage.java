@@ -23,4 +23,6 @@ public class TriggerStageMessage implements Serializable, KafkaBusinessMessage {
     private Long stageBuildID;
 
     private BuildStatus buildStatus;
+
+    private Integer executionAttempt = 0;
 }

@@ -48,6 +48,7 @@ public class VolcanoTriggerOriginServiceImpl implements ITriggerOrigin {
                 .setSk(volcanoConfig.getSk())
                 .setTriggerOrigin(TriggerOrigin.VOLCANO)
                 .setPipelineBuildID(pipelineBuildID)
+                .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt())
                 .setPipelineID(pipelineID);
         return volcanoMessageEntity;
     }

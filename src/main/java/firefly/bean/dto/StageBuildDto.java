@@ -15,5 +15,6 @@ public class StageBuildDto {
     private Long stageConfigID;
     private Long pipelineBuildID;
     private BuildStatus status;
+    private Integer executionAttempt = 0;
 
 }

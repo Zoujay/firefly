@@ -24,4 +24,6 @@ public class TriggerJobMessage implements Serializable, KafkaBusinessMessage {
 
     private BuildStatus buildStatus;
 
+    private Integer executionAttempt = 0;
+
 }

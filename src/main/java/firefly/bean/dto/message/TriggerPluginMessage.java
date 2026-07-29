@@ -27,4 +27,6 @@ public class TriggerPluginMessage implements Serializable, KafkaBusinessMessage 
     private Long pluginBuildID;
 
     private BuildStatus status;
+
+    private Integer executionAttempt = 0;
 }

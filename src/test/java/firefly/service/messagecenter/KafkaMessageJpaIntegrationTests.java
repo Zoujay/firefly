@@ -23,7 +23,7 @@ class KafkaMessageJpaIntegrationTests {
 
     @Test
     void savesTheSameBusinessUUIDOnlyOnceAcrossDifferentKafkaOffsets() {
-        String messageUUID = BusinessMessageUUID.pipeline(9_999_999L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(9_999_999L, 0, BuildStatus.RUNNING);
         String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
 
         KafkaMessageSaveResult firstResult = kafkaMessageStore.savePipelineMessages(List.of(
@@ -44,7 +44,7 @@ class KafkaMessageJpaIntegrationTests {
 
     @Test
     void onlyOneConcurrentInsertCanClaimTheSameBusinessUUID() throws Exception {
-        String messageUUID = BusinessMessageUUID.pipeline(9_999_998L, BuildStatus.RUNNING);
+        String messageUUID = BusinessMessageUUID.pipeline(9_999_998L, 0, BuildStatus.RUNNING);
         String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
         ConsumerRecord<String, String> first =
                 new ConsumerRecord<>("pipeline_message", 0, 9_999_981L, messageUUID, payload);

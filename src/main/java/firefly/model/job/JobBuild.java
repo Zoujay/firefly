@@ -30,4 +30,7 @@ public class JobBuild {
     @Column(name = "job_status")
     private BuildStatus jobStatus;
 
+    @Column(name = "execution_attempt", nullable = false)
+    private Integer executionAttempt = 0;
+
 }

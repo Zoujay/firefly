@@ -345,6 +345,21 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
 
 接口会创建完整的构建记录，保存 Volcano 触发记录，发送 Pipeline `RUNNING` 消息，并返回 Pipeline Build ID。该消息随后会进入 `pipeline_message` 表完成归档，并由 `MessageCenter` 开始推进构建状态。
 
+#### 重新执行失败的 Pipeline
+
+```bash
+curl -X POST http://localhost:9999/pipeline-builds/1/retry
+```
+
+只有状态为 `FAILURE` 的 Pipeline Build 可以重新执行，否则接口返回 HTTP `409`。重试会复用原有构建记录并递增 `executionAttempt`，跳过已经成功的 Stage 和 Job，将失败或尚未执行的记录重置为 `PENDING`，然后从第一个未成功的 Stage 继续执行。响应示例：
+
+```json
+{
+  "pipelineBuildID": 1,
+  "executionAttempt": 1
+}
+```
+
 ### 参数校验
 
 - Pipeline、Stage、Job 和构建请求的 `uuid` 长度必须是 `64`。
@@ -369,6 +384,7 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
 - `stage_config` 使用 `(pipeline_id, stage_order)` 保证同一 Pipeline 内 Stage 顺序唯一。
 - `stage_build` 使用 `(pipeline_build_id, stage_id)` 避免同一构建重复创建 Stage Build。
 - `text_plugin_config` 使用 `job_config_id` 关联 Job 配置。
+- 四张构建表使用 `execution_attempt` 区分同一构建记录的不同执行轮次。
 - 四张消息表保存 Topic、Partition、Offset、Key、Payload、接收时间和业务消息 UUID。
 
 ### 测试
@@ -739,6 +755,21 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
 
 The endpoint creates the complete build records, stores the Volcano trigger record, publishes a Pipeline `RUNNING` message, and returns the Pipeline Build ID. That message is then archived in `pipeline_message`, after which `MessageCenter` starts advancing the build state.
 
+#### Retry a failed Pipeline
+
+```bash
+curl -X POST http://localhost:9999/pipeline-builds/1/retry
+```
+
+Only a Pipeline Build in `FAILURE` can be retried; otherwise, the endpoint returns HTTP `409`. A retry reuses the existing build records and increments `executionAttempt`. Successful Stages and Jobs are skipped, while failed or unexecuted records are reset to `PENDING`, and execution resumes from the first unfinished Stage. Example response:
+
+```json
+{
+  "pipelineBuildID": 1,
+  "executionAttempt": 1
+}
+```
+
 ### Validation
 
 - Pipeline, Stage, Job, and build-request `uuid` values must contain exactly `64` characters.
@@ -763,6 +794,7 @@ Notable constraints:
 - `stage_config` uses `(pipeline_id, stage_order)` to keep Stage order unique within a Pipeline.
 - `stage_build` uses `(pipeline_build_id, stage_id)` to prevent duplicate Stage Builds in the same Pipeline Build.
 - `text_plugin_config` references the Job configuration through `job_config_id`.
+- The four build tables use `execution_attempt` to distinguish retries of the same build records.
 - The four message tables store the topic, partition, offset, key, payload, received time, and business message UUID.
 
 ### Tests

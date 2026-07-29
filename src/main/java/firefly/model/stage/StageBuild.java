@@ -27,4 +27,7 @@ public class StageBuild {
     @Enumerated(EnumType.STRING)
     @Column(name = "stage_status")
     private BuildStatus stageStatus;
+
+    @Column(name = "execution_attempt", nullable = false)
+    private Integer executionAttempt = 0;
 }

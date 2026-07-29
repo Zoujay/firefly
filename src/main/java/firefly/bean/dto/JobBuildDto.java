@@ -16,4 +16,5 @@ public class JobBuildDto {
     private Long jobConfigID;
     private Long jobBuildID;
     private BuildStatus status;
+    private Integer executionAttempt = 0;
 }

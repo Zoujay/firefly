@@ -23,8 +23,17 @@ public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
     List<StageBuild> getStageBuildByPipelineBuildID(Long pipelineBuildID);
 
     @Modifying
-    @Query("update StageBuild s set s.stageStatus = ?1 where s.id = ?2")
-    Integer updateStageBuildStatusByID(BuildStatus status, Long id);
+    @Query("""
+            update StageBuild s
+            set s.stageStatus = :status
+            where s.id = :id
+              and s.executionAttempt = :executionAttempt
+            """)
+    Integer updateStageBuildStatusByID(
+            @Param("status") BuildStatus status,
+            @Param("id") Long id,
+            @Param("executionAttempt") Integer executionAttempt
+    );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -32,11 +41,13 @@ public interface IStageBuildDao extends JpaRepository<StageBuild, Long> {
             set s.stageStatus = :targetStatus
             where s.id = :stageBuildID
               and s.stageStatus = :expectedStatus
+              and s.executionAttempt = :executionAttempt
             """)
     Integer transitionStageBuildStatus(
             @Param("stageBuildID") Long stageBuildID,
             @Param("expectedStatus") BuildStatus expectedStatus,
-            @Param("targetStatus") BuildStatus targetStatus);
+            @Param("targetStatus") BuildStatus targetStatus,
+            @Param("executionAttempt") Integer executionAttempt);
 
     @Query("""
             select s from StageBuild as s

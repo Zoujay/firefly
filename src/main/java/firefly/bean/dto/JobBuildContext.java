@@ -18,5 +18,6 @@ public class JobBuildContext {
     private Long pluginID;
     private PluginType pluginType;
     private BuildStatus status;
+    private Integer executionAttempt = 0;
 
 }

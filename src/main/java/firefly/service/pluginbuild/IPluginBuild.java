@@ -15,9 +15,13 @@ public interface IPluginBuild {
 
     Long savePluginBuild(JobBuildContext jobBuildContext);
 
-    Boolean executePluginBuild(Long id, BuildStatus status);
+    Boolean executePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
 
-    Boolean updatePluginBuild(Long id, BuildStatus status);
+    Boolean updatePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
 
-    TriggerPluginMessage triggerPluginBuild(Long pluginBuildID, BuildStatus status);
+    TriggerPluginMessage triggerPluginBuild(
+            Long pluginBuildID,
+            BuildStatus status,
+            Integer executionAttempt
+    );
 }
