@@ -17,6 +17,11 @@ public interface IStageBuildService {
 
     Boolean updateStageBuildStatusByID(BuildStatus status, Long id);
 
+    Boolean transitionStageBuildStatus(
+            Long stageBuildID,
+            BuildStatus expectedStatus,
+            BuildStatus targetStatus);
+
     StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(Long stageConfigID, Long pipelineBuildID);
 
 }

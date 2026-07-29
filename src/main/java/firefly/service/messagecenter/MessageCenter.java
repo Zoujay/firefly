@@ -166,7 +166,18 @@ public class MessageCenter {
             } else {
                 List<JobBuildDto> tailJobs = jobBuildService.getTailJobBuildsByStageBuildID(stageConfigID, stageBuildID);
                 BuildStatus status = jobBuildService.calculateStageStatus(tailJobs);
-                if (status == stageBuildDto.getStatus()) {
+                if (!isTerminalStatus(status)) {
+                    return true;
+                }
+                Boolean transitioned = stageBuildService.transitionStageBuildStatus(
+                        stageBuildID,
+                        BuildStatus.RUNNING,
+                        status);
+                if (!Boolean.TRUE.equals(transitioned)) {
+                    log.debug(
+                            "Stage {} terminal transition has already been handled, target={}",
+                            stageBuildID,
+                            status);
                     return true;
                 }
                 triggerStageMessage.setBuildStatus(status);
@@ -176,7 +187,16 @@ public class MessageCenter {
             return true;
         }
         if (buildStatus.equals(BuildStatus.FAILURE)) {
-            // check stage status
+            Boolean transitioned = stageBuildService.transitionStageBuildStatus(
+                    stageBuildID,
+                    BuildStatus.RUNNING,
+                    BuildStatus.FAILURE);
+            if (!Boolean.TRUE.equals(transitioned)) {
+                log.debug(
+                        "Stage {} failure transition has already been handled",
+                        stageBuildID);
+                return true;
+            }
             triggerStageMessage.setBuildStatus(BuildStatus.FAILURE);
             triggerStageMessage.setMessageUUID(BusinessMessageUUID.stage(stageBuildID, BuildStatus.FAILURE));
             send(KafkaConfiguration.STAGE_TOPIC, triggerStageMessage);
@@ -188,6 +208,10 @@ public class MessageCenter {
         PluginType pluginType = jobConfigDto.getPluginType();
         Long pluginBuildID = PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).getPluginBuildIDByJobBuildID(jobBuildID);
         return PluginServiceParser.PLUGIN_BUILD_MAP.get(pluginType).executePluginBuild(pluginBuildID, BuildStatus.RUNNING);
+    }
+
+    private boolean isTerminalStatus(BuildStatus status) {
+        return status == BuildStatus.SUCCESS || status == BuildStatus.FAILURE;
     }
 
     public Boolean onPluginMessage(TriggerPluginMessage pluginMessage) {
