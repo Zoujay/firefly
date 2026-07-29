@@ -36,11 +36,11 @@ public class MessageListener {
 
     @KafkaListener(topics = PIPELINE_TOPIC)
     public void onPipelineMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
-        kafkaMessageStore.savePipelineMessages(messages);
-        log.info("Persisted pipeline message batch of {}", messages.size());
+        KafkaMessageSaveResult saveResult = kafkaMessageStore.savePipelineMessages(messages);
+        logPersistenceResult(MessageCategory.PIPELINE, messages.size(), saveResult);
         ack.acknowledge();
         processMessages(
-                messages,
+                saveResult.newMessages(),
                 TriggerPipelineMessage.class,
                 messageCenter::onPipelineMessage,
                 MessageCategory.PIPELINE
@@ -50,11 +50,11 @@ public class MessageListener {
 
     @KafkaListener(topics = STAGE_TOPIC)
     public void onStageMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
-        kafkaMessageStore.saveStageMessages(messages);
-        log.info("Persisted stage message batch of {}", messages.size());
+        KafkaMessageSaveResult saveResult = kafkaMessageStore.saveStageMessages(messages);
+        logPersistenceResult(MessageCategory.STAGE, messages.size(), saveResult);
         ack.acknowledge();
         processMessages(
-                messages,
+                saveResult.newMessages(),
                 TriggerStageMessage.class,
                 messageCenter::onStageMessage,
                 MessageCategory.STAGE
@@ -64,11 +64,11 @@ public class MessageListener {
 
     @KafkaListener(topics = JOB_TOPIC)
     public void onJobMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
-        kafkaMessageStore.saveJobMessages(messages);
-        log.info("Persisted job message batch of {}", messages.size());
+        KafkaMessageSaveResult saveResult = kafkaMessageStore.saveJobMessages(messages);
+        logPersistenceResult(MessageCategory.JOB, messages.size(), saveResult);
         ack.acknowledge();
         processMessages(
-                messages,
+                saveResult.newMessages(),
                 TriggerJobMessage.class,
                 messageCenter::onJobMessage,
                 MessageCategory.JOB
@@ -78,11 +78,11 @@ public class MessageListener {
 
     @KafkaListener(topics = PLUGIN_TOPIC)
     public void onPluginMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
-        kafkaMessageStore.savePluginMessages(messages);
-        log.info("Persisted plugin message batch of {}", messages.size());
+        KafkaMessageSaveResult saveResult = kafkaMessageStore.savePluginMessages(messages);
+        logPersistenceResult(MessageCategory.PLUGIN, messages.size(), saveResult);
         ack.acknowledge();
         processMessages(
-                messages,
+                saveResult.newMessages(),
                 TriggerPluginMessage.class,
                 messageCenter::onPluginMessage,
                 MessageCategory.PLUGIN
@@ -110,5 +110,19 @@ public class MessageListener {
                 );
             }
         }
+    }
+
+    private void logPersistenceResult(
+            MessageCategory messageCategory,
+            int receivedCount,
+            KafkaMessageSaveResult saveResult
+    ) {
+        log.info(
+                "Archived {} message batch: received={}, new={}, duplicate={}",
+                messageCategory,
+                receivedCount,
+                saveResult.newMessages().size(),
+                saveResult.duplicateCount()
+        );
     }
 }

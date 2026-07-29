@@ -5,26 +5,19 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import firefly.dao.message.IJobMessageDao;
-import firefly.dao.message.IKafkaMessageDao;
 import firefly.dao.message.IPipelineMessageDao;
 import firefly.dao.message.IPluginMessageDao;
 import firefly.dao.message.IStageMessageDao;
-import firefly.model.message.JobMessage;
-import firefly.model.message.KafkaMessage;
-import firefly.model.message.PipelineMessage;
-import firefly.model.message.PluginMessage;
-import firefly.model.message.StageMessage;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.function.Function;
 
 @Service
 public class KafkaMessageStore {
@@ -42,105 +35,58 @@ public class KafkaMessageStore {
     private IPluginMessageDao pluginMessageDao;
 
     @Transactional
-    public void savePipelineMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages(messages, pipelineMessageDao, this::toPipelineMessage);
+    public KafkaMessageSaveResult savePipelineMessages(List<ConsumerRecord<String, String>> messages) {
+        return saveMessages(messages, pipelineMessageDao::insertIfAbsent);
     }
 
     @Transactional
-    public void saveStageMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages(messages, stageMessageDao, this::toStageMessage);
+    public KafkaMessageSaveResult saveStageMessages(List<ConsumerRecord<String, String>> messages) {
+        return saveMessages(messages, stageMessageDao::insertIfAbsent);
     }
 
     @Transactional
-    public void saveJobMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages(messages, jobMessageDao, this::toJobMessage);
+    public KafkaMessageSaveResult saveJobMessages(List<ConsumerRecord<String, String>> messages) {
+        return saveMessages(messages, jobMessageDao::insertIfAbsent);
     }
 
     @Transactional
-    public void savePluginMessages(List<ConsumerRecord<String, String>> messages) {
-        saveMessages(messages, pluginMessageDao, this::toPluginMessage);
+    public KafkaMessageSaveResult savePluginMessages(List<ConsumerRecord<String, String>> messages) {
+        return saveMessages(messages, pluginMessageDao::insertIfAbsent);
     }
 
-    private <T extends KafkaMessage> void saveMessages(
+    private KafkaMessageSaveResult saveMessages(
             List<ConsumerRecord<String, String>> messages,
-            IKafkaMessageDao<T> messageDao,
-            Function<StoredKafkaMessage, T> entityFactory
+            MessageInserter inserter
     ) {
         if (messages.isEmpty()) {
-            return;
+            return new KafkaMessageSaveResult(List.of(), 0);
         }
 
-        Map<String, StoredKafkaMessage> uniqueMessages = new LinkedHashMap<>();
+        Map<String, ConsumerRecord<String, String>> uniqueMessages = new LinkedHashMap<>();
         for (ConsumerRecord<String, String> message : messages) {
             String messageUUID = extractMessageUUID(message);
-            uniqueMessages.putIfAbsent(
-                    messageUUID,
-                    new StoredKafkaMessage(
-                            messageUUID,
-                            message.topic(),
-                            message.partition(),
-                            message.offset(),
-                            message.key(),
-                            message.value()
-                    )
+            uniqueMessages.putIfAbsent(messageUUID, message);
+        }
+
+        List<ConsumerRecord<String, String>> newMessages = new ArrayList<>();
+        for (Map.Entry<String, ConsumerRecord<String, String>> entry : uniqueMessages.entrySet()) {
+            ConsumerRecord<String, String> message = entry.getValue();
+            int inserted = inserter.insertIfAbsent(
+                    entry.getKey(),
+                    message.topic(),
+                    message.partition(),
+                    message.offset(),
+                    message.key(),
+                    message.value()
             );
+            if (inserted == 1) {
+                newMessages.add(message);
+            }
         }
 
-        Set<String> existingMessageUUIDs =
-                messageDao.findExistingMessageUUIDs(List.copyOf(uniqueMessages.keySet()));
-
-        List<T> newMessages = uniqueMessages.entrySet()
-                .stream()
-                .filter(entry -> !existingMessageUUIDs.contains(entry.getKey()))
-                .map(Map.Entry::getValue)
-                .map(entityFactory)
-                .toList();
-        if (!newMessages.isEmpty()) {
-            messageDao.saveAll(newMessages);
-        }
-    }
-
-    private PipelineMessage toPipelineMessage(StoredKafkaMessage message) {
-        return new PipelineMessage(
-                message.messageUUID(),
-                message.topic(),
-                message.kafkaPartition(),
-                message.kafkaOffset(),
-                message.messageKey(),
-                message.payload()
-        );
-    }
-
-    private StageMessage toStageMessage(StoredKafkaMessage message) {
-        return new StageMessage(
-                message.messageUUID(),
-                message.topic(),
-                message.kafkaPartition(),
-                message.kafkaOffset(),
-                message.messageKey(),
-                message.payload()
-        );
-    }
-
-    private JobMessage toJobMessage(StoredKafkaMessage message) {
-        return new JobMessage(
-                message.messageUUID(),
-                message.topic(),
-                message.kafkaPartition(),
-                message.kafkaOffset(),
-                message.messageKey(),
-                message.payload()
-        );
-    }
-
-    private PluginMessage toPluginMessage(StoredKafkaMessage message) {
-        return new PluginMessage(
-                message.messageUUID(),
-                message.topic(),
-                message.kafkaPartition(),
-                message.kafkaOffset(),
-                message.messageKey(),
-                message.payload()
+        return new KafkaMessageSaveResult(
+                newMessages,
+                messages.size() - newMessages.size()
         );
     }
 
@@ -181,13 +127,16 @@ public class KafkaMessageStore {
         return new IllegalArgumentException(description, cause);
     }
 
-    private record StoredKafkaMessage(
-            String messageUUID,
-            String topic,
-            Integer kafkaPartition,
-            Long kafkaOffset,
-            String messageKey,
-            String payload
-    ) {
+    @FunctionalInterface
+    private interface MessageInserter {
+
+        int insertIfAbsent(
+                String messageUUID,
+                String topic,
+                Integer kafkaPartition,
+                Long kafkaOffset,
+                String messageKey,
+                String payload
+        );
     }
 }
