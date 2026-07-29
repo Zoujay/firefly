@@ -155,27 +155,30 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         StageBuild firstStageToRetry = null;
 
         for (StageBuild stageBuild : stageBuilds) {
-            if (stageBuild.getStageStatus() == BuildStatus.SUCCESS) {
-                continue;
-            }
-            if (firstStageToRetry == null) {
+            boolean stageNeedsRetry =
+                    stageBuild.getStageStatus() != BuildStatus.SUCCESS;
+            if (stageNeedsRetry && firstStageToRetry == null) {
                 firstStageToRetry = stageBuild;
             }
-            stageBuild.setStageStatus(BuildStatus.PENDING)
-                    .setExecutionAttempt(executionAttempt);
+            stageBuild.setExecutionAttempt(executionAttempt);
+            if (stageNeedsRetry) {
+                stageBuild.setStageStatus(BuildStatus.PENDING);
+            }
 
             List<JobBuild> jobBuilds =
                     jobBuildDao.getJobBuildsByStageBuildID(stageBuild.getId());
             for (JobBuild jobBuild : jobBuilds) {
-                if (jobBuild.getJobStatus() == BuildStatus.SUCCESS) {
-                    continue;
+                boolean jobNeedsRetry = stageNeedsRetry
+                        && jobBuild.getJobStatus() != BuildStatus.SUCCESS;
+                jobBuild.setExecutionAttempt(executionAttempt);
+                if (jobNeedsRetry) {
+                    jobBuild.setJobStatus(BuildStatus.PENDING);
                 }
-                jobBuild.setJobStatus(BuildStatus.PENDING)
-                        .setExecutionAttempt(executionAttempt);
                 textPluginBuildDao.findByJobBuildID(jobBuild.getId())
-                        .ifPresent(pluginBuild -> resetPluginBuild(
+                        .ifPresent(pluginBuild -> preparePluginBuildForRetry(
                                 pluginBuild,
-                                executionAttempt
+                                executionAttempt,
+                                jobNeedsRetry
                         ));
             }
             jobBuildDao.saveAll(jobBuilds);
@@ -279,12 +282,15 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         return jobBuildDto;
     }
 
-    private void resetPluginBuild(
+    private void preparePluginBuildForRetry(
             TextPluginBuild pluginBuild,
-            Integer executionAttempt
+            Integer executionAttempt,
+            boolean resetStatus
     ) {
-        pluginBuild.setTextPluginStatus(BuildStatus.PENDING)
-                .setExecutionAttempt(executionAttempt);
+        pluginBuild.setExecutionAttempt(executionAttempt);
+        if (resetStatus) {
+            pluginBuild.setTextPluginStatus(BuildStatus.PENDING);
+        }
         textPluginBuildDao.save(pluginBuild);
     }
 

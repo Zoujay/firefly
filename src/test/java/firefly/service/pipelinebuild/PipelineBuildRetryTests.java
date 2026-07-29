@@ -73,11 +73,16 @@ class PipelineBuildRetryTests {
         StageBuild successfulStage = stage(10L, BuildStatus.SUCCESS, 0);
         StageBuild failedStage = stage(11L, BuildStatus.FAILURE, 0);
         StageBuild pendingStage = stage(12L, BuildStatus.PENDING, 0);
+        JobBuild completedStageJob = job(100L, 10L, BuildStatus.SUCCESS, 0);
         JobBuild successfulJob = job(101L, 11L, BuildStatus.SUCCESS, 0);
         JobBuild failedJob = job(102L, 11L, BuildStatus.FAILURE, 0);
         JobBuild pendingJob = job(103L, 12L, BuildStatus.PENDING, 0);
-        TextPluginBuild failedPlugin = plugin(201L, 102L, BuildStatus.FAILURE, 0);
-        TextPluginBuild pendingPlugin = plugin(202L, 103L, BuildStatus.PENDING, 0);
+        TextPluginBuild completedStagePlugin =
+                plugin(200L, 100L, BuildStatus.SUCCESS, 0);
+        TextPluginBuild successfulPlugin =
+                plugin(201L, 101L, BuildStatus.SUCCESS, 0);
+        TextPluginBuild failedPlugin = plugin(202L, 102L, BuildStatus.FAILURE, 0);
+        TextPluginBuild pendingPlugin = plugin(203L, 103L, BuildStatus.PENDING, 0);
 
         when(pipelineBuildDao.claimRetry(
                 1L,
@@ -87,10 +92,16 @@ class PipelineBuildRetryTests {
         when(pipelineBuildDao.findById(1L)).thenReturn(Optional.of(pipeline));
         when(stageBuildDao.getStageBuildByPipelineBuildID(1L))
                 .thenReturn(List.of(successfulStage, failedStage, pendingStage));
+        when(jobBuildDao.getJobBuildsByStageBuildID(10L))
+                .thenReturn(List.of(completedStageJob));
         when(jobBuildDao.getJobBuildsByStageBuildID(11L))
                 .thenReturn(List.of(successfulJob, failedJob));
         when(jobBuildDao.getJobBuildsByStageBuildID(12L))
                 .thenReturn(List.of(pendingJob));
+        when(textPluginBuildDao.findByJobBuildID(100L))
+                .thenReturn(Optional.of(completedStagePlugin));
+        when(textPluginBuildDao.findByJobBuildID(101L))
+                .thenReturn(Optional.of(successfulPlugin));
         when(textPluginBuildDao.findByJobBuildID(102L))
                 .thenReturn(Optional.of(failedPlugin));
         when(textPluginBuildDao.findByJobBuildID(103L))
@@ -101,23 +112,28 @@ class PipelineBuildRetryTests {
         assertEquals(1L, response.getPipelineBuildID());
         assertEquals(1, response.getExecutionAttempt());
         assertEquals(BuildStatus.SUCCESS, successfulStage.getStageStatus());
-        assertEquals(0, successfulStage.getExecutionAttempt());
+        assertEquals(1, successfulStage.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, failedStage.getStageStatus());
         assertEquals(1, failedStage.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, pendingStage.getStageStatus());
         assertEquals(1, pendingStage.getExecutionAttempt());
+        assertEquals(BuildStatus.SUCCESS, completedStageJob.getJobStatus());
+        assertEquals(1, completedStageJob.getExecutionAttempt());
         assertEquals(BuildStatus.SUCCESS, successfulJob.getJobStatus());
-        assertEquals(0, successfulJob.getExecutionAttempt());
+        assertEquals(1, successfulJob.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, failedJob.getJobStatus());
         assertEquals(1, failedJob.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, pendingJob.getJobStatus());
         assertEquals(1, pendingJob.getExecutionAttempt());
+        assertEquals(BuildStatus.SUCCESS, completedStagePlugin.getTextPluginStatus());
+        assertEquals(1, completedStagePlugin.getExecutionAttempt());
+        assertEquals(BuildStatus.SUCCESS, successfulPlugin.getTextPluginStatus());
+        assertEquals(1, successfulPlugin.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, failedPlugin.getTextPluginStatus());
         assertEquals(1, failedPlugin.getExecutionAttempt());
         assertEquals(BuildStatus.PENDING, pendingPlugin.getTextPluginStatus());
         assertEquals(1, pendingPlugin.getExecutionAttempt());
 
-        verify(textPluginBuildDao, never()).findByJobBuildID(101L);
         ArgumentCaptor<PipelineRetryPreparedEvent> eventCaptor =
                 ArgumentCaptor.forClass(PipelineRetryPreparedEvent.class);
         verify(applicationEventPublisher).publishEvent(eventCaptor.capture());

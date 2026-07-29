@@ -351,7 +351,7 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
 curl -X POST http://localhost:9999/pipeline-builds/1/retry
 ```
 
-只有状态为 `FAILURE` 的 Pipeline Build 可以重新执行，否则接口返回 HTTP `409`。重试会复用原有构建记录并递增 `executionAttempt`，跳过已经成功的 Stage 和 Job，将失败或尚未执行的记录重置为 `PENDING`，然后从第一个未成功的 Stage 继续执行。响应示例：
+只有状态为 `FAILURE` 的 Pipeline Build 可以重新执行，否则接口返回 HTTP `409`。重试会复用原有构建记录，将全部构建记录切换到新的 `executionAttempt`；已经成功的 Stage、Job 和 Plugin 保持 `SUCCESS` 并被跳过，失败或尚未执行的记录重置为 `PENDING`，然后从第一个未成功的 Stage 继续执行。响应示例：
 
 ```json
 {
@@ -761,7 +761,7 @@ The endpoint creates the complete build records, stores the Volcano trigger reco
 curl -X POST http://localhost:9999/pipeline-builds/1/retry
 ```
 
-Only a Pipeline Build in `FAILURE` can be retried; otherwise, the endpoint returns HTTP `409`. A retry reuses the existing build records and increments `executionAttempt`. Successful Stages and Jobs are skipped, while failed or unexecuted records are reset to `PENDING`, and execution resumes from the first unfinished Stage. Example response:
+Only a Pipeline Build in `FAILURE` can be retried; otherwise, the endpoint returns HTTP `409`. A retry reuses the existing records and moves every build record to the new `executionAttempt`. Successful Stages, Jobs, and Plugins remain in `SUCCESS` and are skipped, while failed or unexecuted records are reset to `PENDING`, and execution resumes from the first unfinished Stage. Example response:
 
 ```json
 {
