@@ -94,7 +94,7 @@ flowchart LR
 | Spring Kafka | 批量消费和消息生产 |
 | MySQL | 推荐 8.4 |
 | Kafka | 示例使用 3.9.1，单节点 KRaft |
-| Druid | 1.2.27 |
+| HikariCP | Spring Boot 管理的连接池 |
 | Testcontainers | MySQL 集成测试 |
 | Embedded Kafka | Kafka 生产接线测试 |
 
@@ -518,7 +518,7 @@ No new Pipeline Build record is created.
 | Spring Kafka | Batch consumption and message production |
 | MySQL | 8.4 recommended |
 | Kafka | 3.9.1 single-node KRaft in the example |
-| Druid | 1.2.27 |
+| HikariCP | Spring Boot managed connection pool |
 | Testcontainers | MySQL integration tests |
 | Embedded Kafka | Production listener wiring tests |
 

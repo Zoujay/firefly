@@ -1,5 +1,6 @@
 package firefly.service.messagecenter;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import firefly.constant.BuildStatus;
 import firefly.dao.message.IJobMessageDao;
 import firefly.dao.message.IPipelineMessageDao;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -23,6 +25,9 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaMessageStoreTests {
+
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock
     private IPipelineMessageDao pipelineMessageDao;

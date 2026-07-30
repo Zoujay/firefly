@@ -6,15 +6,24 @@ import firefly.bean.dto.TextPluginConfigDto;
 import firefly.model.plugin.TextPluginModel;
 import firefly.service.pluginconfig.impl.TextPluginConfigImpl;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@ExtendWith(MockitoExtension.class)
 class TextPluginConfigImplTests {
 
-    private final TextPluginConfigImpl textPluginConfig = new TextPluginConfigImpl();
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
+
+    @InjectMocks
+    private TextPluginConfigImpl textPluginConfig;
 
     @Test
     void assembleTextPluginConfigUsesJobConfigId() {
@@ -32,5 +41,17 @@ class TextPluginConfigImplTests {
                 () -> assertTrue(json.has("jobConfigID")),
                 () -> assertFalse(json.has("jobID"))
         );
+    }
+
+    @Test
+    void parsesPluginConfigWithTheApplicationObjectMapper() {
+        JsonNode pluginRaw = objectMapper.createObjectNode()
+                .put("text", "hello");
+
+        TextPluginConfigDto result =
+                textPluginConfig.parseJobConfigRequest(pluginRaw, 20L);
+
+        assertEquals("hello", result.getText());
+        assertEquals(20L, result.getJobConfigID());
     }
 }

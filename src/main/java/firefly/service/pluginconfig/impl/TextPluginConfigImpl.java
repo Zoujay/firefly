@@ -1,7 +1,7 @@
 package firefly.service.pluginconfig.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.gson.Gson;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import firefly.bean.dto.AbstractPluginDto;
 import firefly.bean.dto.TextPluginConfigDto;
 import firefly.constant.PluginType;
@@ -22,6 +22,9 @@ public class TextPluginConfigImpl implements IPluginConfig {
     @Autowired
     private ITextPluginConfigDao textPluginConfigDao;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @Override
     public PluginType getPluginType() {
         return PluginType.TEXT;
@@ -29,8 +32,11 @@ public class TextPluginConfigImpl implements IPluginConfig {
 
 
     public TextPluginConfigDto parseJobConfigRequest(JsonNode pluginRaw, Long jobConfigID) {
-        Gson gson = new Gson();
-        TextPluginConfigDto pluginConfigDto = gson.fromJson(pluginRaw.toString(), TextPluginConfigDto.class);
+        TextPluginConfigDto pluginConfigDto =
+                objectMapper.convertValue(
+                        pluginRaw,
+                        TextPluginConfigDto.class
+                );
         pluginConfigDto.setJobConfigID(jobConfigID);
         return pluginConfigDto;
     }
