@@ -1,9 +1,8 @@
 package firefly.service.messagecenter;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import firefly.dao.message.IJobMessageDao;
 import firefly.dao.message.IPipelineMessageDao;
 import firefly.dao.message.IPluginMessageDao;
@@ -22,6 +21,9 @@ import java.util.UUID;
 
 @Service
 public class KafkaMessageStore {
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private IPipelineMessageDao pipelineMessageDao;
@@ -97,24 +99,41 @@ public class KafkaMessageStore {
             throw invalidMessage(message, "payload is null", null);
         }
 
+        JsonNode root;
         try {
-            JsonElement root = JsonParser.parseString(payload);
-            if (!root.isJsonObject()) {
-                throw invalidMessage(message, "payload is not a JSON object", null);
-            }
-            JsonObject messageObject = root.getAsJsonObject();
-            JsonElement messageUUID = messageObject.get("messageUUID");
-            if (messageUUID == null || messageUUID.isJsonNull()) {
-                throw invalidMessage(message, "messageUUID is missing", null);
-            }
+            root = objectMapper.readTree(payload);
+        } catch (JsonProcessingException exception) {
+            throw invalidMessage(
+                    message,
+                    "payload is not valid JSON",
+                    exception
+            );
+        }
+        if (root == null || !root.isObject()) {
+            throw invalidMessage(
+                    message,
+                    "payload is not a JSON object",
+                    null
+            );
+        }
 
-            String uuid = messageUUID.getAsString();
+        JsonNode messageUUID = root.get("messageUUID");
+        if (messageUUID == null
+                || messageUUID.isNull()
+                || !messageUUID.isTextual()) {
+            throw invalidMessage(message, "messageUUID is missing", null);
+        }
+
+        String uuid = messageUUID.textValue();
+        try {
             UUID.fromString(uuid);
             return uuid;
-        } catch (JsonSyntaxException | IllegalStateException | UnsupportedOperationException exception) {
-            throw invalidMessage(message, "payload or messageUUID is invalid", exception);
         } catch (IllegalArgumentException exception) {
-            throw invalidMessage(message, "messageUUID is not a valid UUID", exception);
+            throw invalidMessage(
+                    message,
+                    "messageUUID is not a valid UUID",
+                    exception
+            );
         }
     }
 
