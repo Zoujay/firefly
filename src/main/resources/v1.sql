@@ -4,8 +4,8 @@
 CREATE TABLE `firefly`.`pipeline_config`
 (
     `id`             BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `pipeline_uuid`  VARCHAR(64) NOT NULL DEFAULT "",
-    `pipeline_name`  VARCHAR(64) NOT NULL DEFAULT "",
+    `pipeline_uuid`  VARCHAR(64) NOT NULL DEFAULT '',
+    `pipeline_name`  VARCHAR(64) NOT NULL DEFAULT '',
     `trigger_mode`   VARCHAR(64) NOT NULL,
     `trigger_match`  VARCHAR(64) NOT NULL,
     `trigger_origin` VARCHAR(64) NOT NULL,
@@ -173,67 +173,118 @@ CREATE TABLE `firefly`.`job_relation`
 
 CREATE TABLE `firefly`.`pipeline_message`
 (
-    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `message_uuid`    VARCHAR(36)  NOT NULL,
-    `topic`           VARCHAR(249) NOT NULL,
-    `kafka_partition` INT          NOT NULL,
-    `kafka_offset`    BIGINT       NOT NULL,
-    `message_key`     VARCHAR(512) NULL,
-    `payload`         LONGTEXT     NULL,
-    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `id`                     BIGINT(20)    NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36)   NOT NULL,
+    `topic`                  VARCHAR(249)  NOT NULL,
+    `kafka_partition`        INT           NOT NULL,
+    `kafka_offset`           BIGINT        NOT NULL,
+    `message_key`            VARCHAR(512)  NOT NULL DEFAULT '',
+    `payload`                LONGTEXT      NOT NULL,
+    `received_at`            DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `processing_status`      VARCHAR(32)   NOT NULL DEFAULT 'ARCHIVED',
+    `processing_attempt`     INT           NOT NULL DEFAULT 0,
+    `processor_id`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `processing_started_at`  DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `processing_finished_at` DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_pipeline_message_uuid` (`message_uuid`),
     UNIQUE INDEX `uidx_pipeline_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
-    INDEX        `idx_pipeline_message_received_at` (`received_at`)
+    INDEX        `idx_pipeline_message_received_at` (`received_at`),
+    INDEX        `idx_pipeline_message_processing` (`processing_status`, `received_at`, `id`)
 );
 
 
 CREATE TABLE `firefly`.`stage_message`
 (
-    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `message_uuid`    VARCHAR(36)  NOT NULL,
-    `topic`           VARCHAR(249) NOT NULL,
-    `kafka_partition` INT          NOT NULL,
-    `kafka_offset`    BIGINT       NOT NULL,
-    `message_key`     VARCHAR(512) NULL,
-    `payload`         LONGTEXT     NULL,
-    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `id`                     BIGINT(20)    NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36)   NOT NULL,
+    `topic`                  VARCHAR(249)  NOT NULL,
+    `kafka_partition`        INT           NOT NULL,
+    `kafka_offset`           BIGINT        NOT NULL,
+    `message_key`            VARCHAR(512)  NOT NULL DEFAULT '',
+    `payload`                LONGTEXT      NOT NULL,
+    `received_at`            DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `processing_status`      VARCHAR(32)   NOT NULL DEFAULT 'ARCHIVED',
+    `processing_attempt`     INT           NOT NULL DEFAULT 0,
+    `processor_id`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `processing_started_at`  DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `processing_finished_at` DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_stage_message_uuid` (`message_uuid`),
     UNIQUE INDEX `uidx_stage_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
-    INDEX        `idx_stage_message_received_at` (`received_at`)
+    INDEX        `idx_stage_message_received_at` (`received_at`),
+    INDEX        `idx_stage_message_processing` (`processing_status`, `received_at`, `id`)
 );
 
 
 CREATE TABLE `firefly`.`job_message`
 (
-    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `message_uuid`    VARCHAR(36)  NOT NULL,
-    `topic`           VARCHAR(249) NOT NULL,
-    `kafka_partition` INT          NOT NULL,
-    `kafka_offset`    BIGINT       NOT NULL,
-    `message_key`     VARCHAR(512) NULL,
-    `payload`         LONGTEXT     NULL,
-    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `id`                     BIGINT(20)    NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36)   NOT NULL,
+    `topic`                  VARCHAR(249)  NOT NULL,
+    `kafka_partition`        INT           NOT NULL,
+    `kafka_offset`           BIGINT        NOT NULL,
+    `message_key`            VARCHAR(512)  NOT NULL DEFAULT '',
+    `payload`                LONGTEXT      NOT NULL,
+    `received_at`            DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `processing_status`      VARCHAR(32)   NOT NULL DEFAULT 'ARCHIVED',
+    `processing_attempt`     INT           NOT NULL DEFAULT 0,
+    `processor_id`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `processing_started_at`  DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `processing_finished_at` DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_job_message_uuid` (`message_uuid`),
     UNIQUE INDEX `uidx_job_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
-    INDEX        `idx_job_message_received_at` (`received_at`)
+    INDEX        `idx_job_message_received_at` (`received_at`),
+    INDEX        `idx_job_message_processing` (`processing_status`, `received_at`, `id`)
 );
 
 
 CREATE TABLE `firefly`.`plugin_message`
 (
-    `id`              BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `message_uuid`    VARCHAR(36)  NOT NULL,
-    `topic`           VARCHAR(249) NOT NULL,
-    `kafka_partition` INT          NOT NULL,
-    `kafka_offset`    BIGINT       NOT NULL,
-    `message_key`     VARCHAR(512) NULL,
-    `payload`         LONGTEXT     NULL,
-    `received_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `id`                     BIGINT(20)    NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36)   NOT NULL,
+    `topic`                  VARCHAR(249)  NOT NULL,
+    `kafka_partition`        INT           NOT NULL,
+    `kafka_offset`           BIGINT        NOT NULL,
+    `message_key`            VARCHAR(512)  NOT NULL DEFAULT '',
+    `payload`                LONGTEXT      NOT NULL,
+    `received_at`            DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `processing_status`      VARCHAR(32)   NOT NULL DEFAULT 'ARCHIVED',
+    `processing_attempt`     INT           NOT NULL DEFAULT 0,
+    `processor_id`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `processing_started_at`  DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `processing_finished_at` DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_plugin_message_uuid` (`message_uuid`),
     UNIQUE INDEX `uidx_plugin_message_position` (`topic`, `kafka_partition`, `kafka_offset`),
-    INDEX        `idx_plugin_message_received_at` (`received_at`)
+    INDEX        `idx_plugin_message_received_at` (`received_at`),
+    INDEX        `idx_plugin_message_processing` (`processing_status`, `received_at`, `id`)
+);
+
+
+-- Outbox persists outbound Kafka events in the same MySQL transaction as the
+-- corresponding business state change. It closes the database-commit/Kafka-send
+-- gap without polling: one publish attempt runs after commit, and PENDING,
+-- PUBLISHING, or FAILED events are recovered manually.
+CREATE TABLE `firefly`.`outbox_event`
+(
+    `id`                     VARCHAR(36)   NOT NULL,
+    `topic`                  VARCHAR(249)  NOT NULL,
+    `message_key`            VARCHAR(128)  NOT NULL DEFAULT '',
+    `message_type`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `payload`                LONGTEXT      NOT NULL,
+    `publish_status`         VARCHAR(32)   NOT NULL DEFAULT 'PENDING',
+    `publish_attempt`        INT           NOT NULL DEFAULT 0,
+    `publisher_id`           VARCHAR(128)  NOT NULL DEFAULT '',
+    `publishing_started_at`  DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `publishing_finished_at` DATETIME(6)   NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
+    `created_at`             DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    INDEX `idx_outbox_publish_status` (`publish_status`, `created_at`, `id`)
 );

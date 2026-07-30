@@ -9,10 +9,10 @@ import firefly.constant.TriggerOrigin;
 import firefly.dao.triggermessage.IVolcanoTriggerDao;
 import firefly.model.trigger.VolcanoTriggerEntity;
 import firefly.service.messagecenter.BusinessMessageUUID;
+import firefly.service.outbox.OutboxService;
 import firefly.service.trigger.AbstractTrigger;
 import firefly.service.trigger.ITrigger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,7 +25,7 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
     private IVolcanoTriggerDao volcanoTriggerDao;
 
     @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxService outboxService;
 
     @Override
     public TriggerOrigin getTriggerType() {
@@ -60,9 +60,8 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
                 .setPipelineID(message.getPipelineID())
                 .setExecutionAttempt(message.getExecutionAttempt())
                 .setBuildStatus(BuildStatus.RUNNING);
-        kafkaTemplate.send(
+        outboxService.enqueue(
                 KafkaConfiguration.PIPELINE_TOPIC,
-                triggerPipelineMessage.getMessageUUID(),
                 triggerPipelineMessage
         );
 

@@ -17,18 +17,20 @@ import firefly.service.pipelinebuild.IPipelineBuildService;
 import firefly.service.pipelineconfig.IPipelineConfigService;
 import firefly.service.pluginbuild.IPluginBuild;
 import firefly.service.pluginparser.PluginServiceParser;
+import firefly.service.outbox.OutboxService;
 import firefly.service.stagebuild.IStageBuildService;
 import firefly.service.stageconfig.IStageConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
 @Service
+@Transactional
 public class MessageCenter {
 
     @Autowired
@@ -53,7 +55,7 @@ public class MessageCenter {
     private IJobRelationService jobRelationService;
 
     @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxService outboxService;
 
 
     public Boolean onPipelineMessage(TriggerPipelineMessage pipelineMessage) {
@@ -456,7 +458,12 @@ public class MessageCenter {
     }
 
     private void send(String topic, KafkaBusinessMessage message) {
-        kafkaTemplate.send(topic, message.getMessageUUID(), message);
+        /*
+         * Do not send Kafka inside the business transaction. enqueue() uses
+         * Propagation.MANDATORY, so the build-state change and Outbox row are
+         * atomic in MySQL; the actual Kafka send begins only after commit.
+         */
+        outboxService.enqueue(topic, message);
     }
 
 }

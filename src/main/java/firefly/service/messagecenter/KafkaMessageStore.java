@@ -9,6 +9,7 @@ import firefly.dao.message.IPipelineMessageDao;
 import firefly.dao.message.IPluginMessageDao;
 import firefly.dao.message.IStageMessageDao;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -76,7 +77,7 @@ public class KafkaMessageStore {
                     message.topic(),
                     message.partition(),
                     message.offset(),
-                    message.key(),
+                    message.key() == null ? StringUtils.EMPTY : message.key(),
                     message.value()
             );
             if (inserted == 1) {
@@ -90,7 +91,7 @@ public class KafkaMessageStore {
         );
     }
 
-    private String extractMessageUUID(ConsumerRecord<String, String> message) {
+    String extractMessageUUID(ConsumerRecord<String, String> message) {
         String payload = message.value();
         if (payload == null) {
             throw invalidMessage(message, "payload is null", null);

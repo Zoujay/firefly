@@ -8,6 +8,7 @@ import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
 import firefly.constant.BuildStatus;
+import firefly.constant.MessageCategory;
 import firefly.constant.PluginType;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.Acknowledgment;
 
@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,16 +38,27 @@ class MessageListenerTests {
     private KafkaMessageStore kafkaMessageStore;
 
     @Mock
-    private MessageCenter messageCenter;
+    private KafkaMessageProcessingCoordinator processingCoordinator;
 
     @Mock
     private Acknowledgment acknowledgment;
 
-    @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private MessageListener messageListener;
+
+    @org.junit.jupiter.api.BeforeEach
+    void extractUUIDFromPayload() throws Exception {
+        lenient().when(kafkaMessageStore.extractMessageUUID(any()))
+                .thenAnswer(invocation -> objectMapper.readTree(
+                                ((ConsumerRecord<?, ?>) invocation.getArgument(0))
+                                        .value()
+                                        .toString()
+                        )
+                        .get("messageUUID")
+                        .asText());
+    }
 
     @Test
     void persistsAcknowledgesAndDispatchesEveryPipelineMessageInOrder() throws Exception {
@@ -68,11 +80,21 @@ class MessageListenerTests {
 
         messageListener.onPipelineMessage(messages, acknowledgment);
 
-        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment, messageCenter);
+        InOrder inOrder = inOrder(
+                kafkaMessageStore,
+                acknowledgment,
+                processingCoordinator
+        );
         inOrder.verify(kafkaMessageStore).savePipelineMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(messageCenter).onPipelineMessage(first);
-        inOrder.verify(messageCenter).onPipelineMessage(second);
+        inOrder.verify(processingCoordinator).process(
+                MessageCategory.PIPELINE,
+                first.getMessageUUID()
+        );
+        inOrder.verify(processingCoordinator).process(
+                MessageCategory.PIPELINE,
+                second.getMessageUUID()
+        );
     }
 
     @Test
@@ -93,7 +115,7 @@ class MessageListenerTests {
         );
 
         verify(acknowledgment, never()).acknowledge();
-        verify(messageCenter, never()).onPipelineMessage(any());
+        verify(processingCoordinator, never()).process(any(), any());
     }
 
     @Test
@@ -108,10 +130,17 @@ class MessageListenerTests {
 
         messageListener.onStageMessage(messages, acknowledgment);
 
-        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment, messageCenter);
+        InOrder inOrder = inOrder(
+                kafkaMessageStore,
+                acknowledgment,
+                processingCoordinator
+        );
         inOrder.verify(kafkaMessageStore).saveStageMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(messageCenter).onStageMessage(stageMessage);
+        inOrder.verify(processingCoordinator).process(
+                MessageCategory.STAGE,
+                stageMessage.getMessageUUID()
+        );
     }
 
     @Test
@@ -126,10 +155,17 @@ class MessageListenerTests {
 
         messageListener.onJobMessage(messages, acknowledgment);
 
-        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment, messageCenter);
+        InOrder inOrder = inOrder(
+                kafkaMessageStore,
+                acknowledgment,
+                processingCoordinator
+        );
         inOrder.verify(kafkaMessageStore).saveJobMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(messageCenter).onJobMessage(jobMessage);
+        inOrder.verify(processingCoordinator).process(
+                MessageCategory.JOB,
+                jobMessage.getMessageUUID()
+        );
     }
 
     @Test
@@ -145,10 +181,17 @@ class MessageListenerTests {
 
         messageListener.onPluginMessage(messages, acknowledgment);
 
-        InOrder inOrder = inOrder(kafkaMessageStore, acknowledgment, messageCenter);
+        InOrder inOrder = inOrder(
+                kafkaMessageStore,
+                acknowledgment,
+                processingCoordinator
+        );
         inOrder.verify(kafkaMessageStore).savePluginMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(messageCenter).onPluginMessage(pluginMessage);
+        inOrder.verify(processingCoordinator).process(
+                MessageCategory.PLUGIN,
+                pluginMessage.getMessageUUID()
+        );
     }
 
     @Test
@@ -168,14 +211,22 @@ class MessageListenerTests {
                 record("pipeline_message", 0, 11L, succeeded)
         );
         when(kafkaMessageStore.savePipelineMessages(messages)).thenReturn(saved(messages));
-        when(messageCenter.onPipelineMessage(failed))
-                .thenThrow(new IllegalStateException("business processing failed"));
+        when(processingCoordinator.process(
+                MessageCategory.PIPELINE,
+                failed.getMessageUUID()
+        )).thenReturn(false);
 
         assertDoesNotThrow(() -> messageListener.onPipelineMessage(messages, acknowledgment));
 
         verify(acknowledgment).acknowledge();
-        verify(messageCenter).onPipelineMessage(failed);
-        verify(messageCenter).onPipelineMessage(succeeded);
+        verify(processingCoordinator).process(
+                MessageCategory.PIPELINE,
+                failed.getMessageUUID()
+        );
+        verify(processingCoordinator).process(
+                MessageCategory.PIPELINE,
+                succeeded.getMessageUUID()
+        );
     }
 
     @Test
@@ -195,7 +246,7 @@ class MessageListenerTests {
         assertDoesNotThrow(() -> messageListener.onPipelineMessage(messages, acknowledgment));
 
         verify(acknowledgment).acknowledge();
-        verify(messageCenter, never()).onPipelineMessage(any());
+        verify(processingCoordinator, never()).process(any(), any());
     }
 
     @Test
@@ -213,7 +264,7 @@ class MessageListenerTests {
         messageListener.onPipelineMessage(messages, acknowledgment);
 
         verify(acknowledgment).acknowledge();
-        verify(messageCenter, never()).onPipelineMessage(any());
+        verify(processingCoordinator, never()).process(any(), any());
     }
 
     @Test
@@ -238,8 +289,14 @@ class MessageListenerTests {
         messageListener.onPipelineMessage(messages, acknowledgment);
 
         verify(acknowledgment).acknowledge();
-        verify(messageCenter, never()).onPipelineMessage(duplicate);
-        verify(messageCenter).onPipelineMessage(newMessage);
+        verify(processingCoordinator, never()).process(
+                MessageCategory.PIPELINE,
+                duplicate.getMessageUUID()
+        );
+        verify(processingCoordinator).process(
+                MessageCategory.PIPELINE,
+                newMessage.getMessageUUID()
+        );
     }
 
     private KafkaMessageSaveResult saved(List<ConsumerRecord<String, String>> messages) {

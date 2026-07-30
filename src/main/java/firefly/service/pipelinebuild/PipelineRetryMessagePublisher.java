@@ -4,8 +4,8 @@ import firefly.bean.dto.message.TriggerStageMessage;
 import firefly.constant.BuildStatus;
 import firefly.constant.KafkaConfiguration;
 import firefly.service.messagecenter.BusinessMessageUUID;
+import firefly.service.outbox.OutboxService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -14,9 +14,15 @@ import org.springframework.transaction.event.TransactionalEventListener;
 public class PipelineRetryMessagePublisher {
 
     @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxService outboxService;
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    /*
+     * BEFORE_COMMIT is required here: OutboxService uses MANDATORY and must
+     * join retryPipeline's existing transaction. AFTER_COMMIT would be too
+     * late—the transaction would already be closed and the Outbox insert
+     * could no longer be atomic with the retry state changes.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     public void publish(PipelineRetryPreparedEvent event) {
         TriggerStageMessage message = new TriggerStageMessage();
         message.setStageBuildID(event.stageBuildID())
@@ -27,10 +33,6 @@ public class PipelineRetryMessagePublisher {
                         event.executionAttempt(),
                         BuildStatus.RUNNING
                 ));
-        kafkaTemplate.send(
-                KafkaConfiguration.STAGE_TOPIC,
-                message.getMessageUUID(),
-                message
-        );
+        outboxService.enqueue(KafkaConfiguration.STAGE_TOPIC, message);
     }
 }

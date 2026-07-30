@@ -7,9 +7,9 @@ import firefly.constant.PluginType;
 import firefly.dao.pluginbuild.ITextPluginBuildDao;
 import firefly.model.plugin.TextPluginBuild;
 import firefly.service.messagecenter.BusinessMessageUUID;
+import firefly.service.outbox.OutboxService;
 import firefly.service.pluginbuild.IPluginBuild;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,7 +23,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
     private ITextPluginBuildDao textPluginBuildDao;
 
     @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxService outboxService;
 
     @Override
     public PluginType getPluginType() {
@@ -69,7 +69,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         System.out.println("mock trigger plugin build");
         TriggerPluginMessage triggerPluginMessage =
                 this.triggerPluginBuild(id, BuildStatus.SUCCESS, executionAttempt);
-        kafkaTemplate.send(PLUGIN_TOPIC, triggerPluginMessage.getMessageUUID(), triggerPluginMessage);
+        outboxService.enqueue(PLUGIN_TOPIC, triggerPluginMessage);
         return true;
     }
 

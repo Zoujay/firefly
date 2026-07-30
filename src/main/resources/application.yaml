@@ -52,6 +52,11 @@ spring:
       retries: 3
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        # Reduce duplicate writes during a single producer session. The durable
+        # Outbox and consumer Inbox still provide recovery across process crashes.
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
 
     listener:
       ack-mode: manual_immediate
