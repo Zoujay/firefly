@@ -15,6 +15,7 @@ import firefly.service.jobconfig.IJobConfigService;
 import firefly.service.jobconfig.IJobRelationService;
 import firefly.service.pipelinebuild.IPipelineBuildService;
 import firefly.service.pipelineconfig.IPipelineConfigService;
+import firefly.service.outbox.OutboxService;
 import firefly.service.pluginbuild.IPluginBuild;
 import firefly.service.pluginparser.PluginServiceParser;
 import firefly.service.stagebuild.IStageBuildService;
@@ -27,7 +28,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 
 import java.util.List;
 
@@ -37,7 +37,6 @@ import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -68,7 +67,7 @@ class MessageCenterTests {
     private IJobRelationService jobRelationService;
 
     @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxService outboxService;
 
     @Mock
     private IPluginBuild pluginBuildService;
@@ -121,11 +120,9 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerPipelineMessage> captor =
                 ArgumentCaptor.forClass(TriggerPipelineMessage.class);
-        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq(PIPELINE_TOPIC), keyCaptor.capture(), captor.capture());
+        verify(outboxService).enqueue(eq(PIPELINE_TOPIC), captor.capture());
         assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
         assertEquals(30L, captor.getValue().getPipelineBuildID());
-        assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
         assertEquals(
                 BusinessMessageUUID.pipeline(30L, 0, BuildStatus.FAILURE),
                 captor.getValue().getMessageUUID()
@@ -171,7 +168,7 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerStageMessage> captor =
                 ArgumentCaptor.forClass(TriggerStageMessage.class);
-        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
+        verify(outboxService).enqueue(eq(STAGE_TOPIC), captor.capture());
         assertEquals(11L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.RUNNING, captor.getValue().getBuildStatus());
         assertEquals(
@@ -194,7 +191,7 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerStageMessage> captor =
                 ArgumentCaptor.forClass(TriggerStageMessage.class);
-        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
+        verify(outboxService).enqueue(eq(STAGE_TOPIC), captor.capture());
         assertEquals(10L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.SUCCESS, captor.getValue().getBuildStatus());
         assertEquals(
@@ -215,9 +212,8 @@ class MessageCenterTests {
 
         messageCenter.onJobMessage(message);
 
-        verify(kafkaTemplate, never()).send(
+        verify(outboxService, never()).enqueue(
                 eq(STAGE_TOPIC),
-                anyString(),
                 org.mockito.ArgumentMatchers.any(TriggerStageMessage.class)
         );
     }
@@ -244,7 +240,7 @@ class MessageCenterTests {
                 () -> messageCenter.onPluginMessage(message)
         );
 
-        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+        verify(outboxService, never()).enqueue(eq(JOB_TOPIC), any());
     }
 
     @Test
@@ -262,7 +258,7 @@ class MessageCenterTests {
                 eq(BuildStatus.FAILURE),
                 eq(0)
         );
-        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+        verify(outboxService, never()).enqueue(eq(JOB_TOPIC), any());
     }
 
     @Test
@@ -280,7 +276,7 @@ class MessageCenterTests {
                 eq(BuildStatus.RUNNING),
                 eq(0)
         );
-        verify(kafkaTemplate, never()).send(eq(JOB_TOPIC), anyString(), any());
+        verify(outboxService, never()).enqueue(eq(JOB_TOPIC), any());
     }
 
     @Test
@@ -315,7 +311,7 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerStageMessage> captor =
                 ArgumentCaptor.forClass(TriggerStageMessage.class);
-        verify(kafkaTemplate).send(eq(STAGE_TOPIC), anyString(), captor.capture());
+        verify(outboxService).enqueue(eq(STAGE_TOPIC), captor.capture());
         assertEquals(10L, captor.getValue().getStageBuildID());
         assertEquals(BuildStatus.FAILURE, captor.getValue().getBuildStatus());
         assertEquals(
@@ -352,7 +348,7 @@ class MessageCenterTests {
                 eq(BuildStatus.FAILURE),
                 eq(0)
         );
-        verify(kafkaTemplate, never()).send(eq(STAGE_TOPIC), anyString(), any());
+        verify(outboxService, never()).enqueue(eq(STAGE_TOPIC), any());
     }
 
     @Test
@@ -377,7 +373,7 @@ class MessageCenterTests {
         );
 
         verify(stageConfigService, never()).getStageConfigByID(20L);
-        verify(kafkaTemplate, never()).send(eq(PIPELINE_TOPIC), anyString(), any());
+        verify(outboxService, never()).enqueue(eq(PIPELINE_TOPIC), any());
     }
 
     @Test
@@ -406,15 +402,13 @@ class MessageCenterTests {
 
         ArgumentCaptor<TriggerJobMessage> captor =
                 ArgumentCaptor.forClass(TriggerJobMessage.class);
-        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq(JOB_TOPIC), keyCaptor.capture(), captor.capture());
+        verify(outboxService).enqueue(eq(JOB_TOPIC), captor.capture());
         assertEquals(50L, captor.getValue().getJobBuildID());
         assertEquals(status, captor.getValue().getBuildStatus());
         assertEquals(
                 BusinessMessageUUID.job(50L, 0, status),
                 captor.getValue().getMessageUUID()
         );
-        assertEquals(captor.getValue().getMessageUUID(), keyCaptor.getValue());
     }
 
     private TriggerPluginMessage pluginMessage(BuildStatus status) {

@@ -17,7 +17,13 @@ import lombok.NoArgsConstructor;
                         columnNames = {"topic", "kafka_partition", "kafka_offset"}
                 )
         },
-        indexes = @Index(name = "idx_pipeline_message_received_at", columnList = "received_at")
+        indexes = {
+                @Index(name = "idx_pipeline_message_received_at", columnList = "received_at"),
+                @Index(
+                        name = "idx_pipeline_message_processing",
+                        columnList = "processing_status,received_at,id"
+                )
+        }
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PipelineMessage extends KafkaMessage {

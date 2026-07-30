@@ -1,10 +1,5 @@
 package firefly.service.messagecenter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import firefly.bean.dto.message.TriggerJobMessage;
-import firefly.bean.dto.message.TriggerPipelineMessage;
-import firefly.bean.dto.message.TriggerPluginMessage;
-import firefly.bean.dto.message.TriggerStageMessage;
 import firefly.constant.MessageCategory;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -14,7 +9,6 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.function.Function;
 
 import static firefly.constant.KafkaConfiguration.JOB_TOPIC;
 import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
@@ -29,22 +23,14 @@ public class MessageListener {
     private KafkaMessageStore kafkaMessageStore;
 
     @Autowired
-    private MessageCenter messageCenter;
-
-    @Autowired
-    private ObjectMapper objectMapper;
+    private KafkaMessageProcessingCoordinator processingCoordinator;
 
     @KafkaListener(topics = PIPELINE_TOPIC)
     public void onPipelineMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
         KafkaMessageSaveResult saveResult = kafkaMessageStore.savePipelineMessages(messages);
         logPersistenceResult(MessageCategory.PIPELINE, messages.size(), saveResult);
         ack.acknowledge();
-        processMessages(
-                saveResult.newMessages(),
-                TriggerPipelineMessage.class,
-                messageCenter::onPipelineMessage,
-                MessageCategory.PIPELINE
-        );
+        processMessages(saveResult.newMessages(), MessageCategory.PIPELINE);
     }
 
 
@@ -53,12 +39,7 @@ public class MessageListener {
         KafkaMessageSaveResult saveResult = kafkaMessageStore.saveStageMessages(messages);
         logPersistenceResult(MessageCategory.STAGE, messages.size(), saveResult);
         ack.acknowledge();
-        processMessages(
-                saveResult.newMessages(),
-                TriggerStageMessage.class,
-                messageCenter::onStageMessage,
-                MessageCategory.STAGE
-        );
+        processMessages(saveResult.newMessages(), MessageCategory.STAGE);
     }
 
 
@@ -67,12 +48,7 @@ public class MessageListener {
         KafkaMessageSaveResult saveResult = kafkaMessageStore.saveJobMessages(messages);
         logPersistenceResult(MessageCategory.JOB, messages.size(), saveResult);
         ack.acknowledge();
-        processMessages(
-                saveResult.newMessages(),
-                TriggerJobMessage.class,
-                messageCenter::onJobMessage,
-                MessageCategory.JOB
-        );
+        processMessages(saveResult.newMessages(), MessageCategory.JOB);
     }
 
 
@@ -81,24 +57,22 @@ public class MessageListener {
         KafkaMessageSaveResult saveResult = kafkaMessageStore.savePluginMessages(messages);
         logPersistenceResult(MessageCategory.PLUGIN, messages.size(), saveResult);
         ack.acknowledge();
-        processMessages(
-                saveResult.newMessages(),
-                TriggerPluginMessage.class,
-                messageCenter::onPluginMessage,
-                MessageCategory.PLUGIN
-        );
+        processMessages(saveResult.newMessages(), MessageCategory.PLUGIN);
     }
 
-    private <T> void processMessages(
+    private void processMessages(
             List<ConsumerRecord<String, String>> messages,
-            Class<T> messageType,
-            Function<T, Boolean> handler,
             MessageCategory messageCategory
     ) {
         for (ConsumerRecord<String, String> record : messages) {
             try {
-                T message = objectMapper.readValue(record.value(), messageType);
-                handler.apply(message);
+                String messageUUID = kafkaMessageStore.extractMessageUUID(record);
+                /*
+                 * Inbox 已经在 ACK 前提交。ACK 之后的业务处理只操作 Inbox 中的消息：
+                 * 成功转为 SUCCESS，异常转为 FAILURE，Kafka 不会因为业务异常而重复投递。
+                 * FAILURE/宕机遗留的 PROCESSING 由管理员通过恢复接口显式处理，不扫描数据库。
+                 */
+                processingCoordinator.process(messageCategory, messageUUID);
             } catch (Exception exception) {
                 log.error(
                         "Failed to process archived {} message at {}-{}@{}; manual recovery is required",
