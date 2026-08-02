@@ -195,6 +195,16 @@ public class MessageCenter {
         Integer executionAttempt = jobMessage.getExecutionAttempt();
         JobBuildDto jobBuildDto = jobBuildService.getJobBuildByID(jobBuildID);
         Long stageBuildID = jobBuildDto.getStageBuildID();
+        StageBuildDto stageBuildDto = null;
+        if (isTerminalStatus(buildStatus)) {
+            // All terminal Job results for the same Stage must update and
+            // re-evaluate completion one at a time. The lock is held by the
+            // surrounding message transaction until its Outbox write commits.
+            stageBuildDto = stageBuildService.lockStageBuild(
+                    stageBuildID,
+                    executionAttempt
+            );
+        }
         Boolean result = jobBuildService.updateJobBuildStatus(
                 jobBuildID,
                 buildStatus,
@@ -210,7 +220,6 @@ public class MessageCenter {
                 BuildStatus.RUNNING,
                 executionAttempt
         );
-        StageBuildDto stageBuildDto = stageBuildService.getStageBuildByID(stageBuildID);
         if (buildStatus == BuildStatus.SUCCESS) {
             // todo check stage status
             if (stageBuildDto.getStatus() == BuildStatus.FAILURE) {
@@ -235,7 +244,10 @@ public class MessageCenter {
                 triggerJobMessage.setBuildStatus(BuildStatus.RUNNING);
                 send(KafkaConfiguration.JOB_TOPIC, triggerJobMessage);
             } else {
-                List<JobBuildDto> tailJobs = jobBuildService.getTailJobBuildsByStageBuildID(stageConfigID, stageBuildID);
+                List<JobBuildDto> tailJobs = jobBuildService.getTailJobBuildsForUpdate(
+                        stageConfigID,
+                        stageBuildID
+                );
                 BuildStatus status = jobBuildService.calculateStageStatus(tailJobs);
                 if (!isTerminalStatus(status)) {
                     return true;

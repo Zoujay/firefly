@@ -11,6 +11,11 @@ public interface IStageBuildService {
 
     StageBuildDto getStageBuildByID(Long id);
 
+    StageBuildDto lockStageBuild(
+            Long stageBuildID,
+            Integer executionAttempt
+    );
+
     StageBuildDto getFirstStageToRun(Long pipelineBuildID);
 
     List<StageBuildDto> getStageBuildsByPipelineBuildID(Long pipelineBuildID);

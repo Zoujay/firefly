@@ -25,5 +25,7 @@ public interface IJobBuildService {
 
     List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID);
 
+    List<JobBuildDto> getTailJobBuildsForUpdate(Long stageConfigID, Long stageBuildID);
+
     BuildStatus calculateStageStatus(List<JobBuildDto> jobBuildDtos);
 }
