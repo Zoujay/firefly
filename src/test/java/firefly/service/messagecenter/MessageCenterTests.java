@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -189,6 +190,14 @@ class MessageCenterTests {
 
         messageCenter.onJobMessage(message);
 
+        var terminalOrder = inOrder(stageBuildService, jobBuildService);
+        terminalOrder.verify(stageBuildService).lockStageBuild(10L, 0);
+        terminalOrder.verify(jobBuildService).updateJobBuildStatus(
+                50L,
+                BuildStatus.SUCCESS,
+                0
+        );
+
         ArgumentCaptor<TriggerStageMessage> captor =
                 ArgumentCaptor.forClass(TriggerStageMessage.class);
         verify(outboxService).enqueue(eq(STAGE_TOPIC), captor.capture());
@@ -299,7 +308,7 @@ class MessageCenterTests {
         when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
         when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.FAILURE, 0))
                 .thenReturn(true);
-        when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageBuildService.lockStageBuild(10L, 0)).thenReturn(stageBuild);
         when(stageBuildService.transitionStageBuildStatus(
                 10L,
                 BuildStatus.RUNNING,
@@ -341,7 +350,7 @@ class MessageCenterTests {
                 () -> messageCenter.onJobMessage(message)
         );
 
-        verify(stageBuildService, never()).getStageBuildByID(10L);
+        verify(stageBuildService).lockStageBuild(10L, 0);
         verify(stageBuildService, never()).transitionStageBuildStatus(
                 eq(10L),
                 eq(BuildStatus.RUNNING),
@@ -449,11 +458,11 @@ class MessageCenterTests {
         when(jobBuildService.getJobBuildByID(50L)).thenReturn(jobBuild);
         when(jobBuildService.updateJobBuildStatus(50L, BuildStatus.SUCCESS, 0))
                 .thenReturn(true);
-        when(stageBuildService.getStageBuildByID(10L)).thenReturn(stageBuild);
+        when(stageBuildService.lockStageBuild(10L, 0)).thenReturn(stageBuild);
         when(stageConfigService.getStageConfigByID(20L)).thenReturn(stageConfig);
         when(jobRelationService.getNextJobRelation(20L, 60L))
                 .thenReturn(tailRelation);
-        when(jobBuildService.getTailJobBuildsByStageBuildID(20L, 10L))
+        when(jobBuildService.getTailJobBuildsForUpdate(20L, 10L))
                 .thenReturn(tailJobs);
         when(jobBuildService.calculateStageStatus(tailJobs))
                 .thenReturn(BuildStatus.SUCCESS);

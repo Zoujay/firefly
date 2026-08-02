@@ -7,6 +7,7 @@ import firefly.model.stage.StageBuild;
 import firefly.service.stagebuild.IStageBuildService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
@@ -36,6 +37,28 @@ public class StageBuildServiceImpl implements IStageBuildService {
     public StageBuildDto getStageBuildByID(Long id) {
         Optional<StageBuild> stageBuild = stageBuildDao.findById(id);
         return stageBuild.map(this::assembleStageBuildDto).orElse(null);
+    }
+
+    /**
+     * Serializes terminal Job handling for one Stage inside the caller's
+     * business transaction. The database lock is held until Job state, Stage
+     * state, Inbox success, and the downstream Outbox row commit together.
+     */
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public StageBuildDto lockStageBuild(
+            Long stageBuildID,
+            Integer executionAttempt
+    ) {
+        StageBuild stageBuild = stageBuildDao.findForUpdate(
+                        stageBuildID,
+                        executionAttempt
+                )
+                .orElseThrow(() -> new IllegalStateException(
+                        "Stage build does not exist or executionAttempt is stale: "
+                                + stageBuildID
+                ));
+        return assembleStageBuildDto(stageBuild);
     }
 
     @Override

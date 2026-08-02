@@ -11,6 +11,7 @@ import firefly.service.stagebuild.IStageBuildService;
 import firefly.service.stageconfig.IStageConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -58,8 +59,12 @@ public class JobBuildServiceImpl implements IJobBuildService {
             BuildStatus status,
             Integer executionAttempt
     ) {
-        int result = jobBuildDao.updateJobBuildStatusByID(
+        BuildStatus expectedStatus = status == BuildStatus.RUNNING
+                ? BuildStatus.PENDING
+                : BuildStatus.RUNNING;
+        int result = jobBuildDao.transitionJobBuildStatus(
                 jobBuildID,
+                expectedStatus,
                 status,
                 executionAttempt
         );
@@ -122,9 +127,35 @@ public class JobBuildServiceImpl implements IJobBuildService {
 
     @Override
     public List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
+        return getTailJobBuilds(
+                stageConfigID,
+                jobBuildDao.getJobBuildsByStageBuildID(stageBuildID)
+        );
+    }
+
+    /**
+     * Uses a locking read after the Stage row has been locked. Locking reads
+     * bypass a stale REPEATABLE READ snapshot, so the last terminal Job
+     * transaction observes every previously committed Job result.
+     */
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public List<JobBuildDto> getTailJobBuildsForUpdate(
+            Long stageConfigID,
+            Long stageBuildID
+    ) {
+        return getTailJobBuilds(
+                stageConfigID,
+                jobBuildDao.getJobBuildsByStageBuildIDForUpdate(stageBuildID)
+        );
+    }
+
+    private List<JobBuildDto> getTailJobBuilds(
+            Long stageConfigID,
+            List<JobBuild> jobBuilds
+    ) {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
         List<JobRelationDto> jobRelationDtos = jobRelationService.getAllTailJobRelationByStageID(stageConfigID);
-        List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
         for (JobBuild build : jobBuilds) {
             for (JobRelationDto jobRelationDto : jobRelationDtos) {
                 if (Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
