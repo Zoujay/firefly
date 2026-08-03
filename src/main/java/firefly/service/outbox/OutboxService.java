@@ -53,13 +53,19 @@ public class OutboxService {
                 payload
         );
         if (inserted == 1) {
+            Long outboxID = outboxEventDao
+                    .findIDByMessageUUID(message.getMessageUUID())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Outbox event was inserted but cannot be found: "
+                                    + message.getMessageUUID()
+                    ));
             /*
              * The event is published inside the current transaction. Its
              * listener runs AFTER_COMMIT, so a rollback produces neither an
              * Outbox row nor a Kafka send attempt.
              */
             applicationEventPublisher.publishEvent(
-                    new OutboxCreatedEvent(message.getMessageUUID())
+                    new OutboxCreatedEvent(outboxID)
             );
         }
     }

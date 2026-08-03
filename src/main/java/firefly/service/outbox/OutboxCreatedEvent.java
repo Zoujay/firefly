@@ -1,4 +1,4 @@
 package firefly.service.outbox;
 
-public record OutboxCreatedEvent(String outboxID) {
+public record OutboxCreatedEvent(Long outboxID) {
 }

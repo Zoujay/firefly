@@ -13,29 +13,40 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-public interface IOutboxEventDao extends JpaRepository<OutboxEvent, String> {
+public interface IOutboxEventDao extends JpaRepository<OutboxEvent, Long> {
 
-    Optional<OutboxEvent> findById(String id);
+    Optional<OutboxEvent> findByMessageUUID(String messageUUID);
+
+    long countByMessageUUID(String messageUUID);
+
+    @Query("select e.id from OutboxEvent e where e.messageUUID = :messageUUID")
+    Optional<Long> findIDByMessageUUID(
+            @Param("messageUUID") String messageUUID
+    );
 
     Page<OutboxEvent> findByPublishStatusOrderByCreatedAtAsc(
             OutboxStatus publishStatus,
             Pageable pageable
     );
 
+    /**
+     * Inserts only a new business message UUID. MySQL returns zero for an
+     * ignored duplicate, so the service does not schedule the same logical
+     * message for publication again.
+     */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
             value = """
-                    INSERT INTO outbox_event (
-                        id, topic, message_key, message_type, payload
+                    INSERT IGNORE INTO outbox_event (
+                        message_uuid, topic, message_key, message_type, payload
                     ) VALUES (
-                        :id, :topic, :messageKey, :messageType, :payload
+                        :messageUUID, :topic, :messageKey, :messageType, :payload
                     )
-                    ON DUPLICATE KEY UPDATE id = id
                     """,
             nativeQuery = true
     )
     int insertIfAbsent(
-            @Param("id") String id,
+            @Param("messageUUID") String messageUUID,
             @Param("topic") String topic,
             @Param("messageKey") String messageKey,
             @Param("messageType") String messageType,
@@ -55,7 +66,7 @@ public interface IOutboxEventDao extends JpaRepository<OutboxEvent, String> {
               and e.publishStatus in :expectedStatuses
             """)
     int claimForPublishing(
-            @Param("id") String id,
+            @Param("id") Long id,
             @Param("expectedStatuses") List<OutboxStatus> expectedStatuses,
             @Param("targetStatus") OutboxStatus targetStatus,
             @Param("publisherID") String publisherID,
@@ -75,7 +86,7 @@ public interface IOutboxEventDao extends JpaRepository<OutboxEvent, String> {
               and e.publisherID = :publisherID
             """)
     int markSent(
-            @Param("id") String id,
+            @Param("id") Long id,
             @Param("expectedStatus") OutboxStatus expectedStatus,
             @Param("targetStatus") OutboxStatus targetStatus,
             @Param("publisherID") String publisherID,
@@ -94,7 +105,7 @@ public interface IOutboxEventDao extends JpaRepository<OutboxEvent, String> {
               and e.publisherID = :publisherID
             """)
     int markFailed(
-            @Param("id") String id,
+            @Param("id") Long id,
             @Param("expectedStatus") OutboxStatus expectedStatus,
             @Param("targetStatus") OutboxStatus targetStatus,
             @Param("publisherID") String publisherID,

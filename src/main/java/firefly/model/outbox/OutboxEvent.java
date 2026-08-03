@@ -5,10 +5,13 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 import org.hibernate.annotations.CreationTimestamp;
@@ -30,16 +33,28 @@ import static firefly.constant.PersistenceDefaults.UNSET_TIME;
 @Entity
 @Table(
         name = "outbox_event",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uidx_outbox_message_uuid",
+                columnNames = "message_uuid"
+        ),
         indexes = @Index(
-                name = "idx_outbox_status_created",
-                columnList = "publish_status,created_at"
+                name = "idx_outbox_publish_status",
+                columnList = "publish_status,created_at,id"
         )
 )
 public class OutboxEvent {
 
     @Id
-    @Column(name = "id", nullable = false, updatable = false, length = 36)
-    private String id = StringUtils.EMPTY;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id", nullable = false, updatable = false)
+    private Long id;
+
+    /**
+     * Stable business idempotency key. The numeric ID is only the database
+     * identity; duplicate logical events are still rejected by this UUID.
+     */
+    @Column(name = "message_uuid", nullable = false, updatable = false, length = 36)
+    private String messageUUID = StringUtils.EMPTY;
 
     @Column(name = "topic", nullable = false, updatable = false, length = 249)
     private String topic = StringUtils.EMPTY;
