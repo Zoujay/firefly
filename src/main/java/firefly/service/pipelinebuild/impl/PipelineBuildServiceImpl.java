@@ -201,7 +201,7 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         Long pipelineBuildId = this.savePipelineBuild(pipelineBuildDto);
         Long pipelineID = pipelineBuildDto.getPipelineID();
         if (pipelineBuildId == null || pipelineBuildId <= 0L) {
-            System.out.println("trigger pipeline failed");
+            log.error("Failed to create pipeline build: pipelineID={}", pipelineID);
             return -1L;
         }
         List<StageConfigDto> stages = stageConfigService.getStageConfigsByPipelineID(pipelineID);
@@ -212,7 +212,12 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
                     BuildStatus.PENDING,
                     pipelineBuildDto.getExecutionAttempt());
             Long stageBuildID = stageBuildService.saveStageBuild(stageBuildDto);
-            System.out.println("stage build id: " + stageBuildID);
+            log.debug(
+                    "Created stage build: stageBuildID={}, stageConfigID={}, pipelineBuildID={}",
+                    stageBuildID,
+                    stageConfig.getId(),
+                    pipelineBuildId
+            );
             List<JobConfigDto> jobConfigs = jobConfig.getJobConfigsByStageID(stageConfig.getId());
             for (JobConfigDto jobConfig : jobConfigs) {
                 Long jobConfigID = jobConfig.getId();

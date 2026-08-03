@@ -3,6 +3,7 @@ package firefly.service.trigger;
 import firefly.bean.dto.message.BaseMessage;
 import firefly.constant.TriggerOrigin;
 import firefly.model.trigger.BaseTriggerEntity;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -11,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Component
 public class TriggerCenter implements ITriggerCenter, InitializingBean {
 
@@ -24,7 +26,7 @@ public class TriggerCenter implements ITriggerCenter, InitializingBean {
         TriggerOrigin triggerOrigin = message.getTriggerOrigin();
         ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage> trigger = TRIGGER_MAP.get(triggerOrigin);
         if (trigger == null) {
-            System.out.println("trigger is null");
+            log.error("No trigger registered for origin {}", triggerOrigin);
             return;
         }
         trigger.execute(message);
