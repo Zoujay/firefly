@@ -1,7 +1,7 @@
 package firefly.service.outbox;
 
 public record OutboxPublishTask(
-        String id,
+        Long id,
         String topic,
         String messageKey,
         String payload,

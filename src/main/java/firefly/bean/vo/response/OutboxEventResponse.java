@@ -11,7 +11,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class OutboxEventResponse {
 
-    private String id;
+    private Long id;
+
+    private String messageUUID;
 
     private String topic;
 
@@ -38,6 +40,7 @@ public class OutboxEventResponse {
     public static OutboxEventResponse from(OutboxEvent event) {
         return new OutboxEventResponse(
                 event.getId(),
+                event.getMessageUUID(),
                 event.getTopic(),
                 event.getMessageKey(),
                 event.getMessageType(),

@@ -34,7 +34,7 @@ public class OutboxPublisher {
      * A process crash while sending leaves PUBLISHING, which an operator first
      * resets to FAILED after checking Kafka, then explicitly retries.</p>
      */
-    public boolean publishOnce(String outboxID) {
+    public boolean publishOnce(Long outboxID) {
         String publisherID = UUID.randomUUID().toString();
         Optional<OutboxPublishTask> claimed =
                 stateService.claim(outboxID, publisherID);

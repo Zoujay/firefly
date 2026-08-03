@@ -34,7 +34,7 @@ public class OutboxAdminController {
 
     @GetMapping("/{outboxID}")
     public OutboxEventResponse getEvent(
-            @PathVariable String outboxID
+            @PathVariable Long outboxID
     ) {
         return stateService.getResponse(outboxID);
     }
@@ -49,7 +49,7 @@ public class OutboxAdminController {
 
     @PostMapping("/{outboxID}/publish")
     public OutboxEventResponse publish(
-            @PathVariable String outboxID
+            @PathVariable Long outboxID
     ) {
         OutboxEventResponse current = stateService.getResponse(outboxID);
         if (current.getPublishStatus() == OutboxStatus.SENT) {
@@ -70,7 +70,7 @@ public class OutboxAdminController {
 
     @PostMapping("/{outboxID}/reset-publishing")
     public OutboxEventResponse resetPublishing(
-            @PathVariable String outboxID,
+            @PathVariable Long outboxID,
             @RequestParam @NotBlank String publisherID,
             @RequestParam(defaultValue = "MANUAL_RESET") String reason
     ) {

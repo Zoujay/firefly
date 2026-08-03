@@ -31,7 +31,7 @@ public class OutboxStateService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<OutboxPublishTask> claim(
-            String outboxID,
+            Long outboxID,
             String publisherID
     ) {
         int updated = outboxEventDao.claimForPublishing(
@@ -61,7 +61,7 @@ public class OutboxStateService {
      * publisher ID prevents an old worker from completing a newer attempt.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean markSent(String outboxID, String publisherID) {
+    public boolean markSent(Long outboxID, String publisherID) {
         return outboxEventDao.markSent(
                 outboxID,
                 OutboxStatus.PUBLISHING,
@@ -78,7 +78,7 @@ public class OutboxStateService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markFailed(
-            String outboxID,
+            Long outboxID,
             String publisherID,
             Exception exception
     ) {
@@ -105,7 +105,7 @@ public class OutboxStateService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean resetPublishing(
-            String outboxID,
+            Long outboxID,
             String expectedPublisherID,
             String reason
     ) {
@@ -124,14 +124,14 @@ public class OutboxStateService {
     }
 
     @Transactional(readOnly = true)
-    public OutboxEvent getRequired(String outboxID) {
+    public OutboxEvent getRequired(Long outboxID) {
         return outboxEventDao.findById(outboxID)
                 .orElseThrow(() ->
                         new OutboxEventNotFoundException(outboxID));
     }
 
     @Transactional(readOnly = true)
-    public OutboxEventResponse getResponse(String outboxID) {
+    public OutboxEventResponse getResponse(Long outboxID) {
         return OutboxEventResponse.from(getRequired(outboxID));
     }
 

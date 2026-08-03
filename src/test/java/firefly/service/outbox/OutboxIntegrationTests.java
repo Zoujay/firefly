@@ -18,8 +18,10 @@ import java.util.UUID;
 import static firefly.constant.KafkaConfiguration.STAGE_TOPIC;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -51,7 +53,9 @@ class OutboxIntegrationTests {
                 () -> outboxService.enqueue(STAGE_TOPIC, message)
         );
 
-        assertFalse(outboxEventDao.existsById(message.getMessageUUID()));
+        assertTrue(outboxEventDao
+                .findByMessageUUID(message.getMessageUUID())
+                .isEmpty());
     }
 
     @Test
@@ -63,15 +67,18 @@ class OutboxIntegrationTests {
         );
 
         OutboxEvent event = outboxEventDao
-                .findById(message.getMessageUUID())
+                .findByMessageUUID(message.getMessageUUID())
                 .orElseThrow();
+        assertNotNull(event.getId());
+        assertTrue(event.getId() > 0);
+        assertEquals(message.getMessageUUID(), event.getMessageUUID());
         assertEquals(OutboxStatus.PENDING, event.getPublishStatus());
         assertEquals(
                 "stage:" + message.getStageBuildID() + ":0",
                 event.getMessageKey()
         );
         verify(outboxPublisher, timeout(2_000))
-                .publishOnce(message.getMessageUUID());
+                .publishOnce(event.getId());
     }
 
     @Test
@@ -86,9 +93,10 @@ class OutboxIntegrationTests {
                 })
         );
 
-        assertFalse(outboxEventDao.existsById(message.getMessageUUID()));
-        verify(outboxPublisher, never())
-                .publishOnce(message.getMessageUUID());
+        assertTrue(outboxEventDao
+                .findByMessageUUID(message.getMessageUUID())
+                .isEmpty());
+        verify(outboxPublisher, never()).publishOnce(anyLong());
     }
 
     @Test
@@ -97,27 +105,58 @@ class OutboxIntegrationTests {
         transactionTemplate.executeWithoutResult(
                 status -> outboxService.enqueue(STAGE_TOPIC, message)
         );
+        Long outboxID = outboxEventDao
+                .findByMessageUUID(message.getMessageUUID())
+                .orElseThrow()
+                .getId();
 
         Optional<OutboxPublishTask> claimed =
-                stateService.claim(message.getMessageUUID(), "publisher-1");
+                stateService.claim(outboxID, "publisher-1");
         assertTrue(claimed.isPresent());
         assertTrue(stateService
-                .claim(message.getMessageUUID(), "publisher-2")
+                .claim(outboxID, "publisher-2")
                 .isEmpty());
         assertFalse(stateService.markSent(
-                message.getMessageUUID(),
+                outboxID,
                 "publisher-2"
         ));
         assertTrue(stateService.markSent(
-                message.getMessageUUID(),
+                outboxID,
                 "publisher-1"
         ));
         assertEquals(
                 OutboxStatus.SENT,
-                outboxEventDao.findById(message.getMessageUUID())
+                outboxEventDao.findById(outboxID)
                         .orElseThrow()
                         .getPublishStatus()
         );
+    }
+
+    @Test
+    void keepsMessageUuidAsTheIdempotencyKey() {
+        TriggerStageMessage message = message();
+
+        transactionTemplate.executeWithoutResult(
+                status -> outboxService.enqueue(STAGE_TOPIC, message)
+        );
+        OutboxEvent first = outboxEventDao
+                .findByMessageUUID(message.getMessageUUID())
+                .orElseThrow();
+
+        transactionTemplate.executeWithoutResult(
+                status -> outboxService.enqueue(STAGE_TOPIC, message)
+        );
+        OutboxEvent duplicate = outboxEventDao
+                .findByMessageUUID(message.getMessageUUID())
+                .orElseThrow();
+
+        assertEquals(first.getId(), duplicate.getId());
+        assertEquals(
+                1,
+                outboxEventDao.countByMessageUUID(message.getMessageUUID())
+        );
+        verify(outboxPublisher, timeout(2_000).times(1))
+                .publishOnce(first.getId());
     }
 
     private TriggerStageMessage message() {

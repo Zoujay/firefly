@@ -125,11 +125,15 @@ class StageJobCompletionConcurrencyIntegrationTests {
                             jobBuilds.stream().map(JobBuild::getId).toList()
                     ).stream()
                     .allMatch(jobBuild -> jobBuild.getJobStatus() == BuildStatus.SUCCESS));
-            assertTrue(outboxEventDao.existsById(stageSuccessMessageUUID));
+            Long outboxID = outboxEventDao
+                    .findByMessageUUID(stageSuccessMessageUUID)
+                    .orElseThrow()
+                    .getId();
             verify(outboxPublisher, timeout(2_000).times(1))
-                    .publishOnce(stageSuccessMessageUUID);
+                    .publishOnce(outboxID);
         } finally {
-            outboxEventDao.deleteById(stageSuccessMessageUUID);
+            outboxEventDao.findByMessageUUID(stageSuccessMessageUUID)
+                    .ifPresent(outboxEventDao::delete);
             jobRelationDao.deleteAll(relations);
             jobBuildDao.deleteAll(jobBuilds);
             stageBuildDao.deleteById(stageBuild.getId());

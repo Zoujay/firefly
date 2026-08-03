@@ -273,7 +273,8 @@ CREATE TABLE `firefly`.`plugin_message`
 -- PUBLISHING, or FAILED events are recovered manually.
 CREATE TABLE `firefly`.`outbox_event`
 (
-    `id`                     VARCHAR(36)   NOT NULL,
+    `id`                     BIGINT        NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36)   NOT NULL,
     `topic`                  VARCHAR(249)  NOT NULL,
     `message_key`            VARCHAR(128)  NOT NULL DEFAULT '',
     `message_type`           VARCHAR(128)  NOT NULL DEFAULT '',
@@ -286,5 +287,6 @@ CREATE TABLE `firefly`.`outbox_event`
     `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
     `created_at`             DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_outbox_message_uuid` (`message_uuid`),
     INDEX `idx_outbox_publish_status` (`publish_status`, `created_at`, `id`)
 );
