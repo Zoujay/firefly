@@ -23,7 +23,7 @@ public class MessageListener {
     private KafkaMessageStore kafkaMessageStore;
 
     @Autowired
-    private KafkaMessageProcessingCoordinator processingCoordinator;
+    private KafkaMessageVirtualThreadProcessor virtualThreadProcessor;
 
     @KafkaListener(topics = PIPELINE_TOPIC)
     public void onPipelineMessage(List<ConsumerRecord<String, String>> messages, Acknowledgment ack) {
@@ -64,26 +64,15 @@ public class MessageListener {
             List<ConsumerRecord<String, String>> messages,
             MessageCategory messageCategory
     ) {
-        for (ConsumerRecord<String, String> record : messages) {
-            try {
-                String messageUUID = kafkaMessageStore.extractMessageUUID(record);
-                /*
-                 * Inbox 已经在 ACK 前提交。ACK 之后的业务处理只操作 Inbox 中的消息：
-                 * 成功转为 SUCCESS，异常转为 FAILURE，Kafka 不会因为业务异常而重复投递。
-                 * FAILURE/宕机遗留的 PROCESSING 由管理员通过恢复接口显式处理，不扫描数据库。
-                 */
-                processingCoordinator.process(messageCategory, messageUUID);
-            } catch (Exception exception) {
-                log.error(
-                        "Failed to process archived {} message at {}-{}@{}; manual recovery is required",
-                        messageCategory,
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        exception
-                );
-            }
+        if (messages.isEmpty()) {
+            return;
         }
+        /*
+         * Inbox 已经在 ACK 前提交。ACK 之后，每条新消息在独立虚拟线程中处理，
+         * 并由处理器限制数据库业务并发。成功转为 SUCCESS，异常转为 FAILURE；
+         * 宕机遗留的 ARCHIVED/PROCESSING 仍通过管理接口人工恢复，不扫描数据库。
+         */
+        virtualThreadProcessor.processAndWait(messages, messageCategory);
     }
 
     private void logPersistenceResult(

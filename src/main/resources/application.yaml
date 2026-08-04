@@ -65,3 +65,10 @@ spring:
 
 server:
   port: ${SERVER_PORT:9999}
+
+firefly:
+  kafka:
+    processing:
+      # Per-instance business concurrency. Keep headroom below the 30-connection
+      # Hikari maximum for Outbox publication, admin recovery, and HTTP requests.
+      max-concurrency: ${KAFKA_MESSAGE_MAX_CONCURRENCY:24}

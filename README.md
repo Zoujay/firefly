@@ -244,6 +244,7 @@ java -jar target/firefly-0.0.1-SNAPSHOT.jar
 | `MYSQL_DATABASE` | `firefly`（示例文件） | 启动本地 MySQL 时 | 数据库名 |
 | `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | 否 | JDBC URL |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | 否 | Kafka Broker |
+| `KAFKA_MESSAGE_MAX_CONCURRENCY` | `24` | 否 | 单实例 Kafka 业务处理并发上限 |
 | `SERVER_PORT` | `9999` | 否 | HTTP 端口 |
 
 JPA 使用 `ddl-auto: none`，应用不会自动修改表结构。新库结构以 `src/main/resources/v1.sql` 为准。
@@ -668,6 +669,7 @@ The default URL is `http://localhost:9999`.
 | `MYSQL_DATABASE` | `firefly` in the example file | for local MySQL | Database name |
 | `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | no | JDBC URL |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | no | Kafka brokers |
+| `KAFKA_MESSAGE_MAX_CONCURRENCY` | `24` | no | Per-instance Kafka business-processing concurrency limit |
 | `SERVER_PORT` | `9999` | no | HTTP port |
 
 JPA uses `ddl-auto: none`; the application never changes the schema automatically. Use `src/main/resources/v1.sql` to initialize a new database.
