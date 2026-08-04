@@ -9,12 +9,14 @@ import firefly.model.plugin.TextPluginBuild;
 import firefly.service.messagecenter.BusinessMessageUUID;
 import firefly.service.outbox.OutboxService;
 import firefly.service.pluginbuild.IPluginBuild;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import static firefly.constant.KafkaConfiguration.PLUGIN_TOPIC;
 
+@Slf4j
 @Service
 @Transactional
 public class TextPluginBuildServiceImpl implements IPluginBuild {
@@ -53,7 +55,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         if (id != null && id > 0) {
             return id;
         }
-        System.out.println("mock trigger plugin build");
+        log.error("Failed to save text plugin build: jobBuildID={}", pluginDto.getJobBuildID());
         return -1L;
     }
 
@@ -66,7 +68,11 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
                             + id + ", executionAttempt=" + executionAttempt);
         }
         // execute
-        System.out.println("mock trigger plugin build");
+        log.info(
+                "Executing mock text plugin build: pluginBuildID={}, executionAttempt={}",
+                id,
+                executionAttempt
+        );
         TriggerPluginMessage triggerPluginMessage =
                 this.triggerPluginBuild(id, BuildStatus.SUCCESS, executionAttempt);
         outboxService.enqueue(PLUGIN_TOPIC, triggerPluginMessage);
@@ -80,7 +86,12 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
             return result == 1;
         }
         // execute
-        System.out.println("mock trigger plugin build");
+        log.warn(
+                "Failed to update text plugin build status: pluginBuildID={}, status={}, executionAttempt={}",
+                id,
+                status,
+                executionAttempt
+        );
         return false;
     }
 
