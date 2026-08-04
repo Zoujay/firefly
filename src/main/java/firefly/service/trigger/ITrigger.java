@@ -2,17 +2,13 @@ package firefly.service.trigger;
 
 import firefly.bean.dto.message.BaseMessage;
 import firefly.constant.TriggerOrigin;
-import firefly.model.trigger.BaseTriggerEntity;
 
-public interface ITrigger<BaseT extends BaseTriggerEntity, BaseM extends BaseMessage> {
+public interface ITrigger<M extends BaseMessage> {
 
-    TriggerOrigin getTriggerType();
+    TriggerOrigin getTriggerOrigin();
 
-    Long saveRealTrigger(BaseMessage triggerMessage);
+    Class<M> getMessageType();
 
-    BaseMessage parseMessage(String messageRaw);
-
-
-    void execute(BaseMessage message);
+    void dispatch(BaseMessage message);
 
 }
