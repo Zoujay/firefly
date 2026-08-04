@@ -1,6 +1,8 @@
 package firefly.model.trigger;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
@@ -12,9 +14,6 @@ import lombok.experimental.Accessors;
 @Entity
 @Table(name = "volcano_trigger")
 public class VolcanoTriggerEntity extends BaseTriggerEntity {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
 
     @Column(name = "pipeline_id")
     private Long pipelineID;

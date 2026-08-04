@@ -2,42 +2,65 @@ package firefly.service.trigger;
 
 import firefly.bean.dto.message.BaseMessage;
 import firefly.constant.TriggerOrigin;
-import firefly.model.trigger.BaseTriggerEntity;
-import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
 @Component
-public class TriggerCenter implements ITriggerCenter, InitializingBean {
+public class TriggerCenter implements ITriggerCenter {
+
+    private final Map<TriggerOrigin, ITrigger<? extends BaseMessage>>
+            triggerMap;
 
     @Autowired
-    private List<ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage>> triggers;
+    public TriggerCenter(List<ITrigger<? extends BaseMessage>> triggers) {
+        EnumMap<TriggerOrigin, ITrigger<? extends BaseMessage>> map =
+                new EnumMap<>(TriggerOrigin.class);
 
-    public static Map<TriggerOrigin, ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage>> TRIGGER_MAP = new HashMap<>();
+        for (ITrigger<? extends BaseMessage> trigger : triggers) {
+            TriggerOrigin origin = trigger.getTriggerOrigin();
+            if (origin == null) {
+                throw new IllegalStateException(
+                        "Trigger origin must not be null: "
+                                + trigger.getClass().getName()
+                );
+            }
 
-    @Override
-    public void dispatch(BaseMessage message) {
-        TriggerOrigin triggerOrigin = message.getTriggerOrigin();
-        ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage> trigger = TRIGGER_MAP.get(triggerOrigin);
-        if (trigger == null) {
-            System.out.println("trigger is null");
-            return;
+            ITrigger<? extends BaseMessage> existing =
+                    map.putIfAbsent(origin, trigger);
+            if (existing != null) {
+                throw new IllegalStateException(
+                        "Duplicate Trigger implementation for "
+                                + origin
+                                + ": "
+                                + existing.getClass().getName()
+                                + " and "
+                                + trigger.getClass().getName()
+                );
+            }
         }
-        trigger.execute(message);
+        this.triggerMap = Map.copyOf(map);
     }
 
     @Override
-    public void afterPropertiesSet() throws Exception {
-        for (ITrigger<? extends BaseTriggerEntity, ? extends BaseMessage> trigger : triggers) {
-            TriggerOrigin triggerOrigin = trigger.getTriggerType();
-            if (triggerOrigin == null) {
-                continue;
-            }
-            TRIGGER_MAP.put(triggerOrigin, trigger);
+    public void dispatch(BaseMessage message) {
+        if (message == null || message.getTriggerOrigin() == null) {
+            throw new IllegalArgumentException(
+                    "Trigger message and origin must not be null"
+            );
         }
+
+        TriggerOrigin triggerOrigin = message.getTriggerOrigin();
+        ITrigger<? extends BaseMessage> trigger =
+                triggerMap.get(triggerOrigin);
+        if (trigger == null) {
+            throw new IllegalStateException(
+                    "Unsupported Trigger origin: " + triggerOrigin
+            );
+        }
+        trigger.dispatch(message);
     }
 }
