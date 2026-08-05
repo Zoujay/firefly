@@ -21,13 +21,16 @@ import org.springframework.kafka.support.Acknowledgment;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,7 +64,7 @@ class MessageListenerTests {
     }
 
     @Test
-    void persistsAcknowledgesAndDispatchesEveryPipelineMessageInOrder() throws Exception {
+    void persistsAcknowledgesAndDispatchesEveryPipelineMessage() throws Exception {
         TriggerPipelineMessage first = new TriggerPipelineMessage()
                 .setMessageUUID(UUID.randomUUID().toString())
                 .setPipelineID(1L)
@@ -82,19 +85,46 @@ class MessageListenerTests {
 
         InOrder inOrder = inOrder(
                 kafkaMessageStore,
-                acknowledgment,
-                processingCoordinator
+                acknowledgment
         );
         inOrder.verify(kafkaMessageStore).savePipelineMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PIPELINE,
                 first.getMessageUUID()
         );
-        inOrder.verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PIPELINE,
                 second.getMessageUUID()
         );
+    }
+
+    @Test
+    void dispatchesBusinessProcessingOnVirtualThread() throws Exception {
+        TriggerPipelineMessage pipelineMessage = new TriggerPipelineMessage()
+                .setMessageUUID(UUID.randomUUID().toString())
+                .setPipelineID(1L)
+                .setPipelineBuildID(10L)
+                .setBuildStatus(BuildStatus.RUNNING);
+        List<ConsumerRecord<String, String>> messages =
+                List.of(record("pipeline_message", 0, 10L, pipelineMessage));
+        AtomicReference<Thread> processingThread = new AtomicReference<>();
+        when(kafkaMessageStore.savePipelineMessages(messages)).thenReturn(saved(messages));
+        when(processingCoordinator.process(
+                MessageCategory.PIPELINE,
+                pipelineMessage.getMessageUUID()
+        )).thenAnswer(invocation -> {
+            processingThread.set(Thread.currentThread());
+            return true;
+        });
+
+        messageListener.onPipelineMessage(messages, acknowledgment);
+
+        verify(processingCoordinator, timeout(1000)).process(
+                MessageCategory.PIPELINE,
+                pipelineMessage.getMessageUUID()
+        );
+        assertTrue(processingThread.get().isVirtual());
     }
 
     @Test
@@ -132,12 +162,11 @@ class MessageListenerTests {
 
         InOrder inOrder = inOrder(
                 kafkaMessageStore,
-                acknowledgment,
-                processingCoordinator
+                acknowledgment
         );
         inOrder.verify(kafkaMessageStore).saveStageMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.STAGE,
                 stageMessage.getMessageUUID()
         );
@@ -157,12 +186,11 @@ class MessageListenerTests {
 
         InOrder inOrder = inOrder(
                 kafkaMessageStore,
-                acknowledgment,
-                processingCoordinator
+                acknowledgment
         );
         inOrder.verify(kafkaMessageStore).saveJobMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.JOB,
                 jobMessage.getMessageUUID()
         );
@@ -183,12 +211,11 @@ class MessageListenerTests {
 
         InOrder inOrder = inOrder(
                 kafkaMessageStore,
-                acknowledgment,
-                processingCoordinator
+                acknowledgment
         );
         inOrder.verify(kafkaMessageStore).savePluginMessages(messages);
         inOrder.verify(acknowledgment).acknowledge();
-        inOrder.verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PLUGIN,
                 pluginMessage.getMessageUUID()
         );
@@ -219,11 +246,11 @@ class MessageListenerTests {
         assertDoesNotThrow(() -> messageListener.onPipelineMessage(messages, acknowledgment));
 
         verify(acknowledgment).acknowledge();
-        verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PIPELINE,
                 failed.getMessageUUID()
         );
-        verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PIPELINE,
                 succeeded.getMessageUUID()
         );
@@ -246,6 +273,7 @@ class MessageListenerTests {
         assertDoesNotThrow(() -> messageListener.onPipelineMessage(messages, acknowledgment));
 
         verify(acknowledgment).acknowledge();
+        verify(kafkaMessageStore, timeout(1000)).extractMessageUUID(messages.getFirst());
         verify(processingCoordinator, never()).process(any(), any());
     }
 
@@ -293,7 +321,7 @@ class MessageListenerTests {
                 MessageCategory.PIPELINE,
                 duplicate.getMessageUUID()
         );
-        verify(processingCoordinator).process(
+        verify(processingCoordinator, timeout(1000)).process(
                 MessageCategory.PIPELINE,
                 newMessage.getMessageUUID()
         );
