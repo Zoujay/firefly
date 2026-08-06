@@ -129,25 +129,23 @@ PUBLISHING ──人工确认并重置──> FAILED ──人工重试──> P
 ### 项目结构
 
 ```text
-src/main/java/firefly
-├── bean/                   # DTO、HTTP 请求与响应
-├── constant/               # Build、消息、Outbox、Trigger 与 Plugin 枚举
-├── controller/             # Pipeline 和人工恢复 API
-├── dao/                    # Spring Data JPA Repository
-├── model/                  # JPA Entity
-└── service/
-    ├── messagecenter/      # Inbox 归档、领取、消费和状态推进
-    ├── outbox/             # Outbox 入队、发布和人工恢复
-    ├── pipelinebuild/      # Pipeline Build 创建与失败重试
-    ├── stagebuild/         # Stage Build 与原子状态转换
-    ├── jobbuild/           # Job Build 与 Job Chain 推进
-    ├── pluginbuild/        # Plugin Build 执行
-    ├── pipelineconfig/     # Pipeline 配置
-    └── trigger/            # Trigger 路由与触发记录
+pom.xml                              # Maven 父工程与模块聚合
+firefly-app/
+├── pom.xml                          # Spring Boot 应用模块
+└── src/main/
+    ├── java/firefly/
+    │   ├── bean/                    # DTO、HTTP 请求与响应
+    │   ├── constant/                # Build、消息、Outbox、Trigger 与 Plugin 枚举
+    │   ├── controller/              # Pipeline 和人工恢复 API
+    │   ├── dao/                     # Spring Data JPA Repository
+    │   ├── model/                   # JPA Entity
+    │   └── service/                 # 流水线、消息、构建与触发服务
+    └── resources/
+        ├── application.yaml         # 应用与环境变量配置
+        └── v1.sql                   # 新数据库完整建表脚本
 
-src/main/resources
-├── application.yaml        # 应用与环境变量配置
-└── v1.sql                  # 新数据库完整建表脚本
+firefly-github/
+└── pom.xml                          # GitHub 交互代码模块
 ```
 
 ### 快速开始
@@ -183,7 +181,7 @@ docker run -d \
   --env-file .env \
   -p 127.0.0.1:3306:3306 \
   -v firefly-mysql-data:/var/lib/mysql \
-  -v "$PWD/src/main/resources/v1.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro" \
+  -v "$PWD/firefly-app/src/main/resources/v1.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro" \
   mysql:8.4
 ```
 
@@ -236,14 +234,15 @@ done
 
 ```bash
 mvn clean verify
-mvn spring-boot:run
+mvn install -DskipTests
+mvn -pl firefly-app spring-boot:run
 ```
 
 也可以运行打包后的 JAR：
 
 ```bash
 mvn clean package
-java -jar target/firefly-0.0.1-SNAPSHOT.jar
+java -jar firefly-app/target/firefly-0.0.1-SNAPSHOT.jar
 ```
 
 默认地址为 `http://localhost:9999`。
@@ -433,7 +432,7 @@ curl -X POST http://localhost:9999/admin/outbox-events/1/publish
 
 ### 数据库
 
-`src/main/resources/v1.sql` 是新数据库的唯一完整建表脚本，共创建 18 张表：
+`firefly-app/src/main/resources/v1.sql` 是新数据库的唯一完整建表脚本，共创建 18 张表：
 
 | 分类 | 表 |
 | --- | --- |
@@ -592,25 +591,23 @@ Late messages from an older attempt cannot mutate the new attempt because their 
 ### Project layout
 
 ```text
-src/main/java/firefly
-├── bean/                   # DTOs and HTTP request/response objects
-├── constant/               # Build, message, Outbox, Trigger, and Plugin enums
-├── controller/             # Pipeline and manual-recovery APIs
-├── dao/                    # Spring Data JPA repositories
-├── model/                  # JPA entities
-└── service/
-    ├── messagecenter/      # Inbox archive, claim, processing, and state flow
-    ├── outbox/             # Outbox enqueue, publication, and recovery
-    ├── pipelinebuild/      # Pipeline Build creation and failed retry
-    ├── stagebuild/         # Stage Build and atomic transitions
-    ├── jobbuild/           # Job Build and Job Chain progression
-    ├── pluginbuild/        # Plugin Build execution
-    ├── pipelineconfig/     # Pipeline definitions
-    └── trigger/            # Trigger routing and records
+pom.xml                              # Maven parent and module aggregator
+firefly-app/
+├── pom.xml                          # Spring Boot application module
+└── src/main/
+    ├── java/firefly/
+    │   ├── bean/                    # DTOs and HTTP request/response objects
+    │   ├── constant/                # Build, message, Outbox, Trigger, and Plugin enums
+    │   ├── controller/              # Pipeline and manual-recovery APIs
+    │   ├── dao/                     # Spring Data JPA repositories
+    │   ├── model/                   # JPA entities
+    │   └── service/                 # Pipeline, message, Build, and Trigger services
+    └── resources/
+        ├── application.yaml         # Application and environment configuration
+        └── v1.sql                   # Complete schema for a new database
 
-src/main/resources
-├── application.yaml        # Application and environment configuration
-└── v1.sql                  # Complete schema for a new database
+firefly-github/
+└── pom.xml                          # Module reserved for GitHub integration code
 ```
 
 ### Quick start
@@ -645,14 +642,15 @@ Use the commands in the [Chinese quick-start section](#3-启动-mysql) to start 
 
 ```bash
 mvn clean verify
-mvn spring-boot:run
+mvn install -DskipTests
+mvn -pl firefly-app spring-boot:run
 ```
 
 Or run the packaged JAR:
 
 ```bash
 mvn clean package
-java -jar target/firefly-0.0.1-SNAPSHOT.jar
+java -jar firefly-app/target/firefly-0.0.1-SNAPSHOT.jar
 ```
 
 The default address is `http://localhost:9999`.
@@ -739,7 +737,7 @@ Retry returns HTTP `409` if the Build does not exist, is not in `FAILURE`, or ha
 
 ### Database
 
-`src/main/resources/v1.sql` is the single complete schema for new databases and creates 18 tables:
+`firefly-app/src/main/resources/v1.sql` is the single complete schema for new databases and creates 18 tables:
 
 | Category | Tables |
 | --- | --- |
