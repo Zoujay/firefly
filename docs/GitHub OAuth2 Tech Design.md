@@ -9,6 +9,7 @@
 | 主要能力 | GitHub OAuth2、Repository Webhook、Webhook 驱动 CI/CD |
 | 首期认证方式 | GitHub OAuth App |
 | MVP 使用模型 | 单用户、单 Firefly 环境 |
+| Webhook 入口 | 所有 Repository Hook 共用 `/api/github/webhooks` |
 | 长期演进方向 | GitHub App |
 
 ## 2. 背景
@@ -22,9 +23,11 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 本设计为 Firefly 增加以下完整链路：
 
 1. Firefly 用户通过 GitHub OAuth2 授权 Firefly。
-2. Firefly 获取并安全保存 GitHub Access Token。
+2. Firefly 获取并安全保存 GitHub OAuth App Access Token（不是 Personal Access
+   Token），后续以 `Authorization: Bearer` 直接调用 GitHub REST API。
 3. 用户选择 GitHub 仓库并建立 Repository Subscription。
-4. Firefly 调用 GitHub REST API 创建或更新 Repository Webhook。
+4. 用户可以手动注册 Repository Webhook，也可以由 Firefly 使用 OAuth App Access
+   Token 自动创建或更新；所有仓库使用同一个 Callback URL。
 5. GitHub 向 Firefly 投递 `push`、`pull_request` 等事件。
 6. Firefly 验签、持久化并异步处理 Webhook Delivery。
 7. Firefly 根据仓库、事件、action 和标准化分支名匹配 Pipeline，并创建 CI/CD
@@ -39,6 +42,9 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 - 获取 GitHub Token 后重新查询 GitHub 用户身份。
 - 加密保存 Token，并提供失效、重授权和撤销状态。
 - 使用 GitHub REST API 创建、更新、测试和删除 Repository Webhook。
+- 支持 `AUTO` 和 `MANUAL` 两种互斥的 Repository Webhook 注册模式。
+- 所有 Repository Webhook 共用一个固定 Callback URL，同时保留每仓库独立的
+  Hook ID、Secret 和 Subscription。
 - 使用 HMAC-SHA256 校验 `X-Hub-Signature-256`。
 - 使用 `X-GitHub-Delivery` 防止重放和重复触发。
 - 单个 Firefly 环境内，每个 GitHub Repository 仅创建一个独占的 Firefly
@@ -58,6 +64,8 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 - 本阶段不负责 Runner 或构建容器调度。
 - 本阶段不支持任意 GitHub Event；只开放经过定义和测试的事件。
 - 本阶段不在前端或日志中暴露 GitHub Access Token。
+- 本阶段不创建、接收或管理 Personal Access Token；OAuth Callback 返回的是
+  OAuth App Access Token。
 - MVP 不引入 Firefly 用户、租户或多用户资源隔离模型；一个 Firefly 环境只连接
   一个 GitHub 用户。多用户和多租户能力需要后续独立设计。
 
@@ -66,15 +74,22 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 ### 4.1 首期使用 OAuth App
 
 当前需求明确要求通过 OAuth2 获取用户 Token，再由 Firefly 代表用户调用
-GitHub API，因此首期选择 GitHub OAuth App。
+GitHub API，因此首期选择 GitHub OAuth App。OAuth Callback 换取的是 GitHub OAuth
+App Access Token，而不是 Personal Access Token；Firefly 保存该 Token 后直接以
+Bearer Token 调用 Repository 和 Webhook REST API。
 
-长期建议迁移到 GitHub App：GitHub App 具有更细粒度的仓库权限、用户可选择
-安装仓库、Installation Token 有较短有效期，也更适合无人值守自动化。模块
-内部应通过 `GitHubCredentialProvider` 抽象 Token 来源，为后续迁移保留边界。
+MVP 只实现这一种凭据来源，不引入多 Token Provider、Token Broker 或 refresh
+flow。长期如迁移到 GitHub App，应作为独立演进设计，不增加首期实现复杂度。
 
 ### 4.2 Webhook 与 Pipeline 是一对多关系
 
-MVP 中，同一 Firefly 环境里的每个 GitHub Repository 只创建一个独占 Webhook。
+MVP 中，同一 Firefly 环境里的每个 GitHub Repository 只创建一个独占 Webhook，
+但所有 Repository Webhook 的 Payload URL 固定为：
+
+```text
+https://firefly.example/api/github/webhooks
+```
+
 Repository Subscription 负责该 Webhook 的完整生命周期，多条 Pipeline 通过
 `github_trigger_config` 引用同一个 Subscription。数据库以不可变的
 `github_repository_id` 施加全局唯一约束，而不是以 Connection 或仓库名称限定
@@ -86,6 +101,10 @@ Repository Subscription 负责该 Webhook 的完整生命周期，多条 Pipelin
 - 避免同一 Delivery 被 Firefly 接收多次。
 - 简化 Secret 轮换、删除、测试和故障恢复。
 - 支持多条 Pipeline 在 Firefly 内部独立匹配同一事件。
+
+“共用一个 URL”不表示 GitHub 侧只有一个 Hook 对象：每个 Repository 仍有独立
+Hook ID 和 Secret。若要以一个 GitHub Hook 覆盖组织内全部仓库，应使用需要
+Organization Owner 权限的 Organization Webhook，不属于本 MVP。
 
 如果以后支持多用户或多租户，必须重新评估 Webhook 的所有权和唯一键；MVP 的
 全局唯一约束不得未经迁移直接沿用。
@@ -142,10 +161,13 @@ flowchart LR
     CB --> CS["GitHub Connection"]
 
     CS --> RS["Repository Subscription"]
-    RS --> GC["GitHub REST Client"]
-    GC --> GH["GitHub Repository Webhook"]
+    RS --> AUTO["AUTO: GitHub REST Client"]
+    RS --> MANUAL["MANUAL: 管理员配置"]
+    AUTO --> GH1["Repository A Hook"]
+    MANUAL --> GH2["Repository B Hook"]
 
-    GH --> WI["Webhook Ingress"]
+    GH1 --> WI["Shared Webhook Ingress"]
+    GH2 --> WI
     WI --> SV["签名与仓库校验"]
     SV --> DI["Delivery Inbox"]
     DI --> OB["Outbox / Kafka"]
@@ -187,7 +209,7 @@ GitHubRepositoryClient
 GitHubWebhookClient
 GitHubWebhookSignatureVerifier
 GitHubEventParser
-GitHubCredentialProvider
+GitHubConnectionTokenService
 OAuthStateStore
 ```
 
@@ -224,7 +246,7 @@ GITHUB_REDIRECT_URI
 GITHUB_OAUTH_BASE_URL=https://github.com
 GITHUB_API_BASE_URL=https://api.github.com
 GITHUB_API_VERSION=2026-03-10
-GITHUB_PUBLIC_BASE_URL
+GITHUB_WEBHOOK_CALLBACK_URL=https://firefly.example/api/github/webhooks
 GITHUB_OAUTH_STATE_TTL=10m
 GITHUB_CONNECT_TIMEOUT=3s
 GITHUB_READ_TIMEOUT=10s
@@ -360,22 +382,62 @@ Token。
 PUT /api/github/connections/{connectionId}/repositories/{owner}/{repository}/subscription
 ```
 
-服务端执行：
+请求通过 `registrationMode` 选择互斥的注册方式：
+
+```json
+{
+  "registrationMode": "AUTO"
+}
+```
+
+或者：
+
+```json
+{
+  "registrationMode": "MANUAL"
+}
+```
+
+公共步骤：
 
 1. 校验单用户环境中的 Connection 状态为 `ACTIVE`。
-2. 解密 Token，并查询目标 Repository。
-3. 以 GitHub Repository ID 查询现有 Subscription；已被当前环境订阅时执行
-   Upsert，不得再创建第二条 Subscription 或第二个 Webhook。
-4. 保存 Repository ID、Node ID、Full Name、默认分支和 Clone URL。
-5. 首次创建时生成该 Subscription 独立的高熵 Webhook Secret。
-6. 查询该仓库现有 Webhook。
-7. 根据 Firefly Callback URL 查找已存在的 Hook。
-8. 已存在则更新，不存在则创建；同一仓库不得为不同 Pipeline 创建额外 Hook。
-9. 保存 GitHub 返回的 `webhook_id`，再调用 ping/test 接口验证配置。
-10. GitHub 创建 Webhook 时可能自动发送 ping。若 ping 早于步骤 9 到达，接收端可在
-    `PROVISIONING` Subscription 上暂存已通过签名与 Repository ID 校验的
-    `X-GitHub-Hook-ID`；REST 响应返回后必须与 `webhook_id` 比较，一致才激活，
-    不一致则进入 `ERROR` 并告警。
+2. 解密 OAuth App Access Token，调用 GitHub Repository API 获取稳定的
+   Repository ID、Node ID、Full Name、默认分支和 Clone URL。
+3. 按 `github_repository_id` 查询并锁定现有 Subscription；执行 Upsert，但不得为
+   同一仓库创建第二条 Subscription。
+4. 首次创建时生成该 Subscription 独立的高熵 Webhook Secret，并将状态置为
+   `PROVISIONING`。
+5. 所有仓库统一使用配置项 `GITHUB_WEBHOOK_CALLBACK_URL`，其值固定为公开 HTTPS
+   地址 `https://firefly.example/api/github/webhooks`。
+
+`AUTO` 模式由 Firefly 使用 OAuth App Access Token 管理远端 Hook：
+
+1. 查询当前仓库中 Firefly 可管理的 Webhook，并按统一 Callback URL 对账。
+2. 已存在且归属于当前 Subscription 时更新，不存在则创建；发现无法管理的同 URL
+   Hook 时返回冲突，要求管理员先清理，不能再创建重复 Hook。
+3. 将 GitHub 返回的 `webhook_id` 与本地值条件对账：本地为空则写入、相同则继续、
+   不同则进入 `ERROR`；随后调用 ping，并以接收侧 ping 验证结果激活 Subscription。
+4. 创建请求超时或结果不确定时，先重新查询 GitHub Hook，再决定是否重试 POST。
+
+`MANUAL` 模式不调用 Webhook 管理 API，而是只返回一次配置材料：
+
+```json
+{
+  "subscriptionId": "01JEXAMPLE",
+  "payloadUrl": "https://firefly.example/api/github/webhooks",
+  "secret": "<only-shown-once>",
+  "events": ["push", "pull_request"]
+}
+```
+
+管理员在目标 Repository 的 Settings → Webhooks 中填入相同 URL、
+`application/json`、上述 Secret 和事件集合。GitHub 创建 Hook 后发送的首次 ping
+通过 Repository ID 定位 `PROVISIONING` Subscription；验签成功后绑定
+`X-GitHub-Hook-ID` 并转为 `ACTIVE`。Secret 后续只显示掩码，遗失时必须轮换。
+
+同一 Subscription 只能处于一个 `registration_mode`。`MANUAL` 与 `AUTO` 不得并存，
+否则 GitHub 可能对同一仓库事件产生两次独立 Delivery。切换模式必须先禁用或删除
+原远端 Hook，完成对账后再创建新 Hook。
 
 Webhook 创建请求：
 
@@ -385,7 +447,7 @@ Webhook 创建请求：
   "active": true,
   "events": ["push", "pull_request"],
   "config": {
-    "url": "https://firefly.example/api/github/webhooks/01JEXAMPLE",
+    "url": "https://firefly.example/api/github/webhooks",
     "content_type": "json",
     "secret": "<high-entropy-secret>",
     "insecure_ssl": "0"
@@ -393,12 +455,10 @@ Webhook 创建请求：
 }
 ```
 
-Webhook 管理采用 Upsert 语义。创建请求遇到超时或不确定结果时，必须先重新
-查询 GitHub 当前 Webhook，再决定是否重试，不能直接重复 POST。
-
 MVP 的 Repository Webhook 固定订阅 `push` 和 `pull_request`。每条
 `github_trigger_config.events` 是 Firefly 内部的过滤子集；新增或删除 Pipeline
-不会为仓库新增 Webhook，也不需要改变 GitHub 侧 Hook 数量。
+不会为仓库新增 Webhook，也不需要改变 GitHub 侧 Hook 数量。不同仓库的 Hook ID
+和 Secret 各自独立，但 Payload URL 完全相同。
 
 ### 9.2 删除订阅
 
@@ -412,7 +472,9 @@ DELETE /api/github/subscriptions/{subscriptionId}
    `github_trigger_config` 设为 `enabled=false`、
    `disabled_reason=SUBSCRIPTION_DELETED`，但保留配置和 Pipeline；重新订阅同一仓库
    后不自动启用，必须由管理员显式启用，避免意外恢复 CI/CD。
-2. 使用 Connection Token 删除 GitHub Webhook。
+2. `AUTO` 模式使用 Connection Token 删除 GitHub Webhook；`MANUAL` 模式先尝试按
+   已绑定 Hook ID 删除，若 Token 无权管理该手动创建的 Hook，则返回明确的人工删除
+   指引并进入 `ORPHANED`，不能把本地完成误报为远端已删除。
 3. 删除成功或 GitHub 返回 Hook 不存在后标记为 `DELETED`。
 4. 保留历史 Delivery 和 Trigger 审计记录。
 
@@ -453,10 +515,10 @@ DELETE /api/github/connections/{connectionId}
   标记为 `ORPHANED`，保留 repository/webhook ID 和最后错误用于人工清理，清除
   Token 并删除 Connection 行。该操作必须二次确认、写审计日志并触发告警。
 
-`ORPHANED` 只表示 Firefly 已放弃远端管理，不代表 GitHub Hook 已删除。由于 Hook
-仍持有旧 Callback URL，接收端必须拒绝非 `ACTIVE`/`PROVISIONING` Subscription 的
-业务事件。历史 Subscription 的 `connection_id` 允许在 Connection 删除时置空，
-不得因级联删除丢失审计线索。
+`ORPHANED` 只表示 Firefly 已放弃远端管理，不代表 GitHub Hook 已删除。由于所有
+Hook 共用全局 Callback URL，接收端必须根据 Hook ID 拒绝非 `ACTIVE`/`PROVISIONING`
+Subscription 的业务事件。历史 Subscription 的 `connection_id` 允许在 Connection
+删除时置空，不得因级联删除丢失审计线索。
 
 ### 9.5 Webhook Secret 轮换
 
@@ -465,8 +527,10 @@ DELETE /api/github/connections/{connectionId}
 
 1. 生成新 Secret，加密保存为 `pending_secret`；接收端先发布为新旧 Secret 双验签，
    但仍将旧 Secret 标记为 active。
-2. 调用 GitHub Update Repository Webhook API，将 Hook Secret 更新为新值；更新完整
-   Hook 配置时必须同时提交 Secret，避免 GitHub 清空已有 Secret。
+2. `AUTO` 模式调用 GitHub Update Repository Webhook API，将 Hook Secret 更新为
+   新值；更新完整 Hook 配置时必须同时提交 Secret，避免 GitHub 清空已有 Secret。
+   `MANUAL` 模式向管理员一次性展示 pending Secret，等待其在 GitHub Webhook
+   Settings 中更新，Firefly 不假设远端已经改变。
 3. 主动调用 ping，并等待接收端记录“使用 pending Secret 验签成功”；仅收到 2XX
    或旧 Secret 验签成功不能视为轮换完成。
 4. 将 pending 原子提升为 active，旧 Secret 进入有上限的宽限窗口；窗口结束后
@@ -575,26 +639,35 @@ Pipeline 请求中的通用触发属性单独表示：
 ### 11.1 接口
 
 ```http
-POST /api/github/webhooks/{subscriptionPublicId}
+POST /api/github/webhooks
 ```
 
-`subscriptionPublicId` 是随机公开 ID，只用于定位 Subscription，不是安全凭据。
+所有 Repository Hook 共用该固定公网入口。URL 不携带 Subscription ID、Pipeline ID、
+OAuth Token、API Key 或其他凭据；Subscription 通过 GitHub Delivery Headers 定位，
+身份可信性最终由每仓库独立 Secret 的 HMAC 验证建立。
 
 ### 11.2 接收顺序
 
 1. 校验 Content-Type，仅接受 `application/json`（允许 `charset` 参数）；其他类型
    返回 `415 Unsupported Media Type`，不进入业务处理。
 2. 限制请求体大小，建议最大 2 MiB；超限返回 `413 Payload Too Large`。
-3. 保留未经修改的原始请求字节。
-4. 根据 Public ID 查询 Subscription；业务事件只接受 `ACTIVE`，`ping` 可接受
-   `PROVISIONING` 或 `ACTIVE`。
-5. 解密该 Subscription 当前有效的 Webhook Secret 集合。
-6. 读取并校验 `X-Hub-Signature-256`，使用常量时间算法逐一比较 HMAC-SHA256；
+3. 保留未经修改的原始请求字节，读取并校验非空的 `X-GitHub-Delivery`、
+   `X-GitHub-Event`、`X-GitHub-Hook-ID`、
+   `X-GitHub-Hook-Installation-Target-Type` 和
+   `X-GitHub-Hook-Installation-Target-ID`；MVP 只接受 Target Type 为 `repository`。
+4. 优先按 `X-GitHub-Hook-ID` 查询 Subscription。正常业务事件必须命中
+   `ACTIVE` Subscription；未命中时，仅允许 `ping` 按 Installation Target
+   Repository ID 查询 `webhook_id IS NULL` 的 `PROVISIONING` Subscription。
+5. 未找到唯一候选 Subscription 时返回统一的 `403`，不泄漏仓库或 Hook 是否存在。
+   Header 在此阶段只用于选择候选 Secret，不被当作已认证的业务数据。
+6. 解密候选 Subscription 当前有效的 Webhook Secret 集合，读取并校验
+   `X-Hub-Signature-256`，使用常量时间算法逐一比较 HMAC-SHA256；
    Secret 轮换期间记录命中的密钥版本。
-7. 读取并校验非空的 `X-GitHub-Delivery`、`X-GitHub-Event` 和
-   `X-GitHub-Hook-ID`。
-8. 按事件类型解析最小字段并校验 payload 中 Repository ID 与 Subscription 一致；
-   `ping` 使用 §11.3 的专用模型，不通过 push/PR 解析器。
+7. 验签成功后按事件类型解析最小字段，并同时校验 payload Repository ID、
+   Installation Target ID 和 Subscription Repository ID 三者一致；任何不一致都
+   返回 `403`，不能绑定 Hook ID 或写业务 Outbox。
+8. `ping` 使用 §11.3 的专用模型，不通过 push/PR 解析器；普通事件继续执行业务
+   白名单检查。
 9. 原子插入 Delivery Inbox；重复 Delivery 直接返回成功。
 10. 对业务事件在同一事务写入 Outbox；对 `ping` 直接写入终态，不进入 Kafka。
 11. 返回 `202 Accepted`。
@@ -612,9 +685,12 @@ Repository ID 校验与业务事件相同，并额外执行：
 2. Subscription 已保存 `webhook_id` 时，二者还必须与其一致；不一致返回 `403`、
    在已经通过签名和 Repository ID 校验的前提下将 Delivery 写为终态 `REJECTED`
    并告警，不写 Outbox。
-3. `PROVISIONING` 且 `webhook_id` 尚未保存时，暂存观察到的 Hook ID，待创建 API
-   返回后按 §9.1 对账。
-4. 校验成功后将 Delivery 标记为 `SUCCESS`，记录命中的 Secret 密钥版本，不创建
+3. `PROVISIONING` 且 `webhook_id` 尚未保存时，只有 HMAC、Target Repository ID、
+   payload Repository ID 和 payload Hook ID 全部一致，才允许条件更新绑定
+   `webhook_id`。并发绑定只能成功一次，其他 Hook ID 不得覆盖。
+4. `AUTO` 模式将绑定值与创建 API 返回的 Hook ID 对账；`MANUAL` 模式以该绑定作为
+   手动注册完成凭据。对账不一致进入 `ERROR` 并告警。
+5. 校验成功后将 Delivery 标记为 `SUCCESS`，记录命中的 Secret 密钥版本，不创建
    Outbox、不匹配 Pipeline，也不创建 Build。
 
 主动 ping/test API 只有在收到上述接收侧 `SUCCESS` 断言后才算通过；仅 GitHub REST
@@ -868,7 +944,7 @@ INDEX (github_user_id)
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
-| `public_id` | VARCHAR UNIQUE | Webhook URL 使用的随机 ID |
+| `public_id` | VARCHAR UNIQUE | 管理 API 使用的 Subscription ID，不进入 Webhook URL |
 | `connection_id` | BIGINT NULL FK | GitHub Connection；删除时 `ON DELETE SET NULL` |
 | `github_repository_id` | BIGINT | GitHub Repository ID |
 | `node_id` | VARCHAR | GitHub Node ID |
@@ -878,8 +954,8 @@ INDEX (github_user_id)
 | `html_url` | VARCHAR | GitHub 页面地址 |
 | `clone_url` | VARCHAR | HTTPS Clone URL |
 | `default_branch` | VARCHAR | 默认分支 |
-| `webhook_id` | BIGINT | GitHub Hook ID |
-| `observed_webhook_id` | BIGINT NULL | PROVISIONING ping 提前到达时观察到的 Hook ID |
+| `webhook_id` | BIGINT UNIQUE NULL | GitHub Hook ID；首次有效 ping 可条件绑定 |
+| `registration_mode` | VARCHAR NOT NULL | `AUTO` / `MANUAL`，同一 Subscription 互斥 |
 | `webhook_secret_ciphertext` | TEXT | 当前 active Secret 密文 |
 | `webhook_secret_nonce` | VARBINARY | 当前 active Secret 的 AEAD nonce |
 | `webhook_secret_key_version` | VARCHAR | 当前 active Secret 的密钥版本 |
@@ -897,6 +973,7 @@ MVP 唯一性：
 
 ```text
 UNIQUE (github_repository_id)
+UNIQUE (webhook_id)
 ```
 
 这个全局唯一约束保证同一 Firefly 环境内，每个 GitHub Repository 只有一条
@@ -1043,7 +1120,7 @@ Delivery-Pipeline 与父 Delivery 使用相同保留期。清理父 Delivery 时
 | `GET` | `/api/github/connections` | 查询当前环境的单一 Connection |
 | `DELETE` | `/api/github/connections/{id}` | 断开连接并清理 Webhook |
 | `GET` | `/api/github/connections/{id}/repositories` | 查询可用仓库 |
-| `PUT` | `/api/github/connections/{id}/repositories/{owner}/{repo}/subscription` | Upsert Webhook |
+| `PUT` | `/api/github/connections/{id}/repositories/{owner}/{repo}/subscription` | 以 `AUTO`/`MANUAL` 模式 Upsert Subscription |
 | `DELETE` | `/api/github/subscriptions/{id}` | 删除 Webhook |
 | `POST` | `/api/github/subscriptions/{id}/ping` | 测试 Webhook |
 | `GET` | `/api/github/deliveries/{deliveryId}` | 查询 Delivery 状态 |
@@ -1056,10 +1133,11 @@ MVP 不实现 Firefly 用户或租户模型。管理 API 必须由部署层管�
 
 | 方法 | 路径 | 认证方式 |
 | --- | --- | --- |
-| `POST` | `/api/github/webhooks/{publicId}` | HMAC-SHA256 Signature |
+| `POST` | `/api/github/webhooks` | 每仓库独立 Secret 的 HMAC-SHA256 Signature |
 
 Webhook API 不使用 Firefly Session 或 Bearer Token；它通过 Subscription Secret
-对原始请求体验签。
+对原始请求体验签。所有仓库共享该 URL，但仍分别维护 Hook ID、Secret 和
+Repository Subscription。
 
 ## 16. GitHub REST Client 设计
 
@@ -1094,10 +1172,13 @@ User-Agent: firefly-github
 | Token 失效 | Connection `REAUTH_REQUIRED` | 要求重新授权 |
 | 其他 GitHub 用户竞争唯一 Connection | 409 | 返回 `GITHUB_CONNECTION_ALREADY_EXISTS`，先断开现有连接 |
 | 用户无仓库 Webhook 管理权限 | 403 | 不创建 Subscription |
+| `AUTO` 与 `MANUAL` 重复注册同一仓库 | 409 | 先删除或禁用原远端 Hook，再切换模式 |
+| 共享入口无法定位唯一 Hook/Repository | 403 | 不尝试多个 Secret，不泄漏候选信息 |
 | Webhook 创建结果不确定 | `PROVISIONING`/`ERROR` | 查询 GitHub 后恢复 |
 | Webhook Content-Type 非 JSON | 415 | 验签和持久化前拒绝 |
 | Webhook 签名缺失或错误 | 401/403 | 不保存业务 Delivery |
 | Repository ID 不匹配 | 403 | 拒绝伪造或错投请求 |
+| Hook ID、Target ID 与 Repository ID 不一致 | 403 | 不绑定 Hook ID、不写业务 Outbox |
 | Ping Hook ID 不匹配 | 403/Delivery `REJECTED` | 不触发 Pipeline 并告警 |
 | Delivery 重复 | 202/200 | 不重复入队 |
 | Kafka 不可用 | Delivery + Outbox 可恢复 | 不丢失事件 |
@@ -1113,6 +1194,8 @@ User-Agent: firefly-github
 - Access Token、Client Secret、Webhook Secret 加密存储。
 - 所有敏感信息在日志、Metrics Label 和错误响应中脱敏。
 - Webhook URL 不携带 API Key 或其他凭据。
+- 未验签的 Hook ID 和 Installation Target ID 只能用于选择候选 Secret，不能作为
+  授权或业务判断依据。
 - Webhook 必须使用 HTTPS，GitHub SSL Verification 必须开启。
 - 基于原始请求体校验 `X-Hub-Signature-256`。
 - HMAC 使用常量时间比较。
@@ -1184,6 +1267,9 @@ githubRequestId
 - Token、Secret 和 Header 日志脱敏。
 - Repository URL 和 Full Name 标准化。
 - Webhook Upsert 决策。
+- `AUTO`/`MANUAL` 注册模式互斥与切换校验。
+- 共享 Callback URL 下按 Hook ID 定位、首次 ping 按 Repository ID 回退定位。
+- 伪造 Hook ID/Target ID 只能选中候选 Secret，无法通过 HMAC 或 Repository 对账。
 - Secret 轮换的新旧双验签、pending 提升、宽限期和失败回滚。
 - GitHub 官方 HMAC 测试向量。
 - 缺少、格式错误和不匹配的 Signature。
@@ -1203,6 +1289,11 @@ githubRequestId
 - 不同 GitHub 用户并发 Callback 只有一个能占用 singleton，失败方获得稳定 409；
   同一用户重授权更新原行。
 - 同一 Repository 只能创建一条 Subscription 和一个 Webhook。
+- 两个 Repository 使用相同 Callback URL、不同 Hook ID 和 Secret 时，都只能定位并
+  验证自己的 Subscription。
+- `AUTO` 模式能使用 OAuth App Access Token 创建 Hook；`MANUAL` 模式返回同一个
+  Callback URL 和一次性 Secret，并在首次有效 ping 后绑定 Hook ID。
+- 同一 Repository 的 `AUTO`/`MANUAL` 重复注册被拒绝，不产生第二个远端 Hook。
 - 一个 Delivery 可触发多条匹配 Pipeline。
 - 同一 Delivery + Pipeline 只能创建一个 Build。
 - Pipeline 创建事务失败时，Build、运行期 `github_trigger` 和 Outbox 全部回滚，
@@ -1222,7 +1313,9 @@ githubRequestId
 
 1. 完成真实 OAuth 授权。
 2. Firefly 正确显示授权 GitHub 用户。
-3. 创建 Repository Subscription 和 Webhook。
+3. 在 Repository A 使用 `AUTO`、Repository B 使用 `MANUAL` 创建 Subscription；
+   两个 GitHub Hook 的 Payload URL 都是 `/api/github/webhooks`，但 Hook ID 和 Secret
+   不同。
 4. GitHub ping/test 的接收侧 Delivery 为 `SUCCESS`，Hook ID 与 Subscription 一致，
    且没有创建 Pipeline Build。
 5. 为同一 Repository 配置两条不同 `branch_pattern` 的 Pipeline，GitHub 侧仍只有
@@ -1236,6 +1329,8 @@ githubRequestId
 12. Token 撤销后 Connection 进入 `REAUTH_REQUIRED`。
 13. Secret 轮换期间新旧在途 Delivery 均可验签，新 Secret ping 验证后旧 Secret 在
     宽限期结束时失效。
+14. 将 Repository A 的 Hook ID 与 Repository B 的 payload/Secret 交叉组合时验签或
+    Repository 对账失败，不能触发任何 Pipeline。
 
 ## 21. 发布与迁移计划
 
@@ -1253,6 +1348,8 @@ githubRequestId
 1. 为 `pipeline_config` 增加带默认空字符串的 `branch_pattern`，先兼容现有行。
 2. 创建 Connection、Subscription、Trigger Config、Delivery 和 Delivery-Pipeline
    表及 §14 中的唯一键、FK 和清理/恢复索引。
+   Subscription 必须包含 `registration_mode`，并对非空 `webhook_id` 建立唯一约束；
+   `public_id` 只服务管理 API，不参与共享 Webhook 路由。
 3. 扩展 `github_trigger` 时，无法从旧行推导的 `delivery_id`、`pipeline_id`、
    `pipeline_build_id` 等列第一阶段允许 NULL；现有行写入 `legacy_record=true`，新代码
    写入 false 并在应用层强制新字段完整。历史行归档或超过保留期后，后续 migration
@@ -1275,7 +1372,8 @@ githubRequestId
 ### Phase 2：Repository Subscription
 
 - Repository 查询。
-- Webhook Upsert、Ping、Delete。
+- `AUTO` Webhook Upsert/Ping/Delete 与 `MANUAL` 注册材料及首次 ping 绑定。
+- 所有 Repository Hook 共用 `GITHUB_WEBHOOK_CALLBACK_URL`。
 - Repository ID 全局唯一 Subscription 和独占 Webhook。
 - 独立 Webhook Secret。
 - Subscription 状态机。
@@ -1283,7 +1381,8 @@ githubRequestId
 ### Phase 3：Webhook Ingress
 
 - 原始报文限制和 HMAC 验签。
-- Repository ID 校验。
+- 按 Hook ID 定位 Subscription、首次 ping 按 Target Repository ID 回退定位。
+- Hook ID、Target ID、Payload Repository ID 三方校验。
 - Delivery Inbox、Outbox 和 Kafka Topic。
 - 重复 Delivery 处理。
 - PROCESSING 租约、恢复任务、最大尝试和 `DEAD` 告警。
@@ -1305,7 +1404,7 @@ githubRequestId
 
 ### Phase 6：GitHub App 演进
 
-- 抽象 `GitHubCredentialProvider`。
+- 在迁移设计中再引入凭据 Provider 抽象，MVP 不预先实现。
 - 支持 Installation Token。
 - 使用 Repository Contents read、Webhooks write 等细粒度权限。
 - 将 OAuth App 高权限 `repo` 使用场景迁移到 GitHub App。
@@ -1315,10 +1414,14 @@ githubRequestId
 - 管理员能够通过 GitHub OAuth 为当前 Firefly 环境建立唯一 Connection。
 - 同一用户重新授权只更新唯一 Connection；不同用户并发授权获得稳定 409，不产生
   第二行或泄漏新 Token。
-- Firefly 能获取、验证、加密保存并安全使用 Token。
+- Firefly 能获取、验证、加密保存并安全使用 OAuth App Access Token，且不把它误称
+  或实现为 Personal Access Token。
 - Firefly 能创建、更新、测试和删除 Repository Webhook。
+- Repository Webhook 同时支持互斥的 `AUTO` 和 `MANUAL` 注册模式。
 - 同一 Firefly 环境内，每个 GitHub Repository 只能存在一条 Subscription 和一个
   Firefly Webhook。
+- 所有 Repository Hook 使用完全相同的 `/api/github/webhooks` Callback URL；Firefly
+  能按 Hook ID 和 Repository ID 安全定位 Subscription，且每仓库 Secret 独立。
 - Webhook 接口能在 10 秒内返回 2XX。
 - Webhook 只接受 JSON；ping 在接收侧完成签名、Repository 和 Hook ID 校验后进入
   `SUCCESS`，且不触发 Pipeline。
@@ -1346,6 +1449,7 @@ githubRequestId
 - [GitHub OAuth App Scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [GitHub Repository Webhook REST API](https://docs.github.com/en/rest/repos/webhooks)
 - [GitHub Webhook Events and Payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads)
+- [GitHub Webhook Types](https://docs.github.com/en/webhooks/types-of-webhooks)
 - [Validating Webhook Deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)
 - [Best Practices for Webhooks](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)
 - [GitHub REST API Rate Limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
