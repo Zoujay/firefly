@@ -8,6 +8,7 @@
 | 目标模块 | `firefly-github`、`firefly-app` |
 | 主要能力 | GitHub OAuth2、Repository Webhook、Webhook 驱动 CI/CD |
 | 首期认证方式 | GitHub OAuth App |
+| MVP 使用模型 | 单用户、单 Firefly 环境 |
 | 长期演进方向 | GitHub App |
 
 ## 2. 背景
@@ -26,7 +27,8 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 4. Firefly 调用 GitHub REST API 创建或更新 Repository Webhook。
 5. GitHub 向 Firefly 投递 `push`、`pull_request` 等事件。
 6. Firefly 验签、持久化并异步处理 Webhook Delivery。
-7. Firefly 根据仓库、事件、action 和 ref 匹配 Pipeline，并创建 CI/CD Build。
+7. Firefly 根据仓库、事件、action 和标准化分支名匹配 Pipeline，并创建 CI/CD
+   Build。
 
 ## 3. 目标与非目标
 
@@ -39,10 +41,12 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 - 使用 GitHub REST API 创建、更新、测试和删除 Repository Webhook。
 - 使用 HMAC-SHA256 校验 `X-Hub-Signature-256`。
 - 使用 `X-GitHub-Delivery` 防止重放和重复触发。
-- 同一仓库仅创建一个 Firefly Webhook，多条 Pipeline 共享订阅。
-- 支持按事件、Pull Request action 和 Git ref 匹配自动 Pipeline。
+- 单个 Firefly 环境内，每个 GitHub Repository 仅创建一个独占的 Firefly
+  Webhook，多条 Pipeline 共享该 Repository Subscription。
+- 支持按事件、Pull Request action 和标准化分支名匹配自动 Pipeline。
 - Webhook HTTP 接收与 Pipeline 构建异步解耦。
-- 复用 Firefly 已有 Inbox/Outbox、Kafka 和 `TriggerCenter` 能力。
+- 复用 Firefly 已有 Kafka Inbox/Outbox 和 `TriggerCenter` 能力，并为 GitHub
+  Webhook 新增独立的 Delivery Inbox。
 - 为错误恢复、审计、监控和人工重试提供数据基础。
 
 ### 3.2 非目标
@@ -54,6 +58,8 @@ Kafka Inbox/Outbox 和 `TriggerCenter`。当前仓库包含独立的
 - 本阶段不负责 Runner 或构建容器调度。
 - 本阶段不支持任意 GitHub Event；只开放经过定义和测试的事件。
 - 本阶段不在前端或日志中暴露 GitHub Access Token。
+- MVP 不引入 Firefly 用户、租户或多用户资源隔离模型；一个 Firefly 环境只连接
+  一个 GitHub 用户。多用户和多租户能力需要后续独立设计。
 
 ## 4. 关键技术决策
 
@@ -68,9 +74,11 @@ GitHub API，因此首期选择 GitHub OAuth App。
 
 ### 4.2 Webhook 与 Pipeline 是一对多关系
 
-同一 Firefly 环境中的同一 GitHub Repository 只创建一个 Webhook。Repository
-Subscription 负责 Webhook 生命周期，多条 Pipeline 通过触发配置引用同一个
-Subscription。
+MVP 中，同一 Firefly 环境里的每个 GitHub Repository 只创建一个独占 Webhook。
+Repository Subscription 负责该 Webhook 的完整生命周期，多条 Pipeline 通过
+`github_trigger_config` 引用同一个 Subscription。数据库以不可变的
+`github_repository_id` 施加全局唯一约束，而不是以 Connection 或仓库名称限定
+唯一性。
 
 不采用“每条 Pipeline 创建一个 Webhook”，原因包括：
 
@@ -78,6 +86,9 @@ Subscription。
 - 避免同一 Delivery 被 Firefly 接收多次。
 - 简化 Secret 轮换、删除、测试和故障恢复。
 - 支持多条 Pipeline 在 Firefly 内部独立匹配同一事件。
+
+如果以后支持多用户或多租户，必须重新评估 Webhook 的所有权和唯一键；MVP 的
+全局唯一约束不得未经迁移直接沿用。
 
 ### 4.3 HTTP 接收与业务处理异步解耦
 
@@ -100,11 +111,30 @@ GitHub 要求 Webhook 接收端在 10 秒内返回 2XX；同步创建完整 Pipe
 - 每个 Repository Subscription 使用独立的 Webhook Secret。
 - 两者都只保存密文，但具有独立密钥用途和轮换流程。
 
+### 4.6 MVP 使用单用户模型
+
+MVP 不依赖当前代码库中尚不存在的 Firefly User/Tenant 模型。一个 Firefly
+部署只允许一个 `ACTIVE` GitHub Connection，管理 API 由部署层的管理员认证或
+内网访问控制保护。OAuth `state` 仍必须绑定发起授权的浏览器会话，以防止登录
+CSRF，但不会写入不存在的 `tenant_id` 或 `firefly_user_id`。
+
+### 4.7 配置 Trigger 与运行期 Trigger 分离
+
+- `github_trigger_config` 是 Pipeline 的静态 GitHub 触发配置，在创建或更新
+  Pipeline 时维护。
+- `github_trigger` 保留为运行期审计记录，只在 Webhook 实际匹配并触发 Pipeline
+  时创建。
+- `pipeline_config.origin_id` 在 `trigger_origin=GITHUB` 时指向
+  `github_trigger_config.id`。
+- `GithubMessageEntity.triggerID` 指向本次触发创建的 `github_trigger.id`。
+
+两张表不得合并或复用 ID，以免配置关系和运行历史产生语义冲突。
+
 ## 5. 总体架构
 
 ```mermaid
 flowchart LR
-    U["Firefly 用户"] --> OA["OAuth API"]
+    U["Firefly 管理员"] --> OA["OAuth API"]
     OA --> GO["GitHub OAuth"]
     GO --> CB["OAuth Callback"]
     CB --> CS["GitHub Connection"]
@@ -119,6 +149,9 @@ flowchart LR
     DI --> OB["Outbox / Kafka"]
     OB --> EP["GitHub Event Processor"]
     EP --> PM["Pipeline Matcher"]
+    RS --> GTC["GitHub Trigger Config 1..N"]
+    GTC --> PM
+    PC["Pipeline Config / Branch Rule"] --> PM
     PM --> PB["Pipeline Build"]
     PB --> TC["TriggerCenter"]
 ```
@@ -160,14 +193,15 @@ OAuthStateStore
 
 `firefly-app` 负责 Firefly 业务和持久化：
 
-- GitHub Connection 与 Firefly 用户/租户的归属关系。
+- 单用户 MVP 的 GitHub Connection 及唯一 ACTIVE Connection 约束。
 - Token 和 Webhook Secret 的加密存储。
 - Repository Subscription。
-- Pipeline GitHub Trigger 配置。
+- Pipeline 通用分支匹配属性与 `github_trigger_config`。
+- 运行期 `github_trigger` 审计记录。
 - Webhook Delivery Inbox 和 Delivery-Pipeline 幂等记录。
 - GitHub 标准事件到 `GithubMessageEntity` 的转换。
 - 调用现有 `PipelineBuildService`、Outbox 和 `TriggerCenter`。
-- 管理 API 的认证、授权和租户隔离。
+- 管理 API 的部署级管理员访问控制。
 
 ## 7. OAuth2 连接设计
 
@@ -205,12 +239,13 @@ GET /api/github/oauth/authorize
 
 服务端执行：
 
-1. 校验当前 Firefly 用户身份。
+1. 校验部署级管理员访问权限。
 2. 生成至少 256 bit 的随机 `state`。
 3. 生成 PKCE `code_verifier`。
 4. 计算 `code_challenge = BASE64URL(SHA256(code_verifier))`。
-5. 将 Firefly 用户、`state`、`code_verifier`、过期时间绑定保存。
-6. 重定向至 GitHub Authorization Endpoint。
+5. 生成浏览器会话随机值，写入 `HttpOnly`、`Secure`、`SameSite=Lax` Cookie。
+6. 将 `state`、浏览器会话随机值、`code_verifier`、创建时间和过期时间绑定保存。
+7. 重定向至 GitHub Authorization Endpoint。
 
 Authorization URL 参数：
 
@@ -234,12 +269,13 @@ GET /api/github/oauth/callback?code={code}&state={state}
 
 处理顺序：
 
-1. 校验 `state` 存在、未过期、属于当前用户且未使用。
+1. 校验 `state` 存在、未过期、与当前浏览器会话随机值一致且未使用。
 2. 原子消费 `state`，阻止重复 Callback。
 3. 使用 `code`、`client_secret`、`redirect_uri` 和 `code_verifier` 换 Token。
 4. 检查 Token 响应中的实际 `scope`。
 5. 使用 Token 调用 `GET /user`，确认 GitHub 用户 ID 和 login。
-6. 加密保存 Token，创建或更新 GitHub Connection。
+6. 确认当前环境不存在其他用户的 `ACTIVE` Connection；加密保存 Token，创建或
+   更新 GitHub Connection。
 7. 返回 Connection 信息，不向前端返回 Access Token。
 
 建议响应：
@@ -303,15 +339,17 @@ PUT /api/github/connections/{connectionId}/repositories/{owner}/{repository}/sub
 
 服务端执行：
 
-1. 校验 Connection 属于当前用户/租户且状态为 `ACTIVE`。
+1. 校验单用户环境中的 Connection 状态为 `ACTIVE`。
 2. 解密 Token，并查询目标 Repository。
-3. 保存 Repository ID、Node ID、Full Name、默认分支和 Clone URL。
-4. 生成该 Subscription 独立的高熵 Webhook Secret。
-5. 查询该仓库现有 Webhook。
-6. 根据 Firefly Callback URL 查找已存在的 Hook。
-7. 已存在则更新，不存在则创建。
-8. 保存 GitHub 返回的 `webhook_id`。
-9. 调用 ping/test 接口验证配置。
+3. 以 GitHub Repository ID 查询现有 Subscription；已被当前环境订阅时执行
+   Upsert，不得再创建第二条 Subscription 或第二个 Webhook。
+4. 保存 Repository ID、Node ID、Full Name、默认分支和 Clone URL。
+5. 首次创建时生成该 Subscription 独立的高熵 Webhook Secret。
+6. 查询该仓库现有 Webhook。
+7. 根据 Firefly Callback URL 查找已存在的 Hook。
+8. 已存在则更新，不存在则创建；同一仓库不得为不同 Pipeline 创建额外 Hook。
+9. 保存 GitHub 返回的 `webhook_id`。
+10. 调用 ping/test 接口验证配置。
 
 Webhook 创建请求：
 
@@ -331,6 +369,10 @@ Webhook 创建请求：
 
 Webhook 管理采用 Upsert 语义。创建请求遇到超时或不确定结果时，必须先重新
 查询 GitHub 当前 Webhook，再决定是否重试，不能直接重复 POST。
+
+MVP 的 Repository Webhook 固定订阅 `push` 和 `pull_request`。每条
+`github_trigger_config.events` 是 Firefly 内部的过滤子集；新增或删除 Pipeline
+不会为仓库新增 Webhook，也不需要改变 GitHub 侧 Hook 数量。
 
 ### 9.2 删除订阅
 
@@ -363,8 +405,17 @@ ACTIVE → DELETING → DELETED
 - `trigger_match`
 - `origin_id`
 
+`branch_pattern` 和 `trigger_match` 是 Pipeline 自身的通用触发属性，不属于
+GitHub 特有配置。`pipeline_config` 保留已有 `trigger_match`，并新增：
+
+```text
+branch_pattern VARCHAR(512) NOT NULL DEFAULT ''
+```
+
 当 `trigger_origin=GITHUB` 时，`origin_id` 指向
-`github_pipeline_trigger.id`。
+`github_trigger_config.id`。`github_trigger_config` 只保存 GitHub 特有的
+Repository Subscription、事件和 Pull Request action 等配置，不保存
+`branch_pattern` 或 `trigger_match`。
 
 建议的强类型配置：
 
@@ -372,7 +423,6 @@ ACTIVE → DELETING → DELETED
 {
   "subscriptionId": "01JEXAMPLE",
   "events": ["push", "pull_request"],
-  "branchPattern": "refs/heads/main",
   "pullRequestActions": [
     "opened",
     "reopened",
@@ -383,12 +433,41 @@ ACTIVE → DELETING → DELETED
 }
 ```
 
+Pipeline 请求中的通用触发属性单独表示：
+
+```json
+{
+  "triggerOrigin": "GITHUB",
+  "triggerMode": "AUTOMATIC",
+  "triggerMatch": "ACCURATE",
+  "branchPattern": "main"
+}
+```
+
 `TriggerMatch` 语义：
 
 | 类型 | 行为 | 示例 |
 | --- | --- | --- |
-| `ACCURATE` | ref 完全相等 | `refs/heads/main` |
-| `PREFIX` | ref 以前缀开始 | `refs/heads/release/` |
+| `ACCURATE` | 标准化后的分支名完全相等 | `main` |
+| `PREFIX` | 标准化后的分支名以前缀开始 | `release/` |
+
+对于 GitHub 自动触发 Pipeline，`branch_pattern` 使用不带 `refs/heads/` 前缀的
+分支名，不能为空：
+
+- Push 使用 `payload.ref` 去掉 `refs/heads/` 后的名称，例如 `main`。
+- Pull Request 默认使用目标分支 `pull_request.base.ref`；源分支
+  `pull_request.head.ref` 仅保存在标准事件中，不参与 MVP 匹配。
+- Tag Push 不进入分支匹配；MVP 直接标记为 `IGNORED`。
+- `trigger_mode=MANUAL` 的 Pipeline 永远不会被 Webhook 自动触发。
+
+匹配查询必须同时满足：
+
+1. `pipeline_config.trigger_origin=GITHUB`。
+2. `pipeline_config.trigger_mode=AUTOMATIC`。
+3. `github_trigger_config.enabled=true`。
+4. `github_trigger_config.subscription_id` 等于本次 Delivery 的 Subscription。
+5. Event 和 Pull Request action 命中 GitHub Trigger Config。
+6. 标准化后的分支名按照 Pipeline 的 `trigger_match` 与 `branch_pattern` 命中。
 
 ## 11. Webhook 接收设计
 
@@ -431,9 +510,10 @@ repositoryFullName
 repositoryUrl
 cloneUrl
 defaultBranch
-ref
+sourceBranch
+targetBranch
+matchBranch
 headSha
-baseRef
 senderId
 senderLogin
 receivedAt
@@ -444,8 +524,10 @@ receivedAt
 映射规则：
 
 ```text
-ref     = payload.ref
-headSha = payload.after
+sourceBranch = removePrefix(payload.ref, "refs/heads/")
+targetBranch = null
+matchBranch  = sourceBranch
+headSha      = payload.after
 ```
 
 默认忽略：
@@ -459,9 +541,10 @@ headSha = payload.after
 映射规则：
 
 ```text
-ref     = pull_request.head.ref
-headSha = pull_request.head.sha
-baseRef = pull_request.base.ref
+sourceBranch = pull_request.head.ref
+targetBranch = pull_request.base.ref
+matchBranch  = targetBranch
+headSha      = pull_request.head.sha
 ```
 
 默认 action 白名单：
@@ -474,6 +557,33 @@ ready_for_review
 ```
 
 其他 action 只有在 Pipeline Trigger 明确支持后才能触发。
+
+### 12.3 `GithubMessageEntity` 最终形态
+
+现有 `GithubMessageEntity.URL` 字段不符合 JavaBean 命名规范，也不足以承载
+Webhook 上下文。实现时将其替换为 `repositoryUrl`，并在继承的 Pipeline 字段
+之外至少包含：
+
+```text
+deliveryId
+eventType
+action
+repositoryId
+repositoryFullName
+repositoryUrl
+cloneUrl
+sourceBranch
+targetBranch
+matchBranch
+headSha
+senderId
+senderLogin
+receivedAt
+```
+
+`GithubMessageEntity.triggerID` 继续继承自 `BaseMessage`，并由
+`GithubTrigger.dispatch` 设置为本次运行期 `github_trigger.id`。旧的 `getURL()` /
+`setURL()` 在同一迁移中删除，所有消费者改用 `repositoryUrl`。
 
 ## 13. 消息可靠性与幂等
 
@@ -521,14 +631,43 @@ github_webhook_message
 
 Consumer 流程：
 
-1. 原子领取 Delivery Inbox。
-2. 查询该 Subscription 下启用的自动 Pipeline。
-3. 按事件、action、ref 和 `TriggerMatch` 过滤。
-4. 原子插入 Delivery-Pipeline 幂等记录。
-5. 调用现有 `PipelineBuildService.buildPipeline`。
-6. 构造增强后的 `GithubMessageEntity`。
-7. 交给现有 `TriggerCenter`。
-8. 更新 Delivery-Pipeline 和 Delivery 状态。
+1. 使用独立短事务原子领取 Delivery Inbox，将其从可处理状态改为
+   `PROCESSING`；并发消费者只有一个可以领取成功。
+2. 查询该 Subscription 下启用的 `github_trigger_config`，Join
+   `pipeline_config`，只保留 `trigger_mode=AUTOMATIC` 的 Pipeline。
+3. 按事件、action、`matchBranch`、`pipeline_config.trigger_match` 和
+   `pipeline_config.branch_pattern` 过滤。
+4. 对每条匹配 Pipeline 调用独立的 `@Transactional` 处理方法：
+   1. 条件插入或领取 Delivery-Pipeline 幂等记录。
+   2. 再次校验 Pipeline 和 Trigger Config 仍然启用。
+   3. 调用现有 `PipelineBuildService.buildPipeline` 创建 Pipeline、Stage、Job
+      和 Plugin Build。
+   4. 构造最终的 `GithubMessageEntity` 并交给现有 `TriggerCenter`。
+   5. `GithubTrigger.dispatch` 创建运行期 `github_trigger`，并写入
+      `BuildStatus.RUNNING` Outbox。
+   6. 将 Delivery-Pipeline 标记为 `SUCCESS` 并保存 `pipeline_build_id`。
+5. 全部匹配项处理完成后，将 Delivery 标记为 `SUCCESS`；没有匹配项时标记为
+   `IGNORED`。
+
+### 13.4 Consumer 事务边界
+
+步骤 4 中单条 Pipeline 的以下写入必须在同一个 MySQL 事务中提交或回滚：
+
+```text
+github_delivery_pipeline(PROCESSING/SUCCESS)
++ pipeline_build / stage_build / job_build / plugin_build
++ github_trigger（运行期记录）
++ outbox_event(BuildStatus.RUNNING)
+```
+
+`AbstractTrigger.dispatch` 使用默认 `REQUIRED` 传播加入该外层事务；现有
+`OutboxService.enqueue` 的 `MANDATORY` 语义保持不变。如果任一步失败，上述数据
+全部回滚，再使用独立事务 Upsert Delivery-Pipeline 为 `FAILURE` 并记录脱敏错误。
+重试时通过状态条件更新领取 `FAILURE` 记录，不能绕过
+`UNIQUE (delivery_id, pipeline_id)` 再创建 Build。
+
+这样可以保证：事务提交后 Build、运行期 Trigger 和 Outbox 同时存在；事务失败
+时三者同时不存在，不会因为 Consumer 重试产生孤立 Build 或丢失启动消息。
 
 ## 14. 数据模型
 
@@ -538,8 +677,7 @@ Consumer 流程：
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
 | `public_id` | VARCHAR UNIQUE | 对外 Connection ID |
-| `tenant_id` | BIGINT INDEX | 租户归属 |
-| `firefly_user_id` | BIGINT INDEX | 授权用户 |
+| `singleton_key` | VARCHAR UNIQUE | MVP 固定为 `DEFAULT`，保证单 Connection |
 | `github_user_id` | BIGINT | GitHub 不可变用户 ID |
 | `github_login` | VARCHAR | 展示用 login |
 | `access_token_ciphertext` | TEXT | Token 密文 |
@@ -550,11 +688,15 @@ Consumer 流程：
 | `last_validated_at` | DATETIME(6) | 最近验证时间 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-唯一性建议：
+MVP 唯一性：
 
 ```text
-UNIQUE (tenant_id, firefly_user_id, github_user_id)
+UNIQUE (singleton_key)
+UNIQUE (github_user_id)
 ```
+
+表中最多保留一条 Connection，并通过状态记录重新授权或撤销。多用户版本不得直接
+删除 `singleton_key` 后复用本表，必须先补充用户归属和授权迁移方案。
 
 ### 14.2 `github_repository_subscription`
 
@@ -579,13 +721,37 @@ UNIQUE (tenant_id, firefly_user_id, github_user_id)
 | `last_error` | VARCHAR | 最近错误摘要 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-唯一性建议：
+MVP 唯一性：
 
 ```text
-UNIQUE (connection_id, github_repository_id)
+UNIQUE (github_repository_id)
 ```
 
-### 14.3 `github_pipeline_trigger`
+这个全局唯一约束保证同一 Firefly 环境内，每个 GitHub Repository 只有一条
+Subscription 和一个 Webhook，多条 Pipeline 只能共享它。
+
+### 14.3 `pipeline_config` 触发属性
+
+现有字段继续作为 Pipeline 通用属性：
+
+| 字段 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `trigger_mode` | VARCHAR | `AUTOMATIC` / `MANUAL` |
+| `trigger_origin` | VARCHAR | `GITHUB` 等 Trigger Origin |
+| `trigger_match` | VARCHAR | `ACCURATE` / `PREFIX` |
+| `origin_id` | BIGINT | Origin 特有配置 ID |
+
+新增字段：
+
+| 字段 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `branch_pattern` | VARCHAR(512) NOT NULL DEFAULT '' | 标准化后的分支匹配值 |
+
+现有 Pipeline 迁移时先写入空字符串；非 GitHub 或 `MANUAL` Pipeline 可以保持
+为空。GitHub 自动触发 Pipeline 创建或更新时，`branch_pattern` 必须非空；当
+`trigger_origin=GITHUB` 时，`origin_id` 指向 `github_trigger_config.id`。
+
+### 14.4 `github_trigger_config`
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
@@ -594,12 +760,43 @@ UNIQUE (connection_id, github_repository_id)
 | `subscription_id` | BIGINT FK | Repository Subscription |
 | `enabled` | BOOLEAN | 是否启用 |
 | `events` | JSON | 允许事件 |
-| `branch_pattern` | VARCHAR | Ref 匹配值 |
-| `trigger_match` | VARCHAR | `ACCURATE` / `PREFIX` |
 | `pull_request_actions` | JSON | PR action 白名单 |
 | `ignore_delete_push` | BOOLEAN | 是否忽略删除 Push |
+| `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-### 14.4 `github_webhook_delivery`
+`branch_pattern` 和 `trigger_match` 不得在此表重复保存。创建或更新 Pipeline 时，
+`pipeline_config.origin_id`、`github_trigger_config.pipeline_id` 和 Trigger Config
+本身必须在同一事务中维护，并满足：
+
+```text
+pipeline_config.id = github_trigger_config.pipeline_id
+pipeline_config.origin_id = github_trigger_config.id
+pipeline_config.trigger_origin = GITHUB
+```
+
+### 14.5 `github_trigger`（运行期记录）
+
+保留现有 `github_trigger` 表，但将其明确为运行期审计表，而不是 Pipeline 配置表：
+
+| 字段 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `id` | BIGINT PK | 本次运行期 Trigger ID |
+| `delivery_id` | VARCHAR INDEX | GitHub Delivery ID |
+| `pipeline_id` | BIGINT INDEX | 被触发的 Pipeline |
+| `pipeline_build_id` | BIGINT UNIQUE | 本次创建的 Build |
+| `github_repository_id` | BIGINT | GitHub Repository ID |
+| `github_repo_url` | VARCHAR | Repository URL，兼容现有字段 |
+| `event_type` | VARCHAR | `push` / `pull_request` |
+| `action` | VARCHAR | Pull Request action |
+| `source_branch` | VARCHAR | 源分支 |
+| `target_branch` | VARCHAR | Pull Request 目标分支 |
+| `head_sha` | VARCHAR | 构建 Commit SHA |
+| `created_at` | DATETIME(6) | 触发时间 |
+
+`GithubMessageEntity.triggerID` 指向该表 `id`；该行与 Pipeline Build 和启动
+Outbox 在同一事务中写入。
+
+### 14.6 `github_webhook_delivery`
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
@@ -615,7 +812,7 @@ UNIQUE (connection_id, github_repository_id)
 | `received_at` | DATETIME(6) | 接收时间 |
 | `processing_finished_at` | DATETIME(6) | 完成时间 |
 
-### 14.5 `github_delivery_pipeline`
+### 14.7 `github_delivery_pipeline`
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
@@ -641,7 +838,7 @@ UNIQUE (delivery_id, pipeline_id)
 | --- | --- | --- |
 | `GET` | `/api/github/oauth/authorize` | 发起 OAuth |
 | `GET` | `/api/github/oauth/callback` | OAuth Callback |
-| `GET` | `/api/github/connections` | 查询当前用户连接 |
+| `GET` | `/api/github/connections` | 查询当前环境的单一 Connection |
 | `DELETE` | `/api/github/connections/{id}` | 断开连接并清理 Webhook |
 | `GET` | `/api/github/connections/{id}/repositories` | 查询可用仓库 |
 | `PUT` | `/api/github/connections/{id}/repositories/{owner}/{repo}/subscription` | Upsert Webhook |
@@ -650,7 +847,8 @@ UNIQUE (delivery_id, pipeline_id)
 | `GET` | `/api/github/deliveries/{deliveryId}` | 查询 Delivery 状态 |
 | `POST` | `/api/github/deliveries/{deliveryId}/retry` | 人工重试失败 Delivery |
 
-管理 API 必须经过 Firefly 用户认证、租户隔离和资源权限校验。
+MVP 不实现 Firefly 用户或租户模型。管理 API 必须由部署层管理员认证、反向代理
+访问策略或等价的运维边界保护，不得直接暴露为匿名公网接口。
 
 ### 15.2 公网 Webhook API
 
@@ -704,7 +902,7 @@ User-Agent: firefly-github
 ## 18. 安全要求
 
 - OAuth 使用 Authorization Code Flow、一次性 `state` 和 PKCE S256。
-- OAuth state 与当前 Firefly 用户、租户和过期时间绑定。
+- OAuth state 与发起授权的浏览器会话随机值和过期时间绑定。
 - Access Token、Client Secret、Webhook Secret 加密存储。
 - 所有敏感信息在日志、Metrics Label 和错误响应中脱敏。
 - Webhook URL 不携带 API Key 或其他凭据。
@@ -715,7 +913,7 @@ User-Agent: firefly-github
 - Payload Repository ID 必须与 Subscription Repository ID 相同。
 - 限制请求体大小和 Content Type。
 - 只订阅必要事件，并对白名单之外的事件显式忽略。
-- 管理 API 必须实施用户授权和租户数据隔离。
+- 管理 API 必须实施部署级管理员访问控制；MVP 不声明不存在的租户隔离能力。
 - GitHub IP Allowlist 可作为附加防护，但不能代替签名校验。
 - 原始 Payload 设置保留周期，建议 7 至 30 天。
 
@@ -762,7 +960,7 @@ githubRequestId
 - Webhook 签名失败率异常增长。
 - Webhook Delivery `FAILURE` 堆积。
 - Outbox `PENDING`/`FAILED` 堆积。
-- Connection 大量进入 `REAUTH_REQUIRED`。
+- 唯一 Connection 进入 `REAUTH_REQUIRED`。
 - GitHub Rate Limit 接近耗尽。
 
 ## 20. 测试方案
@@ -770,7 +968,7 @@ githubRequestId
 ### 20.1 单元测试
 
 - Authorization URL 参数编码。
-- OAuth state 创建、过期、重复消费和用户不匹配。
+- OAuth state 创建、过期、重复消费和浏览器会话不匹配。
 - PKCE S256 challenge。
 - Token 响应和错误解析。
 - 实际 Scope 少于请求 Scope。
@@ -780,7 +978,8 @@ githubRequestId
 - GitHub 官方 HMAC 测试向量。
 - 缺少、格式错误和不匹配的 Signature。
 - Push 和 Pull Request 标准事件转换。
-- `ACCURATE` 和 `PREFIX` ref 匹配。
+- Push 源分支和 Pull Request 目标分支标准化。
+- Pipeline `branch_pattern` 的 `ACCURATE` 和 `PREFIX` 分支匹配。
 - Delivery 和 Delivery-Pipeline 去重。
 
 ### 20.2 集成测试
@@ -789,9 +988,11 @@ githubRequestId
 - 使用 Testcontainers MySQL 验证新表和唯一约束。
 - 使用 Embedded Kafka 验证 Delivery Outbox 到 Consumer。
 - 同一 Delivery 并发到达只能落一条 Inbox。
+- 同一 Repository 只能创建一条 Subscription 和一个 Webhook。
 - 一个 Delivery 可触发多条匹配 Pipeline。
 - 同一 Delivery + Pipeline 只能创建一个 Build。
-- Pipeline 创建事务失败后状态可恢复。
+- Pipeline 创建事务失败时，Build、运行期 `github_trigger` 和 Outbox 全部回滚，
+  状态可恢复。
 - Spring Boot ApplicationContext 和自动装配测试。
 
 ### 20.3 GitHub 沙箱验收
@@ -802,13 +1003,15 @@ githubRequestId
 2. Firefly 正确显示授权 GitHub 用户。
 3. 创建 Repository Subscription 和 Webhook。
 4. GitHub ping/test 成功。
-5. Push 目标分支只触发一次 Pipeline。
-6. 手工 Redelivery 不产生第二个 Pipeline Build。
-7. Pull Request `synchronize` 触发一次。
-8. 非目标分支不触发。
-9. 修改 Payload 后签名验证失败。
-10. 删除 Subscription 后 GitHub Webhook 被删除。
-11. Token 撤销后 Connection 进入 `REAUTH_REQUIRED`。
+5. 为同一 Repository 配置两条不同 `branch_pattern` 的 Pipeline，GitHub 侧仍只有
+   一个 Firefly Webhook。
+6. Push 只触发分支匹配的 Pipeline，且每条匹配 Pipeline 只触发一次。
+7. 手工 Redelivery 不产生第二个 Pipeline Build。
+8. Pull Request `synchronize` 按目标分支匹配并触发一次。
+9. 非目标分支不触发。
+10. 修改 Payload 后签名验证失败。
+11. 删除 Subscription 后 GitHub Webhook 被删除。
+12. Token 撤销后 Connection 进入 `REAUTH_REQUIRED`。
 
 ## 21. 发布与迁移计划
 
@@ -817,12 +1020,14 @@ githubRequestId
 - GitHub REST Client。
 - OAuth state + PKCE。
 - Token Exchange 和 Connection 加密存储。
+- 单环境唯一 ACTIVE Connection 约束。
 - Connection 管理 API。
 
 ### Phase 2：Repository Subscription
 
 - Repository 查询。
 - Webhook Upsert、Ping、Delete。
+- Repository ID 全局唯一 Subscription 和独占 Webhook。
 - 独立 Webhook Secret。
 - Subscription 状态机。
 
@@ -835,10 +1040,10 @@ githubRequestId
 
 ### Phase 4：Pipeline 触发
 
-- GitHub Pipeline Trigger 配置。
-- Event/action/ref 匹配。
+- 新增 `github_trigger_config`，保留并扩展运行期 `github_trigger`。
+- `pipeline_config.branch_pattern`、`trigger_match` 和 GitHub Event/action 匹配。
 - Delivery-Pipeline 幂等。
-- 接入现有 `PipelineBuildService` 和 `TriggerCenter`。
+- 按既定事务边界接入现有 `PipelineBuildService`、`TriggerCenter` 和 Outbox。
 
 ### Phase 5：运维与生产加固
 
@@ -857,15 +1062,21 @@ githubRequestId
 
 ## 22. 验收标准
 
-- 用户能够通过 GitHub OAuth 建立 Connection。
+- 管理员能够通过 GitHub OAuth 为当前 Firefly 环境建立唯一 Connection。
 - Firefly 能获取、验证、加密保存并安全使用 Token。
 - Firefly 能创建、更新、测试和删除 Repository Webhook。
+- 同一 Firefly 环境内，每个 GitHub Repository 只能存在一条 Subscription 和一个
+  Firefly Webhook。
 - Webhook 接口能在 10 秒内返回 2XX。
 - 未签名或被篡改的请求不能进入 Delivery Inbox。
 - Payload Repository ID 不匹配时请求被拒绝。
 - GitHub Redelivery 不会重复创建 Pipeline Build。
 - 多条 Pipeline 可以共享一个 Repository Subscription。
-- Push/PR 能按事件、action 和 ref 准确匹配。
+- `branch_pattern` 与 `trigger_match` 只存放于 Pipeline；GitHub Trigger Config
+  不重复保存分支属性。
+- Push 使用源分支、Pull Request 使用目标分支，能按事件、action 和标准化分支名
+  准确匹配并扇出到多条 Pipeline。
+- Pipeline Build、运行期 `github_trigger` 和启动 Outbox 同事务提交或回滚。
 - GitHub、Kafka 或数据库短暂故障后消息可观察、可恢复。
 - Connection、Subscription、Delivery 和 Delivery-Pipeline 状态可查询。
 - 私有仓库代码权限与 Webhook 管理权限被明确区分。
