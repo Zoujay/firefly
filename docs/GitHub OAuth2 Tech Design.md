@@ -91,9 +91,9 @@ https://firefly.example/api/github/webhooks
 ```
 
 Repository Subscription 负责该 Webhook 的完整生命周期，多条 Pipeline 通过
-`github_trigger_config` 引用同一个 Subscription。应用以不可变的
-`github_repository_id` 作为业务键，保证同一环境只有一个 Subscription；数据库
-不为该规则建立唯一键。
+`github_trigger_config` 引用同一个 Subscription。数据库以不可变的
+`github_repository_id` 施加全局唯一约束，而不是以 Connection 或仓库名称限定
+唯一性。
 
 不采用“每条 Pipeline 创建一个 Webhook”，原因包括：
 
@@ -106,8 +106,8 @@ Repository Subscription 负责该 Webhook 的完整生命周期，多条 Pipelin
 Hook ID 和 Secret。若要以一个 GitHub Hook 覆盖组织内全部仓库，应使用需要
 Organization Owner 权限的 Organization Webhook，不属于本 MVP。
 
-如果以后支持多用户或多租户，必须重新评估 Webhook 的所有权和业务键；MVP 的
-全局唯一规则不得未经设计直接沿用。
+如果以后支持多用户或多租户，必须重新评估 Webhook 的所有权和唯一键；MVP 的
+全局唯一约束不得未经迁移直接沿用。
 
 ### 4.3 HTTP 接收与业务处理异步解耦
 
@@ -149,40 +149,20 @@ MVP 不依赖当前代码库中尚不存在的 Firefly User/Tenant 模型。一�
   `github_trigger_config.id`。
 - `GithubMessageEntity.triggerID` 指向本次触发创建的 `github_trigger.id`。
 
-### 4.8 数据访问和约束统一由应用实现
+### 4.8 禁止 JOIN 和数据库外键
 
-GitHub 模块采用以下强制规则：
+GitHub 模块采用以下强制数据访问规则：
 
-- 所有 Repository/Mapper 禁止 SQL `JOIN`，也禁止通过 ORM 关联映射、Fetch Join
-  或隐式懒加载生成关联 SQL。跨表数据必须分步查询，在 Java 内存中按 ID 组装。
-- 数据库禁止业务 `UNIQUE`、`FOREIGN KEY`、`CHECK`、`NOT NULL`、级联删除和级联
-  置空；除内部技术主键外，只创建非唯一查询索引。
-- 表中的 `connection_id`、`subscription_id`、`pipeline_id`、`delivery_id`、
-  `pipeline_build_id` 和 `origin_id` 都是逻辑引用，不是数据库关系。
-- 唯一性、引用完整性、必填、状态迁移、幂等和删除顺序全部由应用服务校验；不得
-  依赖数据库异常表达业务冲突。
-- 禁止绕过应用服务直接写 GitHub 相关表。定时一致性巡检负责发现重复业务键、悬空
-  引用和非法状态；发现后隔离受影响记录、停止触发并告警，不得自动选择一条继续运行。
-
-仅靠“先查再写”无法保证多实例并发安全，因此应用提供
-`GitHubBusinessConstraintGuard` 和 `DistributedBusinessLock`。生产必须使用所有实例
-共享的锁实现，可复用 Redis 或由数据库提供的命名锁；测试和单机开发可使用进程内
-实现。写入流程统一为：按业务键获取
-锁，在事务内重新查询并校验，完成写入和提交后再释放锁。锁必须带 owner token、
-有限租期和续租机制；释放时校验 owner。锁服务不可用时相关写请求返回可重试错误，
-不得降级为无锁写入。
-
-主要锁键：
-
-```text
-github:connection:singleton
-github:public-id:{entityType}:{publicId}
-github:subscription:repository:{githubRepositoryId}
-github:subscription:webhook:{webhookId}
-github:trigger-config:pipeline:{pipelineId}
-github:delivery:{deliveryId}
-github:delivery-pipeline:{deliveryId}:{pipelineId}
-```
+- Repository/Mapper 禁止 SQL `JOIN`，也禁止 ORM 关联映射、Fetch Join 或隐式懒加载
+  生成关联查询。跨表读取必须先分别查询各表，再在 Java 内存中按 ID 组装；批量场景
+  使用 `IN (...)` 分页查询，避免逐行查询。
+- DDL 禁止 `FOREIGN KEY` 以及依赖外键的 `ON DELETE` / `ON UPDATE` 动作。表中的
+  `connection_id`、`subscription_id`、`pipeline_id`、`delivery_id`、
+  `pipeline_build_id` 和 `origin_id` 都是逻辑引用。
+- 应用服务负责逻辑引用的存在性、归属关系和删除顺序校验；发现重复候选或悬空引用时
+  停止对应操作并告警，不能使用 `findFirst` 掩盖数据错误。
+- 其他数据库能力不在禁止范围内。主键、`UNIQUE`、`NOT NULL`、`CHECK` 和普通索引
+  可以使用；业务唯一性和幂等仍应由应用预校验并由数据库唯一约束处理并发竞争。
 
 两张表不得合并或复用 ID，以免配置关系和运行历史产生语义冲突。
 
@@ -252,7 +232,7 @@ OAuthStateStore
 
 `firefly-app` 负责 Firefly 业务和持久化：
 
-- 单用户 MVP 的 GitHub Connection 及应用层单例约束。
+- 单用户 MVP 的 GitHub Connection 及表中最多一行的唯一约束。
 - Token 和 Webhook Secret 的加密存储。
 - Repository Subscription。
 - Pipeline 通用分支匹配属性与 `github_trigger_config`。
@@ -261,7 +241,6 @@ OAuthStateStore
 - GitHub 标准事件到 `GithubMessageEntity` 的转换。
 - 调用现有 `PipelineBuildService`、Outbox 和 `TriggerCenter`。
 - 管理 API 的部署级管理员访问控制。
-- `GitHubBusinessConstraintGuard`、分布式业务锁和一致性巡检。
 
 ## 7. OAuth2 连接设计
 
@@ -338,9 +317,8 @@ GET /api/github/oauth/callback?code={code}&state={state}
 3. 使用 `code`、`client_secret`、`redirect_uri` 和 `code_verifier` 换 Token。
 4. 检查 Token 响应中的实际 `scope`。
 5. 使用 Token 调用 `GET /user`，确认 GitHub 用户 ID 和 login。
-6. 获取 `github:connection:singleton` 分布式锁，然后在数据库事务中按固定
-   `singleton_key=DEFAULT` 保存 Connection：
-   - 表中无记录时 INSERT；提交前再次查询并确认当前业务键仍只有一行。
+6. 在数据库事务中按固定 `singleton_key=DEFAULT` 保存 Connection：
+   - 表中无记录时尝试 INSERT；`UNIQUE(singleton_key)` 是并发请求的最终仲裁。
    - 已有记录且 `github_user_id` 相同时执行 UPDATE，替换 Token 密文、scope、login
      和校验时间，不得 INSERT 第二行；普通重授权恢复为 `ACTIVE`，但若当前状态是
      `DISCONNECTING`，则保持该状态并使用新 Token 继续远端 Hook 清理，不能静默取消
@@ -348,10 +326,9 @@ GET /api/github/oauth/callback?code={code}&state={state}
    - 已有记录属于其他 GitHub 用户时返回 `409 GITHUB_CONNECTION_ALREADY_EXISTS`，
      要求管理员先断开现有 Connection；新交换的 Token 不得落库或写日志，并应尽力
      通过 GitHub OAuth Application API 撤销。
-   - 整个判断和写入期间必须持有同一把业务锁；锁不可用时返回可重试错误，不得用
-     数据库约束或数据库异常替代并发控制。
-7. 提交事务并释放业务锁。
-8. 返回 Connection 信息，不向前端返回 Access Token。
+   - INSERT 遇到唯一键冲突时重新读取当前行，并按上述同用户/不同用户分支处理，
+     不得把数据库异常直接暴露给调用方。
+7. 返回 Connection 信息，不向前端返回 Access Token。
 
 建议响应：
 
@@ -441,9 +418,8 @@ PUT /api/github/connections/{connectionId}/repositories/{owner}/{repository}/sub
 1. 校验单用户环境中的 Connection 状态为 `ACTIVE`。
 2. 解密 OAuth App Access Token，调用 GitHub Repository API 获取稳定的
    Repository ID、Node ID、Full Name、默认分支和 Clone URL。
-3. 获取 `github:subscription:repository:{githubRepositoryId}` 应用业务锁，再按
-   `github_repository_id` 查询现有 Subscription；执行 Upsert，但不得为同一仓库
-   创建第二条 Subscription。
+3. 按 `github_repository_id` 查询并锁定现有 Subscription；执行 Upsert，但不得为
+   同一仓库创建第二条 Subscription。
 4. 首次创建时生成该 Subscription 独立的高熵 Webhook Secret，并将状态置为
    `PROVISIONING`。
 5. 所有仓库统一使用配置项 `GITHUB_WEBHOOK_CALLBACK_URL`，其值固定为公开 HTTPS
@@ -556,8 +532,8 @@ DELETE /api/github/connections/{connectionId}
 
 `ORPHANED` 只表示 Firefly 已放弃远端管理，不代表 GitHub Hook 已删除。由于所有
 Hook 共用全局 Callback URL，接收端必须根据 Hook ID 拒绝非 `ACTIVE`/`PROVISIONING`
-Subscription 的业务事件。历史 Subscription 的 `connection_id` 允许由应用在
-Connection 删除流程中置空，应用不得删除其审计线索。
+Subscription 的业务事件。历史 Subscription 的 `connection_id` 由应用在 Connection
+删除流程中显式置空，不得删除审计线索。
 
 ### 9.5 Webhook Secret 轮换
 
@@ -593,7 +569,7 @@ GitHub 更新成功但验证超时时保持双验签、状态标记为 `ROTATION
 GitHub 特有配置。`pipeline_config` 保留已有 `trigger_match`，并新增：
 
 ```text
-branch_pattern VARCHAR(512)
+branch_pattern VARCHAR(512) NOT NULL DEFAULT ''
 ```
 
 当 `trigger_origin=GITHUB` 时，`origin_id` 指向
@@ -664,12 +640,11 @@ Pipeline 请求中的通用触发属性单独表示：
 2. 插入 `github_trigger_config(pipeline_id, subscription_id, ...)` 并获得 config ID。
 3. 回填 `pipeline_config.origin_id=github_trigger_config.id`。
 
-写入前获取 `github:trigger-config:pipeline:{pipelineId}` 业务锁，并分别查询 Pipeline、
-Subscription 和 Trigger Config 校验逻辑引用。任何一步失败都回滚。更新时同时校验
-两个方向的 ID 仍一致，不允许把其他 Pipeline 的 Trigger Config 绑定过来。删除
-Pipeline 时，由应用在同一事务先删除关联 `github_trigger_config`，确认按
-`pipeline_id` 查询已无记录，再删除 `pipeline_config`；数据库不提供外键或级联兜底。
-`pipeline_config.origin_id` 同样由应用维护和校验。
+任何一步失败都回滚。更新时分别读取 Pipeline 和 Trigger Config，校验两个方向的 ID
+仍一致，不允许把其他 Pipeline 的 Trigger Config 绑定过来。删除 Pipeline 时，应用
+在同一事务先按 `pipeline_id` 删除 `github_trigger_config`，确认关联记录已清除后再
+删除 `pipeline_config`；`pipeline_config.origin_id` 同样由应用维护，不建立数据库
+外键。
 
 删除 Subscription 不删除 Pipeline 或 Trigger Config，而是按 §9.2 禁用配置。
 重新订阅不会自动恢复这些配置；管理员更新 Pipeline 并显式启用后，才允许再次
@@ -709,8 +684,7 @@ OAuth Token、API Key 或其他凭据；Subscription 通过 GitHub Delivery Head
    返回 `403`，不能绑定 Hook ID 或写业务 Outbox。
 8. `ping` 使用 §11.3 的专用模型，不通过 push/PR 解析器；普通事件继续执行业务
    白名单检查。
-9. 获取 `github:delivery:{deliveryId}` 应用业务锁，在事务内查询后插入 Delivery
-   Inbox；重复 Delivery 直接返回成功。
+9. 原子插入 Delivery Inbox；重复 Delivery 直接返回成功。
 10. 对业务事件在同一事务写入 Outbox；对 `ping` 直接写入终态，不进入 Kafka。
 11. 返回 `202 Accepted`。
 
@@ -728,10 +702,8 @@ Repository ID 校验与业务事件相同，并额外执行：
    在已经通过签名和 Repository ID 校验的前提下将 Delivery 写为终态 `REJECTED`
    并告警，不写 Outbox。
 3. `PROVISIONING` 且 `webhook_id` 尚未保存时，只有 HMAC、Target Repository ID、
-   payload Repository ID 和 payload Hook ID 全部一致，才允许获取
-   `github:subscription:webhook:{webhookId}` 应用业务锁，在事务内再次确认该 Hook ID
-   未被其他 Subscription 使用后条件更新绑定。并发绑定只能成功一次，其他 Hook ID
-   不得覆盖。
+   payload Repository ID 和 payload Hook ID 全部一致，才允许条件更新绑定
+   `webhook_id`。并发绑定只能成功一次，其他 Hook ID 不得覆盖。
 4. `AUTO` 模式将绑定值与创建 API 返回的 Hook ID 对账；`MANUAL` 模式以该绑定作为
    手动注册完成凭据。对账不一致进入 `ERROR` 并告警。
 5. 校验成功后将 Delivery 标记为 `SUCCESS`，记录命中的 Secret 密钥版本，不创建
@@ -842,12 +814,9 @@ Delivery 时该值保持不变，因此以其作为幂等键。
 接收事务：
 
 ```text
-ACQUIRE github:delivery:{deliveryId}
-QUERY github_webhook_delivery BY delivery_id
 INSERT github_webhook_delivery
 + INSERT outbox_event(topic=github_webhook_message)
 + COMMIT
-RELEASE github:delivery:{deliveryId}
 ```
 
 如果 Delivery 已存在：
@@ -858,9 +827,13 @@ RELEASE github:delivery:{deliveryId}
 
 ### 13.2 Delivery-Pipeline 幂等
 
-一个 Delivery 可能匹配多条 Pipeline。应用使用
-`github:delivery-pipeline:{deliveryId}:{pipelineId}` 业务锁，并在事务内查询后创建或
-领取 Delivery-Pipeline 记录。该流程用于保证：
+一个 Delivery 可能匹配多条 Pipeline，因此增加唯一约束：
+
+```text
+UNIQUE (delivery_id, pipeline_id)
+```
+
+该记录用于保证：
 
 - 同一个 Delivery 可以触发多条 Pipeline。
 - 每条 Pipeline 最多创建一个 Build。
@@ -880,9 +853,9 @@ Consumer 流程：
 1. 使用独立短事务原子领取 Delivery Inbox，将其从可处理状态改为
    `PROCESSING`；并发消费者只有一个可以领取成功。
 2. 先按 `subscription_id` 查询启用的 `github_trigger_config`，收集 `pipeline_id`；
-   再以 `pipeline_id IN (...)` 分批查询 `pipeline_config`，在 Java 内存中组装映射，
-   只保留 `trigger_mode=AUTOMATIC` 的 Pipeline。任何缺失、重复或反向 ID 不一致都
-   视为逻辑引用损坏：跳过该配置、记录指标并告警。
+   再按 `pipeline_id IN (...)` 分批查询 `pipeline_config`，在 Java 内存中组装映射，
+   只保留 `trigger_mode=AUTOMATIC` 的 Pipeline。缺失、重复或反向 ID 不一致时跳过该
+   配置并告警。
 3. 按事件、action、`matchBranch`、`pipeline_config.trigger_match` 和
    `pipeline_config.branch_pattern` 过滤。
 4. 对每条匹配 Pipeline 调用独立的 `@Transactional` 处理方法：
@@ -918,8 +891,8 @@ github_delivery_pipeline(PROCESSING/SUCCESS)
 `AbstractTrigger.dispatch` 使用默认 `REQUIRED` 传播加入该外层事务；现有
 `OutboxService.enqueue` 的 `MANDATORY` 语义保持不变。如果任一步失败，上述数据
 全部回滚，再使用独立事务将 Delivery-Pipeline 更新为 `RETRYABLE`（达到最大次数时
-为 `DEAD`）并记录脱敏错误。重试时必须获取同一 Delivery-Pipeline 业务锁，并通过
-状态条件更新领取已有 `RETRYABLE` 记录，不得另建记录或重复创建 Build。
+为 `DEAD`）并记录脱敏错误。重试时通过状态条件更新领取 `RETRYABLE` 记录，不能绕过
+`UNIQUE (delivery_id, pipeline_id)` 再创建 Build。
 
 这样可以保证：事务提交后 Build、运行期 Trigger 和 Outbox 同时存在；事务失败
 时三者同时不存在，不会因为 Consumer 重试产生孤立 Build 或丢失启动消息。
@@ -944,7 +917,7 @@ RECEIVED/RETRYABLE → PROCESSING → SUCCESS/IGNORED
 - 恢复任务必须比较原 `processor_id` 和 `processing_started_at`，防止旧 Consumer
   覆盖已经被新 Consumer 领取或完成的记录。
 - 管理 API 可沿用现有 Inbox 的显式 reset 语义人工恢复 `DEAD`，但必须记录操作者、
-  原因并将 attempt 重置策略写入审计；人工 reset 仍须通过同一应用幂等守卫。
+  原因并将 attempt 重置策略写入审计；人工 reset 不能绕过幂等唯一键。
 - `DEAD`、恢复任务异常和超时堆积必须告警。错误摘要需要脱敏，完整原始 Payload
   仍按保留策略处理。
 
@@ -955,17 +928,16 @@ Delivery 仅在全部 Delivery-Pipeline 都进入 `SUCCESS`/`IGNORED` 后进入
 
 ## 14. 数据模型
 
-本章字段表中的 `PK` 只表示内部技术主键，`INDEX` 均为非唯一索引。除技术主键外，
-DDL 不声明唯一键、外键、检查约束、非空约束或级联动作；字段是否必填以及所有业务
-关系均由 §4.8 的应用服务负责。所有逻辑引用只允许分表查询，禁止关联查询。
+下列表中的关系 ID 均为逻辑引用，不建立数据库外键。唯一键、非空约束和普通查询
+索引仍按表格定义保留；跨表读取遵循 §4.8 的分表查询规则。
 
 ### 14.1 `github_connection`
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
-| `public_id` | VARCHAR INDEX | 对外 Connection ID；应用保证不重复 |
-| `singleton_key` | VARCHAR INDEX | MVP 固定为 `DEFAULT`；应用保证单 Connection |
+| `public_id` | VARCHAR UNIQUE | 对外 Connection ID |
+| `singleton_key` | VARCHAR UNIQUE | MVP 固定为 `DEFAULT`，保证单 Connection |
 | `github_user_id` | BIGINT | GitHub 不可变用户 ID |
 | `github_login` | VARCHAR | 展示用 login |
 | `access_token_ciphertext` | TEXT | Token 密文 |
@@ -973,29 +945,28 @@ DDL 不声明唯一键、外键、检查约束、非空约束或级联动作；�
 | `encryption_key_version` | VARCHAR | 密钥版本 |
 | `scopes` | JSON | 实际授权 Scope |
 | `status` | VARCHAR | Connection 状态 |
-| `version` | BIGINT | 应用乐观版本 |
 | `last_validated_at` | DATETIME(6) | 最近验证时间 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-查询索引：
+MVP 唯一性：
 
 ```text
-INDEX (singleton_key)
+UNIQUE (singleton_key)
 INDEX (github_user_id)
 ```
 
-`GitHubBusinessConstraintGuard` 在 `github:connection:singleton` 锁内执行
-`findAllBySingletonKey(DEFAULT)`，结果超过一行立即拒绝继续连接并告警；零行创建、
-一行按 §7.3 更新。多用户版本不得直接删除 `singleton_key` 后复用本表，必须先补充
-用户归属和授权迁移方案。
+`UNIQUE(singleton_key)` 已保证表中最多一行，`UNIQUE(github_user_id)` 在该模型下
+没有额外约束价值，因此只保留查询索引。Connection 的 INSERT/UPDATE 冲突语义按
+§7.3 执行；多用户版本不得直接删除 `singleton_key` 后复用本表，必须先补充用户
+归属和授权迁移方案。
 
 ### 14.2 `github_repository_subscription`
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
-| `public_id` | VARCHAR INDEX | 管理 API 使用的 Subscription ID；应用保证不重复 |
-| `connection_id` | BIGINT INDEX | GitHub Connection 的逻辑引用，可为空 |
+| `public_id` | VARCHAR UNIQUE | 管理 API 使用的 Subscription ID，不进入 Webhook URL |
+| `connection_id` | BIGINT NULL INDEX | GitHub Connection 的逻辑引用；应用删除时置空 |
 | `github_repository_id` | BIGINT | GitHub Repository ID |
 | `node_id` | VARCHAR | GitHub Node ID |
 | `owner` | VARCHAR | Repository Owner |
@@ -1004,8 +975,8 @@ INDEX (github_user_id)
 | `html_url` | VARCHAR | GitHub 页面地址 |
 | `clone_url` | VARCHAR | HTTPS Clone URL |
 | `default_branch` | VARCHAR | 默认分支 |
-| `webhook_id` | BIGINT INDEX | GitHub Hook ID；首次有效 ping 可条件绑定 |
-| `registration_mode` | VARCHAR | `AUTO` / `MANUAL`；应用校验必填和互斥 |
+| `webhook_id` | BIGINT UNIQUE NULL | GitHub Hook ID；首次有效 ping 可条件绑定 |
+| `registration_mode` | VARCHAR NOT NULL | `AUTO` / `MANUAL`，同一 Subscription 互斥 |
 | `webhook_secret_ciphertext` | TEXT | 当前 active Secret 密文 |
 | `webhook_secret_nonce` | VARBINARY | 当前 active Secret 的 AEAD nonce |
 | `webhook_secret_key_version` | VARCHAR | 当前 active Secret 的密钥版本 |
@@ -1016,23 +987,18 @@ INDEX (github_user_id)
 | `secret_rotation_status` | VARCHAR | `IDLE` / `ROTATION_VERIFYING` / `ERROR` |
 | `events` | JSON | Webhook 订阅事件 |
 | `status` | VARCHAR | Subscription 状态 |
-| `version` | BIGINT | 应用乐观版本 |
 | `last_error` | VARCHAR | 最近错误摘要 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-查询索引：
+MVP 唯一性：
 
 ```text
-INDEX (github_repository_id)
-INDEX (webhook_id)
-INDEX (connection_id)
+UNIQUE (github_repository_id)
+UNIQUE (webhook_id)
 ```
 
-创建或绑定时分别获取 Repository ID 和 Hook ID 对应的业务锁，事务内重新查询；
-Repository ID 或非空 Hook ID 已被其他有效 Subscription 使用时返回 `409`。这样由
-应用保证同一 Firefly 环境内每个 GitHub Repository 只有一条 Subscription 和一个
-Webhook，多条 Pipeline 只能共享它。Connection 删除时，由应用先逐条处理
-Subscription，再将历史 Subscription 的 `connection_id` 置空；数据库不自动处理。
+这个全局唯一约束保证同一 Firefly 环境内，每个 GitHub Repository 只有一条
+Subscription 和一个 Webhook，多条 Pipeline 只能共享它。
 
 ### 14.3 `pipeline_config` 触发属性
 
@@ -1049,7 +1015,7 @@ Subscription，再将历史 Subscription 的 `connection_id` 置空；数据库�
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
-| `branch_pattern` | VARCHAR(512) | 标准化后的分支匹配值；应用校验必填规则 |
+| `branch_pattern` | VARCHAR(512) NOT NULL DEFAULT '' | 标准化后的分支匹配值 |
 
 现有 Pipeline 迁移时先写入空字符串；非 GitHub 或 `MANUAL` Pipeline 可以保持
 为空。GitHub 自动触发 Pipeline 创建或更新时，`branch_pattern` 必须非空；当
@@ -1060,14 +1026,13 @@ Subscription，再将历史 Subscription 的 `connection_id` 置空；数据库�
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | Trigger Config ID |
-| `pipeline_id` | BIGINT INDEX | Pipeline ID 的逻辑引用；应用保证一对一 |
+| `pipeline_id` | BIGINT UNIQUE | Pipeline ID 的逻辑引用 |
 | `subscription_id` | BIGINT INDEX | Repository Subscription 的逻辑引用 |
 | `enabled` | BOOLEAN | 是否启用 |
 | `disabled_reason` | VARCHAR NULL | 例如 `SUBSCRIPTION_DELETED`、`ADMIN_DISABLED` |
 | `events` | JSON | 允许事件 |
 | `pull_request_actions` | JSON | PR action 白名单 |
 | `ignore_delete_push` | BOOLEAN | 是否忽略删除 Push |
-| `version` | BIGINT | 应用乐观版本 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
 `branch_pattern` 和 `trigger_match` 不得在此表重复保存。创建或更新 Pipeline 时，
@@ -1080,10 +1045,6 @@ pipeline_config.origin_id = github_trigger_config.id
 pipeline_config.trigger_origin = GITHUB
 ```
 
-应用在 Pipeline 业务锁内分别读取两张表校验以上规则；不得通过数据库关系约束或
-关联查询完成校验。`pipeline_id` 出现多条 Trigger Config 或任一逻辑引用缺失时，
-该 Pipeline 自动触发被禁用并告警。
-
 ### 14.5 `github_trigger`（运行期记录）
 
 保留现有 `github_trigger` 表，但将其明确为运行期审计表，而不是 Pipeline 配置表：
@@ -1093,7 +1054,7 @@ pipeline_config.trigger_origin = GITHUB
 | `id` | BIGINT PK | 本次运行期 Trigger ID |
 | `delivery_id` | VARCHAR INDEX | GitHub Delivery ID |
 | `pipeline_id` | BIGINT INDEX | 被触发的 Pipeline |
-| `pipeline_build_id` | BIGINT INDEX | 本次创建的 Build；应用保证不重复 |
+| `pipeline_build_id` | BIGINT UNIQUE | 本次创建的 Build |
 | `github_repository_id` | BIGINT | GitHub Repository ID |
 | `github_repo_url` | VARCHAR | Repository URL，兼容现有字段 |
 | `event_type` | VARCHAR | `push` / `pull_request` |
@@ -1111,15 +1072,13 @@ Outbox 在同一事务中写入。
 
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
-| `id` | BIGINT PK | 内部技术主键 |
-| `delivery_id` | VARCHAR INDEX | `X-GitHub-Delivery`；应用保证不重复 |
+| `delivery_id` | VARCHAR PK | `X-GitHub-Delivery` |
 | `subscription_id` | BIGINT INDEX | Repository Subscription |
 | `event_type` | VARCHAR | `X-GitHub-Event` |
 | `action` | VARCHAR | Payload action |
 | `repository_id` | BIGINT | GitHub Repository ID |
 | `payload` | LONGTEXT/JSON | 原始或标准化 Payload |
 | `status` | VARCHAR | Delivery 状态 |
-| `version` | BIGINT | 应用乐观版本 |
 | `processing_attempt` | INT | 处理次数 |
 | `processor_id` | VARCHAR NULL | 当前租约持有者 |
 | `processing_started_at` | DATETIME(6) NULL | 当前领取时间 |
@@ -1128,9 +1087,8 @@ Outbox 在同一事务中写入。
 | `received_at` | DATETIME(6) | 接收时间 |
 | `processing_finished_at` | DATETIME(6) | 完成时间 |
 
-`delivery_id` 是 GitHub 提供的全局唯一 GUID，但只作为业务键和非唯一索引，不拼接
-`subscription_id`。接收端先获取 `github:delivery:{deliveryId}` 锁，事务内查询后
-决定插入或返回已有结果。为恢复与保留期清理增加：
+`delivery_id` 是 GitHub 提供的全局唯一 GUID，因此保持全局主键，不拼接
+`subscription_id`。为恢复与保留期清理增加：
 
 ```text
 status = RECEIVED / PROCESSING / RETRYABLE / SUCCESS / IGNORED / REJECTED / DEAD
@@ -1152,7 +1110,6 @@ INDEX (subscription_id, received_at)
 | `pipeline_id` | BIGINT INDEX | Pipeline ID 的逻辑引用 |
 | `pipeline_build_id` | BIGINT NULL | 成功创建的 Build ID |
 | `status` | VARCHAR | 处理状态 |
-| `version` | BIGINT | 应用乐观版本 |
 | `processing_attempt` | INT | 处理次数 |
 | `processor_id` | VARCHAR NULL | 当前租约持有者 |
 | `processing_started_at` | DATETIME(6) NULL | 当前领取时间 |
@@ -1160,45 +1117,18 @@ INDEX (subscription_id, received_at)
 | `last_error` | VARCHAR | 最近错误摘要 |
 | `created_at` / `updated_at` | DATETIME(6) | 审计时间 |
 
-状态值与查询索引：
+唯一性：
 
 ```text
 status = PROCESSING / RETRYABLE / SUCCESS / DEAD
-INDEX (delivery_id, pipeline_id)
+UNIQUE (delivery_id, pipeline_id)
 INDEX (status, next_retry_at)
 INDEX (status, processing_started_at)
 ```
 
-应用在 Delivery-Pipeline 业务锁内查询 `(delivery_id, pipeline_id)`，保证只创建一条
-逻辑记录。Delivery-Pipeline 与父 Delivery 使用相同保留期；清理时应用先按
-`delivery_id` 分页查询并删除全部子记录，确认子记录数为零后再删除父 Delivery。
-运行期 `github_trigger` 和 Pipeline Build 按各自审计保留策略独立保存。任何步骤
-失败都保留父记录并重试，数据库不执行自动级联。
-
-### 14.8 应用约束和一致性巡检
-
-所有 GitHub 表的写入只能经过 `GitHubBusinessConstraintGuard`。守卫至少实现：
-
-```text
-assertSingletonConnection()
-assertPublicIdAvailable(entityType, publicId)
-assertRepositorySubscriptionAvailable(githubRepositoryId)
-assertWebhookIdAvailable(webhookId)
-assertPipelineTriggerConfigAvailable(pipelineId)
-assertDeliveryAvailable(deliveryId)
-assertDeliveryPipelineAvailable(deliveryId, pipelineId)
-validateLogicalReferences()
-```
-
-每个方法都必须在对应业务锁内重新查询，严格区分“未找到”“唯一找到”“发现重复”；
-后两种异常场景不得用 `findFirst` 掩盖。写入 DTO、领域对象和状态转换器负责必填、
-枚举值、长度和状态迁移校验。可变聚合使用 `version` 字段执行条件更新，应用检查受
-影响行数，避免旧请求覆盖新状态。
-
-一致性巡检至少检查：单例 Connection、Repository ID/Hook ID 重复、Trigger Config
-双向引用、Subscription/Pipeline/Delivery 悬空引用、Delivery-Pipeline 重复业务键、
-Build 重复引用和非法状态。巡检只报告和隔离，不在不确定时自动删除数据；修复必须
-经过受审计的管理操作。
+Delivery-Pipeline 与父 Delivery 使用相同保留期。清理时应用先按 `delivery_id`
+分页删除子记录，确认已无子记录后再删除父 Delivery；任一步失败都保留父记录并重试。
+运行期 `github_trigger` 和 Pipeline Build 按各自审计保留策略独立保存。
 
 ## 15. HTTP API
 
@@ -1369,17 +1299,15 @@ githubRequestId
 - Ping 专用解析、Hook ID 对账和不触发 Pipeline。
 - Pipeline `branch_pattern` 的 `ACCURATE` 和 `PREFIX` 分支匹配。
 - Delivery 和 Delivery-Pipeline 去重。
-- 业务必填、状态迁移、逻辑引用和删除顺序校验。
-- `GitHubBusinessConstraintGuard` 的零行、单行、重复行和悬空引用分支。
-- 分布式锁不可用、租期续约和 owner token 安全释放。
+- 逻辑引用存在性、归属关系和应用删除顺序校验。
 
 ### 20.2 集成测试
 
 - 使用 WireMock 模拟 OAuth 和 GitHub REST API。
-- 使用 Testcontainers MySQL 验证 DDL 只有技术主键和非唯一索引，不包含业务唯一键、
-  外键、检查/非空约束或数据库级联动作。
-- 使用 SQL Statement Inspector 或 datasource-proxy 验证 GitHub Repository/Mapper
-  执行的 SQL 不包含 `JOIN`，跨表读取按 ID 分批查询并由 Java 组装。
+- 使用 Testcontainers MySQL 验证新表、唯一约束和非唯一查询索引。
+- 通过 `information_schema` 断言 GitHub 相关表不存在外键。
+- 使用 SQL Statement Inspector 或 datasource-proxy 断言 GitHub Repository/Mapper
+  执行的 SQL 不包含 `JOIN`；验证跨表读取使用分批查询并在 Java 中组装。
 - 使用 Embedded Kafka 验证 Delivery Outbox 到 Consumer。
 - 同一 Delivery 并发到达只能落一条 Inbox。
 - 非 `application/json` 请求返回 415 且不写入 Delivery。
@@ -1393,18 +1321,16 @@ githubRequestId
 - 同一 Repository 的 `AUTO`/`MANUAL` 重复注册被拒绝，不产生第二个远端 Hook。
 - 一个 Delivery 可触发多条匹配 Pipeline。
 - 同一 Delivery + Pipeline 只能创建一个 Build。
-- 多实例并发测试验证同一业务键只产生一条逻辑记录；锁服务不可用时写操作失败关闭，
-  不产生无锁写入。
-- 人工注入重复业务键和悬空逻辑引用后，一致性巡检能够隔离、告警且不会继续触发。
 - Pipeline 创建事务失败时，Build、运行期 `github_trigger` 和 Outbox 全部回滚，
   状态可恢复。
 - Consumer 在 Delivery 或 Delivery-Pipeline 进入 `PROCESSING` 后崩溃，租约超时能
   条件回收；达到最大次数进入 `DEAD` 且不重复 Build。
 - 删除 Pipeline 会删除 Trigger Config；删除 Subscription 只禁用且重新订阅不自动
   启用 Trigger Config。
+- 人工注入悬空逻辑引用后，读取和写入流程能够拒绝处理并告警。
 - Token 失效时断开 Connection 不会永久卡在 `DELETING`，可重授权清理或显式标记
   `ORPHANED`。
-- 从现有 `v1.sql` 快照执行前向迁移，历史 `github_trigger` 行保留且应用约束生效。
+- 从现有 `v1.sql` 快照执行前向迁移，历史 `github_trigger` 行保留且新约束生效。
 - Spring Boot ApplicationContext 和自动装配测试。
 
 ### 20.3 GitHub 沙箱验收
@@ -1445,32 +1371,29 @@ githubRequestId
 
 迁移采用 expand → validate/backfill → contract：
 
-1. 为 `pipeline_config` 增加可空的 `branch_pattern`，先兼容现有行；应用只允许 GitHub
-   自动触发 Pipeline 保存非空值。
+1. 为 `pipeline_config` 增加带默认空字符串的 `branch_pattern`，先兼容现有行。
 2. 创建 Connection、Subscription、Trigger Config、Delivery 和 Delivery-Pipeline
-   表以及 §14 中的技术主键和非唯一查询索引。DDL 明确不得创建业务唯一键、外键、
-   检查/非空约束或级联动作。Subscription 包含 `registration_mode` 和 `webhook_id`；
-   其必填与不重复规则由应用校验。`public_id` 只服务管理 API，不参与共享 Webhook 路由。
+   表及 §14 中的唯一键和清理/恢复索引，但不得创建外键或外键级联动作。
+   Subscription 必须包含 `registration_mode`，并对非空 `webhook_id` 建立唯一约束；
+   `public_id` 只服务管理 API，不参与共享 Webhook 路由。
 3. 扩展 `github_trigger` 时，无法从旧行推导的 `delivery_id`、`pipeline_id`、
    `pipeline_build_id` 等列第一阶段允许 NULL；现有行写入 `legacy_record=true`，新代码
-   写入 false 并在应用层强制新字段完整。不能用伪造默认值回填审计关联，后续
-   migration 也不得把这些业务必填规则下沉为数据库约束。
+   写入 false 并在应用层强制新字段完整。历史行归档或超过保留期后，后续 migration
+   才能收紧数据库 NOT NULL，不能用伪造默认值回填审计关联。
 4. 升级前检查 `pipeline_config.trigger_origin=GITHUB` 的存量行。若其 `origin_id`
    指向旧运行期 `github_trigger`，由于无法安全推导 Repository Subscription，迁移
    必须停止并输出待人工重建清单，不能静默转换为 Trigger Config。
-5. 升级前扫描现有表中的重复业务键和悬空引用；发现问题时停止迁移并输出人工修复
-   清单。应用必须先部署分布式锁与约束守卫，再开放新写入口。
-6. 使用 Testcontainers 分别验证空库安装、带历史 github_trigger 的 v1 升级、重复
-   执行保护、无业务约束 DDL 和失败回滚；同时通过 `information_schema` 断言没有外键、
-   业务唯一索引或检查约束。部署前备份数据库；一旦新版本产生 Delivery 数据，回滚
-   应用只能保留新增表，不能通过 DROP 回滚丢失 Inbox/审计数据。
+5. 使用 Testcontainers 分别验证空库安装、带历史 github_trigger 的 v1 升级、重复
+   执行保护、唯一键冲突、无外键 DDL 以及失败回滚。部署前备份数据库；一旦新版本
+   产生 Delivery 数据，回滚应用只能保留新增表，不能通过 DROP 回滚丢失 Inbox/审计
+   数据。
 
 ### Phase 1：基础连接
 
 - GitHub REST Client。
 - OAuth state + PKCE。
 - Token Exchange 和 Connection 加密存储。
-- 单环境最多一行 Connection 的应用守卫及并发 Callback 语义。
+- 单环境最多一行 Connection 约束及并发 Callback 语义。
 - Connection 管理 API。
 
 ### Phase 2：Repository Subscription
@@ -1543,10 +1466,10 @@ githubRequestId
   最大尝试次数进入 `DEAD` 并告警。
 - Connection 删除流程能由应用逐条停用 Trigger；Token 失效时支持重授权清理或受审计的
   force-local-disconnect，不会永久卡在 `DELETING`。
-- GitHub 相关 SQL 不使用 `JOIN`；数据表除技术主键和非唯一索引外不包含数据库约束，
-  唯一性、引用完整性、必填、幂等、状态迁移和删除顺序均由应用实现。
-- 多实例并发下业务锁和事务内二次校验仍能维持上述规则；锁服务不可用时失败关闭，
-  一致性巡检能发现并隔离历史重复或悬空数据。
+- GitHub Repository/Mapper 不执行 SQL `JOIN`，跨表数据通过分表批量查询后在 Java
+  中组装。
+- GitHub 相关表不存在数据库外键；逻辑引用完整性和删除顺序由应用服务维护，同时
+  继续使用唯一键、非空约束和普通索引。
 - Connection、Subscription、Delivery 和 Delivery-Pipeline 状态可查询。
 - 私有仓库代码权限与 Webhook 管理权限被明确区分。
 - 完整测试套件及 GitHub 沙箱验收通过。
