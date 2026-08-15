@@ -92,7 +92,7 @@ class TriggerImplementationsTests {
                         102L
                 ));
         GithubMessageEntity message = new GithubMessageEntity();
-        message.setURL("https://github.com/example/repository");
+        message.setRepositoryUrl("https://github.com/example/repository");
         message.setPipelineID(11L)
                 .setPipelineBuildID(21L)
                 .setExecutionAttempt(0)

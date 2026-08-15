@@ -36,6 +36,8 @@ public class PipelineConfigRequest implements Serializable {
     private TriggerMatch triggerMatch;
     @NotNull
     private TriggerOrigin triggerOrigin;
+    @Size(max = 512)
+    private String branchPattern;
     @NotNull
     private JsonNode originInfo;
     @NotNull

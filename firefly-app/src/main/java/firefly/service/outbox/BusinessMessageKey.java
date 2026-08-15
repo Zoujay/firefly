@@ -5,6 +5,7 @@ import firefly.bean.dto.message.TriggerJobMessage;
 import firefly.bean.dto.message.TriggerPipelineMessage;
 import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.bean.dto.message.TriggerStageMessage;
+import firefly.github.message.GitHubWebhookMessage;
 
 /**
  * Builds a stable Kafka key for the business execution represented by a
@@ -45,6 +46,9 @@ public final class BusinessMessageKey {
                     plugin.getPluginBuildID(),
                     plugin.getExecutionAttempt()
             );
+        }
+        if (message instanceof GitHubWebhookMessage github) {
+            return "github-delivery:" + github.getDeliveryId();
         }
         throw new IllegalArgumentException(
                 "Unsupported Kafka business message: "

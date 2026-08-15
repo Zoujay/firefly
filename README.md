@@ -10,7 +10,7 @@ Firefly is a pipeline orchestration service built with Spring Boot, Kafka, and M
 
 ### 项目概览
 
-Firefly 将流水线定义和执行记录分离：Pipeline、Stage、Job 与 Plugin 都有独立的配置和 Build 数据。运行时由四类 Kafka 事件推进状态，同时将入站消息和待发送事件持久化到 MySQL，确保故障能够被定位并由管理员显式恢复。
+Firefly 将流水线定义和执行记录分离：Pipeline、Stage、Job 与 Plugin 都有独立的配置和 Build 数据。运行时由四类构建事件推进状态，并使用独立的 GitHub Webhook Topic 接收代码事件；入站消息和待发送事件持久化到 MySQL，确保故障可定位、可恢复。
 
 核心能力：
 
@@ -23,6 +23,7 @@ Firefly 将流水线定义和执行记录分离：Pipeline、Stage、Job 与 Plu
 - 使用稳定的业务消息 UUID、Inbox 唯一约束和原子领取避免重复业务执行。
 - 使用 Outbox 将业务状态修改和下游 Kafka 事件写入同一个 MySQL 事务。
 - 在原 Pipeline Build 上重试失败执行，跳过已经成功的 Stage 和 Job。
+- 通过 GitHub OAuth App 建立单用户 Connection，自动或手动注册每仓库独占 Webhook，并按事件、PR action 和分支规则一次触发多条 Pipeline。
 - 通过管理 API 人工恢复 Inbox 和 Outbox 异常，不扫描或轮询数据库。
 
 ### Maven 模块
@@ -39,7 +40,8 @@ firefly/
 │       │   └── v1.sql              # 新环境完整数据库结构
 │       └── test/                   # 单元测试和集成测试
 └── firefly-github/
-    └── pom.xml                     # GitHub 交互代码的独立 Maven 模块边界
+    ├── pom.xml                     # GitHub 协议模块
+    └── src/                        # OAuth、REST Client、Webhook 验签与事件解析
 ```
 
 根工程的 `artifactId` 是 `firefly-parent`，负责统一 Java 版本、插件版本和模块构建顺序。`firefly-app` 的 Maven `artifactId` 保持为 `firefly`，并依赖 `firefly-github`。
@@ -224,10 +226,10 @@ docker run -d \
   apache/kafka:3.9.1
 ```
 
-创建应用需要的四个 Topic：
+创建应用需要的五个 Topic：
 
 ```bash
-for topic in pipeline_message stage_message job_message plugin_message; do
+for topic in pipeline_message stage_message job_message plugin_message github_webhook_message; do
   docker exec firefly-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 \
     --create \
@@ -273,6 +275,10 @@ java -jar firefly-app/target/firefly-0.0.1-SNAPSHOT.jar
 | `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | 否 | JDBC URL |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | 否 | Kafka Broker 地址 |
 | `SERVER_PORT` | `9999` | 否 | HTTP 端口 |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 无 | 使用 GitHub 时 | OAuth App 凭据 |
+| `GITHUB_REDIRECT_URI` | 无 | 使用 GitHub 时 | OAuth Callback URL |
+| `GITHUB_WEBHOOK_CALLBACK_URL` | 无 | 使用 GitHub 时 | 所有仓库共用的 HTTPS Webhook URL |
+| `GITHUB_ENCRYPTION_KEY` | 无 | 使用 GitHub 时 | Base64 编码的 32 字节 Token/Secret 加密密钥 |
 
 其他关键默认值：
 
@@ -341,6 +347,23 @@ curl -X POST http://localhost:9999/manual_trigger/pipeline \
   }'
 ```
 
+#### GitHub OAuth 与 Webhook
+
+GitHub 管理 API 应由反向代理或部署层管理员认证保护；只有共享的 Webhook 接口对 GitHub 公网开放。数据库逻辑关联由应用维护，GitHub 表不使用外键，数据访问不执行 SQL JOIN。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/github/oauth/authorize` | 发起带 state 与 PKCE 的 OAuth 授权 |
+| `GET` | `/api/github/oauth/callback` | 换取并加密保存 OAuth App Access Token |
+| `GET` / `DELETE` | `/api/github/connections[/{id}]` | 查询或断开唯一 Connection |
+| `GET` | `/api/github/connections/{id}/repositories` | 查询 OAuth 用户可见仓库 |
+| `PUT` | `/api/github/connections/{id}/repositories/{owner}/{repo}/subscription` | 以 `AUTO` 或 `MANUAL` 模式建立仓库订阅 |
+| `POST` / `DELETE` | `/api/github/subscriptions/{id}/ping`、`/api/github/subscriptions/{id}` | 测试或删除 Webhook |
+| `POST` | `/api/github/webhooks` | 共享的 GitHub HMAC-SHA256 Webhook 入口 |
+| `GET` / `POST` | `/api/github/deliveries/{deliveryId}`、`.../retry` | 查询或重试 Delivery |
+
+`AUTO` 模式使用 OAuth Token 创建、更新、ping 和删除 GitHub Repository Webhook；`MANUAL` 模式只在首次创建时返回一次 Secret，由管理员在 GitHub 设置中注册。一个 Repository 只有一个 Subscription/Webhook，多条 Pipeline 通过各自的 `github_trigger_config` 共享该订阅，并使用 Pipeline 自身的 `branchPattern` 与 `triggerMatch` 过滤。
+
 #### Inbox 人工恢复
 
 路径中的 `category` 使用 `PIPELINE`、`STAGE`、`JOB` 或 `PLUGIN`。
@@ -376,7 +399,7 @@ curl -X POST \
 mvn clean verify
 ```
 
-测试套件包含普通单元测试、基于 Testcontainers 的 MySQL 集成测试，以及验证四个生产 Listener 接线的 Embedded Kafka 测试。运行完整测试需要本机 Docker 可用。
+测试套件包含普通单元测试、基于 Testcontainers 的 MySQL/GitHub Schema 集成测试，以及验证核心构建 Listener 接线的 Embedded Kafka 测试。运行完整测试需要本机 Docker 可用。
 
 ---
 
@@ -384,7 +407,7 @@ mvn clean verify
 
 ### Overview
 
-Firefly separates pipeline definitions from execution records. Pipeline, Stage, Job, and Plugin each have configuration and Build data. Four Kafka event types advance runtime state, while inbound messages and outbound events are stored in MySQL so failures remain observable and recoverable through explicit operator actions.
+Firefly separates pipeline definitions from execution records. Four build-event types advance runtime state, and a dedicated GitHub Webhook topic receives repository events. Inbound and outbound events are stored in MySQL so failures remain observable and recoverable.
 
 Key capabilities:
 
@@ -598,10 +621,10 @@ docker run -d \
   apache/kafka:3.9.1
 ```
 
-Create the four application topics:
+Create the five application topics:
 
 ```bash
-for topic in pipeline_message stage_message job_message plugin_message; do
+for topic in pipeline_message stage_message job_message plugin_message github_webhook_message; do
   docker exec firefly-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 \
     --create \
@@ -647,6 +670,10 @@ The default base URL is `http://localhost:9999`. The Spring Boot Maven plugin ke
 | `MYSQL_URL` | `jdbc:mysql://localhost:3306/firefly` | no | JDBC URL |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | no | Kafka broker address |
 | `SERVER_PORT` | `9999` | no | HTTP port |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | none | for GitHub | OAuth App credentials |
+| `GITHUB_REDIRECT_URI` | none | for GitHub | OAuth callback URL |
+| `GITHUB_WEBHOOK_CALLBACK_URL` | none | for GitHub | Shared HTTPS webhook URL for every repository |
+| `GITHUB_ENCRYPTION_KEY` | none | for GitHub | Base64-encoded 32-byte Token/Secret encryption key |
 
 Other important defaults:
 
@@ -668,6 +695,10 @@ Other important defaults:
 | `POST` | `/pipeline-builds/{pipelineBuildID}/retry` | Retry a failed Pipeline on its existing Build rows |
 
 UUID fields must contain exactly 64 characters, and Pipeline, Stage, and Job names must contain 10–64 characters. The Chinese quick-start section contains complete create, query, and trigger examples that can be used unchanged.
+
+#### GitHub OAuth and Webhooks
+
+Protect the GitHub management APIs with deployment-level administrator access control; only `/api/github/webhooks` is intended for public GitHub delivery. The implementation supports OAuth state/PKCE, encrypted OAuth App tokens and per-repository secrets, `AUTO` or `MANUAL` webhook registration, a single shared callback URL, Delivery idempotency, retry leases, and fan-out to multiple branch-matched Pipelines. GitHub persistence uses application-managed logical references without foreign keys or SQL JOINs.
 
 #### Manual Inbox recovery
 
@@ -697,4 +728,4 @@ Pagination accepts Spring Data `page`, `size`, and `sort` parameters. The reset 
 mvn clean verify
 ```
 
-The suite contains regular unit tests, MySQL integration tests backed by Testcontainers, and Embedded Kafka tests that verify all four production listeners. Docker must be available for the complete suite.
+The suite contains regular unit tests, MySQL/GitHub schema integration tests backed by Testcontainers, and Embedded Kafka tests for the core build listeners. Docker must be available for the complete suite.

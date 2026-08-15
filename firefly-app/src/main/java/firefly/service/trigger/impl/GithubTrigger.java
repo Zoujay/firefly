@@ -8,6 +8,10 @@ import firefly.service.trigger.AbstractTrigger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 @Service
 public class GithubTrigger extends AbstractTrigger<
         GithubTriggerEntity,
@@ -31,7 +35,21 @@ public class GithubTrigger extends AbstractTrigger<
             GithubMessageEntity message
     ) {
         GithubTriggerEntity triggerEntity = new GithubTriggerEntity();
-        triggerEntity.setGithubRepoURL(message.getURL());
+        triggerEntity.setGithubRepoURL(message.getRepositoryUrl())
+                .setDeliveryId(message.getDeliveryId())
+                .setPipelineId(message.getPipelineID())
+                .setPipelineBuildId(message.getPipelineBuildID())
+                .setGithubRepositoryId(message.getRepositoryId())
+                .setEventType(message.getEventType())
+                .setAction(message.getAction())
+                .setSourceBranch(message.getSourceBranch())
+                .setTargetBranch(message.getTargetBranch())
+                .setHeadSha(message.getHeadSha())
+                .setLegacyRecord(false)
+                .setCreatedAt(LocalDateTime.ofInstant(
+                        message.getReceivedAt() == null ? Instant.now() : message.getReceivedAt(),
+                        ZoneOffset.UTC
+                ));
         return githubTriggerDao.save(triggerEntity);
     }
 }
