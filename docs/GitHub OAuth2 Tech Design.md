@@ -487,14 +487,17 @@ DELETE /api/github/subscriptions/{subscriptionId}
    `github_trigger_config` 设为 `enabled=false`、
    `disabled_reason=SUBSCRIPTION_DELETED`，但保留配置和 Pipeline；重新订阅同一仓库
    后不自动启用，必须由管理员显式启用，避免意外恢复 CI/CD。
-2. `AUTO` 模式使用 Connection Token 删除 GitHub Webhook；`MANUAL` 模式先尝试按
-   已绑定 Hook ID 删除，若 Token 无权管理该手动创建的 Hook，则返回明确的人工删除
-   指引并进入 `ORPHANED`，不能把本地完成误报为远端已删除。
-3. 删除成功或 GitHub 返回 Hook 不存在后标记为 `DELETED`。
+2. `AUTO` 模式使用 Connection Token 删除 GitHub Webhook；`MANUAL` 模式不得调用
+   GitHub Webhook 删除 API，保留远端 Hook，返回明确的人工删除指引并进入
+   `ORPHANED`，不能把本地禁用误报为远端已删除。
+3. `AUTO` 删除成功或 GitHub 返回 Hook 不存在后标记为 `DELETED`；`MANUAL` 保持
+   `ORPHANED`，直到管理员在 GitHub 删除 Hook 并通过后续受审计的本地清理流程完成。
 4. 保留历史 Delivery 和 Trigger 审计记录。
 
-步骤 1 保证删除开始后不再产生新 Build；GitHub 远端删除成功后再提交终态。删除
-失败保持 `DELETING` 并进入有限重试，不能物理删除 Subscription 或历史记录。
+步骤 1 保证删除开始后不再产生新 Build。`AUTO` 在 GitHub 远端删除成功后再提交
+终态，失败保持 `DELETING` 并进入有限重试；`MANUAL` 即使远端 Hook 继续投递，也因
+Subscription 非 `ACTIVE` 且 Trigger Config 已禁用而不能触发 Pipeline。两种模式都
+不能物理删除 Subscription 或历史记录。
 
 ### 9.3 Subscription 状态
 
@@ -1351,7 +1354,8 @@ githubRequestId
 8. Pull Request `synchronize` 按目标分支匹配并触发一次。
 9. 非目标分支不触发。
 10. 修改 Payload 后签名验证失败。
-11. 删除 Subscription 后 GitHub Webhook 被删除。
+11. 删除 `AUTO` Subscription 后 GitHub Webhook 被删除；删除 `MANUAL` Subscription
+    后远端 Hook 保留、本地状态为 `ORPHANED`，后续投递不能触发 Pipeline。
 12. Token 撤销后 Connection 进入 `REAUTH_REQUIRED`。
 13. Secret 轮换期间新旧在途 Delivery 均可验签，新 Secret ping 验证后旧 Secret 在
     宽限期结束时失效。

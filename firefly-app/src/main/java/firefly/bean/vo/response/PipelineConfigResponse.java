@@ -17,6 +17,7 @@ public class PipelineConfigResponse {
     private String TriggerMode;
     private String TriggerMatch;
     private String TriggerOrigin;
+    private String branchPattern;
     private List<StageConfigResponse> stageConfigs;
 
 }

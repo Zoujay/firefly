@@ -15,4 +15,5 @@ public class PipelineConfigDto {
     private String triggerMode;
     private String triggerMatch;
     private String triggerOrigin;
+    private String branchPattern;
 }

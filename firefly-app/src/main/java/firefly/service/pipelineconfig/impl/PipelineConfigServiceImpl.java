@@ -11,6 +11,8 @@ import firefly.bean.vo.response.JobConfigResponse;
 import firefly.bean.vo.response.PipelineConfigResponse;
 import firefly.bean.vo.response.StageConfigResponse;
 import firefly.constant.PluginType;
+import firefly.constant.TriggerModel;
+import firefly.constant.TriggerOrigin;
 import firefly.dao.jobconfig.IJobConfigDao;
 import firefly.dao.pipelineconfig.IPipelineConfigDao;
 import firefly.model.job.JobModel;
@@ -51,6 +53,14 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
     @Override
     @Transactional
     public String createPipeline(PipelineConfigRequest pipelineConfigRequest) {
+        if (pipelineConfigRequest.getTriggerOrigin() == TriggerOrigin.GITHUB
+                && pipelineConfigRequest.getTriggerModel() == TriggerModel.AUTOMATIC
+                && (pipelineConfigRequest.getBranchPattern() == null
+                || pipelineConfigRequest.getBranchPattern().isBlank())) {
+            throw new IllegalArgumentException(
+                    "branchPattern is required for automatic GitHub pipelines"
+            );
+        }
         PipelineModel pipelineModel = this.assemblePipelineModel(pipelineConfigRequest, -1L);
         pipelineConfigDao.save(pipelineModel);
         Long pipelineId = pipelineModel.getId();
@@ -164,6 +174,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         pipelineConfigDto.setTriggerMatch(pipelineModel.getTriggerMatch().name());
         pipelineConfigDto.setName(pipelineModel.getPipelineName());
         pipelineConfigDto.setTriggerOrigin(pipelineModel.getTriggerOrigin().name());
+        pipelineConfigDto.setBranchPattern(pipelineModel.getBranchPattern());
         return pipelineConfigDto;
     }
 
@@ -177,6 +188,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         pipelineConfigResponse.setTriggerMatch(pipelineConfigDto.getTriggerMatch());
         pipelineConfigResponse.setStageConfigs(stageConfigResponses);
         pipelineConfigResponse.setTriggerOrigin(pipelineConfigDto.getTriggerOrigin());
+        pipelineConfigResponse.setBranchPattern(pipelineConfigDto.getBranchPattern());
 
         return pipelineConfigResponse;
     }
@@ -190,6 +202,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
         pipelineModel.setTriggerMatch(request.getTriggerMatch());
         pipelineModel.setTriggerOrigin(request.getTriggerOrigin());
         pipelineModel.setOriginID(originID);
+        pipelineModel.setBranchPattern(request.getBranchPattern());
         return pipelineModel;
     }
 

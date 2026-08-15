@@ -43,4 +43,7 @@ public class PipelineModel {
     @Column(name = "origin_id")
     private Long originID = -1L;
 
+    @Column(name = "branch_pattern")
+    private String branchPattern;
+
 }
