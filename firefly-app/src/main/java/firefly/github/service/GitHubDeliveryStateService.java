@@ -4,6 +4,7 @@ import firefly.github.config.GitHubProcessingProperties;
 import firefly.github.dao.GitHubWebhookDeliveryRepository;
 import firefly.github.model.GitHubDeliveryStatus;
 import firefly.github.model.GitHubWebhookDeliveryEntity;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
 @Service
+@Slf4j
 public class GitHubDeliveryStateService {
 
     private final GitHubWebhookDeliveryRepository deliveryRepository;
@@ -42,7 +44,12 @@ public class GitHubDeliveryStateService {
     }
 
     @Transactional
-    public void finish(String deliveryId, GitHubDeliveryStatus status, String error) {
+    public boolean finish(
+            String deliveryId,
+            String processorId,
+            GitHubDeliveryStatus status,
+            String error
+    ) {
         GitHubWebhookDeliveryEntity delivery = deliveryRepository.findByDeliveryId(deliveryId)
                 .orElseThrow(() -> new IllegalStateException(
                         "GitHub delivery was not found: " + deliveryId
@@ -51,14 +58,27 @@ public class GitHubDeliveryStateService {
                 && delivery.getProcessingAttempt() >= processingProperties.getMaxAttempts()
                 ? GitHubDeliveryStatus.DEAD
                 : status;
-        delivery.setStatus(finalStatus)
-                .setProcessorId("")
-                .setLastError(error == null ? "" : truncate(error))
-                .setProcessingFinishedAt(now());
-        if (finalStatus == GitHubDeliveryStatus.RETRYABLE) {
-            delivery.setNextRetryAt(now().plus(processingProperties.getRetryDelay()));
+        LocalDateTime finishedAt = now();
+        LocalDateTime nextRetryAt = finalStatus == GitHubDeliveryStatus.RETRYABLE
+                ? finishedAt.plus(processingProperties.getRetryDelay())
+                : null;
+        int updated = deliveryRepository.finishOwned(
+                deliveryId,
+                processorId,
+                GitHubDeliveryStatus.PROCESSING,
+                finalStatus,
+                error == null ? "" : truncate(error),
+                finishedAt,
+                nextRetryAt
+        );
+        if (updated == 0) {
+            log.warn(
+                    "Ignored stale GitHub delivery completion for delivery {} by processor {}",
+                    deliveryId,
+                    processorId
+            );
         }
-        deliveryRepository.save(delivery);
+        return updated == 1;
     }
 
     @Transactional

@@ -20,8 +20,11 @@ public class GitHubOAuthStateWriter {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<GitHubOAuthStateEntity> take(String state) {
         Optional<GitHubOAuthStateEntity> pending = stateRepository.findByState(state);
-        pending.ifPresent(stateRepository::delete);
-        stateRepository.flush();
-        return pending;
+        if (pending.isEmpty()) {
+            return Optional.empty();
+        }
+        return stateRepository.consumePending(pending.get().getId()) == 1
+                ? pending
+                : Optional.empty();
     }
 }

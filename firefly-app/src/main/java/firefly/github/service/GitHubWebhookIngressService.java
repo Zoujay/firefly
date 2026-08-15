@@ -48,7 +48,7 @@ public class GitHubWebhookIngressService {
             byte[] rawPayload
     ) {
         if (!"repository".equalsIgnoreCase(targetType)) {
-            throw forbidden("Only repository webhooks are supported");
+            throw forbidden();
         }
         GitHubRepositorySubscriptionEntity subscription = locate(
                 eventType,
@@ -64,24 +64,40 @@ public class GitHubWebhookIngressService {
         if (event.repositoryId() == null
                 || !event.repositoryId().equals(targetId)
                 || !event.repositoryId().equals(subscription.getGithubRepositoryId())) {
-            throw forbidden("GitHub repository identity does not match the subscription");
+            throw forbidden();
         }
         if (!event.ping() && subscription.getStatus() != GitHubSubscriptionStatus.ACTIVE) {
-            throw forbidden("GitHub subscription is not active");
+            throw forbidden();
         }
         try {
-            boolean created = deliveryWriter.persist(
+            GitHubDeliveryWriteResult result = deliveryWriter.persist(
                     subscription,
                     event,
                     new String(rawPayload, StandardCharsets.UTF_8),
                     hookId
             );
+            if (result.rejected()) {
+                throw forbidden();
+            }
             return new GitHubWebhookResponse(
-                    created ? "ACCEPTED" : "DUPLICATE",
+                    result.created() ? "ACCEPTED" : "DUPLICATE",
                     deliveryId,
                     eventType
             );
         } catch (DataIntegrityViolationException exception) {
+            if (event.ping()) {
+                try {
+                    if (deliveryWriter.persistRejectedBindingConflict(
+                            subscription,
+                            event,
+                            new String(rawPayload, StandardCharsets.UTF_8)
+                    )) {
+                        throw forbidden();
+                    }
+                } catch (DataIntegrityViolationException duplicate) {
+                    // A concurrent request persisted the same Delivery first.
+                }
+            }
             return new GitHubWebhookResponse("DUPLICATE", deliveryId, eventType);
         }
     }
@@ -98,7 +114,7 @@ public class GitHubWebhookIngressService {
             return byHook;
         }
         if (!"ping".equals(eventType)) {
-            throw forbidden("GitHub webhook subscription was not found");
+            throw forbidden();
         }
         List<GitHubRepositorySubscriptionEntity> candidates = subscriptionRepository
                 .findAllByGithubRepositoryIdAndWebhookIdIsNullAndStatus(
@@ -106,16 +122,16 @@ public class GitHubWebhookIngressService {
                         GitHubSubscriptionStatus.PROVISIONING
                 );
         if (candidates.size() != 1) {
-            throw forbidden("GitHub webhook subscription was not uniquely identified");
+            throw forbidden();
         }
         return candidates.getFirst();
     }
 
-    private GitHubIntegrationException forbidden(String message) {
+    private GitHubIntegrationException forbidden() {
         return new GitHubIntegrationException(
                 HttpStatus.FORBIDDEN,
-                "GITHUB_WEBHOOK_FORBIDDEN",
-                message
+                "GITHUB_WEBHOOK_SIGNATURE_INVALID",
+                "GitHub webhook authentication failed"
         );
     }
 }

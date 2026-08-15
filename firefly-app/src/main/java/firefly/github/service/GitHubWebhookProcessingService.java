@@ -84,11 +84,17 @@ public class GitHubWebhookProcessingService {
             }
             stateService.finish(
                     deliveryId,
+                    processorId,
                     matches == 0 ? GitHubDeliveryStatus.IGNORED : GitHubDeliveryStatus.SUCCESS,
                     ""
             );
         } catch (Exception exception) {
-            stateService.finish(deliveryId, GitHubDeliveryStatus.RETRYABLE, exception.getMessage());
+            stateService.finish(
+                    deliveryId,
+                    processorId,
+                    GitHubDeliveryStatus.RETRYABLE,
+                    exception.getMessage()
+            );
             throw exception;
         }
     }

@@ -9,7 +9,6 @@ import firefly.github.api.GitHubWebhook;
 import firefly.github.config.GitHubProperties;
 import firefly.github.dao.GitHubConnectionRepository;
 import firefly.github.dao.GitHubRepositorySubscriptionRepository;
-import firefly.github.dao.GitHubTriggerConfigRepository;
 import firefly.github.dto.GitHubSubscriptionRequest;
 import firefly.github.dto.GitHubSubscriptionResponse;
 import firefly.github.http.GitHubIntegrationException;
@@ -23,7 +22,6 @@ import firefly.github.security.GitHubSecretCipher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.security.SecureRandom;
@@ -42,10 +40,10 @@ public class GitHubSubscriptionService {
     private static final Set<String> SUPPORTED_EVENTS = Set.of("push", "pull_request");
     private final GitHubConnectionRepository connectionRepository;
     private final GitHubRepositorySubscriptionRepository subscriptionRepository;
-    private final GitHubTriggerConfigRepository triggerConfigRepository;
     private final GitHubApiClient apiClient;
     private final GitHubProperties properties;
     private final GitHubSecretCipher secretCipher;
+    private final GitHubSubscriptionDeletionStateService deletionStateService;
     private final ObjectMapper objectMapper;
     private final SecureRandom secureRandom;
     private final Clock clock;
@@ -53,20 +51,20 @@ public class GitHubSubscriptionService {
     public GitHubSubscriptionService(
             GitHubConnectionRepository connectionRepository,
             GitHubRepositorySubscriptionRepository subscriptionRepository,
-            GitHubTriggerConfigRepository triggerConfigRepository,
             GitHubApiClient apiClient,
             GitHubProperties properties,
             GitHubSecretCipher secretCipher,
+            GitHubSubscriptionDeletionStateService deletionStateService,
             ObjectMapper objectMapper,
             SecureRandom secureRandom,
             Clock clock
     ) {
         this.connectionRepository = connectionRepository;
         this.subscriptionRepository = subscriptionRepository;
-        this.triggerConfigRepository = triggerConfigRepository;
         this.apiClient = apiClient;
         this.properties = properties;
         this.secretCipher = secretCipher;
+        this.deletionStateService = deletionStateService;
         this.objectMapper = objectMapper;
         this.secureRandom = secureRandom;
         this.clock = clock;
@@ -230,30 +228,46 @@ public class GitHubSubscriptionService {
         );
     }
 
-    @Transactional
     public void delete(String subscriptionPublicId) {
-        GitHubRepositorySubscriptionEntity subscription = subscription(subscriptionPublicId);
-        subscription.setStatus(GitHubSubscriptionStatus.DELETING).setUpdatedAt(now());
-        subscriptionRepository.save(subscription);
-        if (subscription.getWebhookId() != null
-                && subscription.getRegistrationMode() == GitHubRegistrationMode.AUTO) {
-            GitHubConnectionEntity connection = activeConnection(subscription.getConnectionId());
-            apiClient.deleteWebhook(
-                    token(connection),
-                    subscription.getOwner(),
-                    subscription.getRepositoryName(),
-                    subscription.getWebhookId()
+        GitHubSubscriptionDeletionTarget target = deletionStateService.begin(
+                subscriptionPublicId
+        );
+        if (target.registrationMode() == GitHubRegistrationMode.MANUAL
+                && target.webhookId() != null) {
+            deletionStateService.fail(
+                    target.subscriptionId(),
+                    GitHubSubscriptionStatus.ORPHANED,
+                    "The manually registered GitHub webhook was retained; "
+                            + "delete Hook " + target.webhookId() + " in GitHub"
+            );
+            throw new GitHubIntegrationException(
+                    HttpStatus.CONFLICT,
+                    "GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED",
+                    "The Pipeline triggers are disabled, but the manually registered GitHub "
+                            + "webhook must be deleted in GitHub"
             );
         }
-        triggerConfigRepository.findAllBySubscriptionId(subscription.getId())
-                .forEach(config -> {
-                    config.setEnabled(false)
-                            .setDisabledReason("SUBSCRIPTION_DELETED")
-                            .setUpdatedAt(now());
-                    triggerConfigRepository.save(config);
-                });
-        subscription.setStatus(GitHubSubscriptionStatus.DELETED).setUpdatedAt(now());
-        subscriptionRepository.save(subscription);
+        if (target.webhookId() == null) {
+            deletionStateService.complete(target.subscriptionId());
+            return;
+        }
+        try {
+            GitHubConnectionEntity connection = activeConnection(target.connectionId());
+            apiClient.deleteWebhook(
+                    token(connection),
+                    target.owner(),
+                    target.repositoryName(),
+                    target.webhookId()
+            );
+        } catch (RuntimeException exception) {
+            deletionStateService.fail(
+                    target.subscriptionId(),
+                    GitHubSubscriptionStatus.DELETING,
+                    exception.getMessage()
+            );
+            throw exception;
+        }
+        deletionStateService.complete(target.subscriptionId());
     }
 
     public GitHubRepositorySubscriptionEntity subscription(String publicId) {

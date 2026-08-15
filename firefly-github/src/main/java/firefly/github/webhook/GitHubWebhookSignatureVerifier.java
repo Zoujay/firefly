@@ -50,7 +50,7 @@ public class GitHubWebhookSignatureVerifier {
         return new GitHubIntegrationException(
                 HttpStatus.FORBIDDEN,
                 "GITHUB_WEBHOOK_SIGNATURE_INVALID",
-                "GitHub webhook signature is invalid"
+                "GitHub webhook authentication failed"
         );
     }
 }

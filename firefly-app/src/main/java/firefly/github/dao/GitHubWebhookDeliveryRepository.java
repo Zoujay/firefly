@@ -43,6 +43,28 @@ public interface GitHubWebhookDeliveryRepository
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update GitHubWebhookDeliveryEntity d
+               set d.status = :finalStatus,
+                   d.processorId = '',
+                   d.lastError = :error,
+                   d.processingFinishedAt = :finishedAt,
+                   d.nextRetryAt = :nextRetryAt
+             where d.deliveryId = :deliveryId
+               and d.status = :processing
+               and d.processorId = :processorId
+            """)
+    int finishOwned(
+            @Param("deliveryId") String deliveryId,
+            @Param("processorId") String processorId,
+            @Param("processing") GitHubDeliveryStatus processing,
+            @Param("finalStatus") GitHubDeliveryStatus finalStatus,
+            @Param("error") String error,
+            @Param("finishedAt") LocalDateTime finishedAt,
+            @Param("nextRetryAt") LocalDateTime nextRetryAt
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update GitHubWebhookDeliveryEntity d
                set d.status = :retryable,
                    d.processorId = '',
                    d.processingStartedAt = null,
