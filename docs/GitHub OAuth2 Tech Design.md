@@ -149,6 +149,21 @@ MVP 不依赖当前代码库中尚不存在的 Firefly User/Tenant 模型。一�
   `github_trigger_config.id`。
 - `GithubMessageEntity.triggerID` 指向本次触发创建的 `github_trigger.id`。
 
+### 4.8 禁止 JOIN 和数据库外键
+
+GitHub 模块采用以下强制数据访问规则：
+
+- Repository/Mapper 禁止 SQL `JOIN`，也禁止 ORM 关联映射、Fetch Join 或隐式懒加载
+  生成关联查询。跨表读取必须先分别查询各表，再在 Java 内存中按 ID 组装；批量场景
+  使用 `IN (...)` 分页查询，避免逐行查询。
+- DDL 禁止 `FOREIGN KEY` 以及依赖外键的 `ON DELETE` / `ON UPDATE` 动作。表中的
+  `connection_id`、`subscription_id`、`pipeline_id`、`delivery_id`、
+  `pipeline_build_id` 和 `origin_id` 都是逻辑引用。
+- 应用服务负责逻辑引用的存在性、归属关系和删除顺序校验；发现重复候选或悬空引用时
+  停止对应操作并告警，不能使用 `findFirst` 掩盖数据错误。
+- 其他数据库能力不在禁止范围内。主键、`UNIQUE`、`NOT NULL`、`CHECK` 和普通索引
+  可以使用；业务唯一性和幂等仍应由应用预校验并由数据库唯一约束处理并发竞争。
+
 两张表不得合并或复用 ID，以免配置关系和运行历史产生语义冲突。
 
 ## 5. 总体架构
@@ -517,8 +532,8 @@ DELETE /api/github/connections/{connectionId}
 
 `ORPHANED` 只表示 Firefly 已放弃远端管理，不代表 GitHub Hook 已删除。由于所有
 Hook 共用全局 Callback URL，接收端必须根据 Hook ID 拒绝非 `ACTIVE`/`PROVISIONING`
-Subscription 的业务事件。历史 Subscription 的 `connection_id` 允许在 Connection
-删除时置空，不得因级联删除丢失审计线索。
+Subscription 的业务事件。历史 Subscription 的 `connection_id` 由应用在 Connection
+删除流程中显式置空，不得删除审计线索。
 
 ### 9.5 Webhook Secret 轮换
 
@@ -616,7 +631,7 @@ Pipeline 请求中的通用触发属性单独表示：
 5. Event 和 Pull Request action 命中 GitHub Trigger Config。
 6. 标准化后的分支名按照 Pipeline 的 `trigger_match` 与 `branch_pattern` 命中。
 
-### 10.1 Trigger Config 维护与级联规则
+### 10.1 Trigger Config 维护与生命周期规则
 
 创建 GitHub 自动触发 Pipeline 时，沿用当前 `PipelineConfigServiceImpl` 的写入模型，
 在同一个事务内执行：
@@ -625,10 +640,11 @@ Pipeline 请求中的通用触发属性单独表示：
 2. 插入 `github_trigger_config(pipeline_id, subscription_id, ...)` 并获得 config ID。
 3. 回填 `pipeline_config.origin_id=github_trigger_config.id`。
 
-任何一步失败都回滚。更新时同时校验两个方向的 ID 仍一致，不允许把其他 Pipeline
-的 Trigger Config 绑定过来。删除 Pipeline 时，在同一事务删除关联
-`github_trigger_config`；数据库外键使用 `ON DELETE CASCADE` 作为兜底，
-`pipeline_config.origin_id` 是应用维护的弱引用，不建立反向外键以避免循环约束。
+任何一步失败都回滚。更新时分别读取 Pipeline 和 Trigger Config，校验两个方向的 ID
+仍一致，不允许把其他 Pipeline 的 Trigger Config 绑定过来。删除 Pipeline 时，应用
+在同一事务先按 `pipeline_id` 删除 `github_trigger_config`，确认关联记录已清除后再
+删除 `pipeline_config`；`pipeline_config.origin_id` 同样由应用维护，不建立数据库
+外键。
 
 删除 Subscription 不删除 Pipeline 或 Trigger Config，而是按 §9.2 禁用配置。
 重新订阅不会自动恢复这些配置；管理员更新 Pipeline 并显式启用后，才允许再次
@@ -836,8 +852,10 @@ Consumer 流程：
 
 1. 使用独立短事务原子领取 Delivery Inbox，将其从可处理状态改为
    `PROCESSING`；并发消费者只有一个可以领取成功。
-2. 查询该 Subscription 下启用的 `github_trigger_config`，Join
-   `pipeline_config`，只保留 `trigger_mode=AUTOMATIC` 的 Pipeline。
+2. 先按 `subscription_id` 查询启用的 `github_trigger_config`，收集 `pipeline_id`；
+   再按 `pipeline_id IN (...)` 分批查询 `pipeline_config`，在 Java 内存中组装映射，
+   只保留 `trigger_mode=AUTOMATIC` 的 Pipeline。缺失、重复或反向 ID 不一致时跳过该
+   配置并告警。
 3. 按事件、action、`matchBranch`、`pipeline_config.trigger_match` 和
    `pipeline_config.branch_pattern` 过滤。
 4. 对每条匹配 Pipeline 调用独立的 `@Transactional` 处理方法：
@@ -910,6 +928,9 @@ Delivery 仅在全部 Delivery-Pipeline 都进入 `SUCCESS`/`IGNORED` 后进入
 
 ## 14. 数据模型
 
+下列表中的关系 ID 均为逻辑引用，不建立数据库外键。唯一键、非空约束和普通查询
+索引仍按表格定义保留；跨表读取遵循 §4.8 的分表查询规则。
+
 ### 14.1 `github_connection`
 
 | 字段 | 类型/约束 | 说明 |
@@ -945,7 +966,7 @@ INDEX (github_user_id)
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
 | `public_id` | VARCHAR UNIQUE | 管理 API 使用的 Subscription ID，不进入 Webhook URL |
-| `connection_id` | BIGINT NULL FK | GitHub Connection；删除时 `ON DELETE SET NULL` |
+| `connection_id` | BIGINT NULL INDEX | GitHub Connection 的逻辑引用；应用删除时置空 |
 | `github_repository_id` | BIGINT | GitHub Repository ID |
 | `node_id` | VARCHAR | GitHub Node ID |
 | `owner` | VARCHAR | Repository Owner |
@@ -1005,8 +1026,8 @@ Subscription 和一个 Webhook，多条 Pipeline 只能共享它。
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | Trigger Config ID |
-| `pipeline_id` | BIGINT UNIQUE FK | Pipeline ID，`ON DELETE CASCADE` |
-| `subscription_id` | BIGINT FK | Repository Subscription |
+| `pipeline_id` | BIGINT UNIQUE | Pipeline ID 的逻辑引用 |
+| `subscription_id` | BIGINT INDEX | Repository Subscription 的逻辑引用 |
 | `enabled` | BOOLEAN | 是否启用 |
 | `disabled_reason` | VARCHAR NULL | 例如 `SUBSCRIPTION_DELETED`、`ADMIN_DISABLED` |
 | `events` | JSON | 允许事件 |
@@ -1085,8 +1106,8 @@ INDEX (subscription_id, received_at)
 | 字段 | 类型/约束 | 说明 |
 | --- | --- | --- |
 | `id` | BIGINT PK | 内部 ID |
-| `delivery_id` | VARCHAR FK | Delivery ID，`ON DELETE CASCADE` |
-| `pipeline_id` | BIGINT FK | Pipeline ID，`ON DELETE CASCADE` |
+| `delivery_id` | VARCHAR INDEX | Delivery ID 的逻辑引用 |
+| `pipeline_id` | BIGINT INDEX | Pipeline ID 的逻辑引用 |
 | `pipeline_build_id` | BIGINT NULL | 成功创建的 Build ID |
 | `status` | VARCHAR | 处理状态 |
 | `processing_attempt` | INT | 处理次数 |
@@ -1105,9 +1126,9 @@ INDEX (status, next_retry_at)
 INDEX (status, processing_started_at)
 ```
 
-Delivery-Pipeline 与父 Delivery 使用相同保留期。清理父 Delivery 时通过
-`ON DELETE CASCADE` 同步删除子记录，因此 FK 不会与幂等保留策略冲突；运行期
-`github_trigger` 和 Pipeline Build 按各自审计保留策略独立保存。
+Delivery-Pipeline 与父 Delivery 使用相同保留期。清理时应用先按 `delivery_id`
+分页删除子记录，确认已无子记录后再删除父 Delivery；任一步失败都保留父记录并重试。
+运行期 `github_trigger` 和 Pipeline Build 按各自审计保留策略独立保存。
 
 ## 15. HTTP API
 
@@ -1278,11 +1299,15 @@ githubRequestId
 - Ping 专用解析、Hook ID 对账和不触发 Pipeline。
 - Pipeline `branch_pattern` 的 `ACCURATE` 和 `PREFIX` 分支匹配。
 - Delivery 和 Delivery-Pipeline 去重。
+- 逻辑引用存在性、归属关系和应用删除顺序校验。
 
 ### 20.2 集成测试
 
 - 使用 WireMock 模拟 OAuth 和 GitHub REST API。
-- 使用 Testcontainers MySQL 验证新表和唯一约束。
+- 使用 Testcontainers MySQL 验证新表、唯一约束和非唯一查询索引。
+- 通过 `information_schema` 断言 GitHub 相关表不存在外键。
+- 使用 SQL Statement Inspector 或 datasource-proxy 断言 GitHub Repository/Mapper
+  执行的 SQL 不包含 `JOIN`；验证跨表读取使用分批查询并在 Java 中组装。
 - 使用 Embedded Kafka 验证 Delivery Outbox 到 Consumer。
 - 同一 Delivery 并发到达只能落一条 Inbox。
 - 非 `application/json` 请求返回 415 且不写入 Delivery。
@@ -1302,6 +1327,7 @@ githubRequestId
   条件回收；达到最大次数进入 `DEAD` 且不重复 Build。
 - 删除 Pipeline 会删除 Trigger Config；删除 Subscription 只禁用且重新订阅不自动
   启用 Trigger Config。
+- 人工注入悬空逻辑引用后，读取和写入流程能够拒绝处理并告警。
 - Token 失效时断开 Connection 不会永久卡在 `DELETING`，可重授权清理或显式标记
   `ORPHANED`。
 - 从现有 `v1.sql` 快照执行前向迁移，历史 `github_trigger` 行保留且新约束生效。
@@ -1347,7 +1373,7 @@ githubRequestId
 
 1. 为 `pipeline_config` 增加带默认空字符串的 `branch_pattern`，先兼容现有行。
 2. 创建 Connection、Subscription、Trigger Config、Delivery 和 Delivery-Pipeline
-   表及 §14 中的唯一键、FK 和清理/恢复索引。
+   表及 §14 中的唯一键和清理/恢复索引，但不得创建外键或外键级联动作。
    Subscription 必须包含 `registration_mode`，并对非空 `webhook_id` 建立唯一约束；
    `public_id` 只服务管理 API，不参与共享 Webhook 路由。
 3. 扩展 `github_trigger` 时，无法从旧行推导的 `delivery_id`、`pipeline_id`、
@@ -1358,8 +1384,9 @@ githubRequestId
    指向旧运行期 `github_trigger`，由于无法安全推导 Repository Subscription，迁移
    必须停止并输出待人工重建清单，不能静默转换为 Trigger Config。
 5. 使用 Testcontainers 分别验证空库安装、带历史 github_trigger 的 v1 升级、重复
-   执行保护、唯一键冲突以及失败回滚。部署前备份数据库；一旦新版本产生 Delivery
-   数据，回滚应用只能保留新增表，不能通过 DROP 回滚丢失 Inbox/审计数据。
+   执行保护、唯一键冲突、无外键 DDL 以及失败回滚。部署前备份数据库；一旦新版本
+   产生 Delivery 数据，回滚应用只能保留新增表，不能通过 DROP 回滚丢失 Inbox/审计
+   数据。
 
 ### Phase 1：基础连接
 
@@ -1437,8 +1464,12 @@ githubRequestId
 - GitHub、Kafka 或数据库短暂故障后消息可观察、可恢复。
 - Consumer 崩溃或 Kafka Rebalance 后，超时 PROCESSING 能通过租约安全恢复，超过
   最大尝试次数进入 `DEAD` 并告警。
-- Connection 删除能级联停用 Trigger；Token 失效时支持重授权清理或受审计的
+- Connection 删除流程能由应用逐条停用 Trigger；Token 失效时支持重授权清理或受审计的
   force-local-disconnect，不会永久卡在 `DELETING`。
+- GitHub Repository/Mapper 不执行 SQL `JOIN`，跨表数据通过分表批量查询后在 Java
+  中组装。
+- GitHub 相关表不存在数据库外键；逻辑引用完整性和删除顺序由应用服务维护，同时
+  继续使用唯一键、非空约束和普通索引。
 - Connection、Subscription、Delivery 和 Delivery-Pipeline 状态可查询。
 - 私有仓库代码权限与 Webhook 管理权限被明确区分。
 - 完整测试套件及 GitHub 沙箱验收通过。
