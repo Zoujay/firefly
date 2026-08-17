@@ -136,7 +136,7 @@ Content-Type: application/json
   "uuid": "64-character-pipeline-uuid",
   "name": "firefly-main-build",
   "triggerModel": "AUTOMATIC",
-  "triggerMatch": "SOURCE_BRANCH",
+  "triggerMatch": "ACCURATE",
   "triggerOrigin": "GITHUB",
   "branchPattern": "main",
   "originInfo": {
@@ -179,7 +179,7 @@ Content-Type: application/json
 | `html_url` | 浏览器访问 URL |
 | `clone_url` | HTTPS Clone URL |
 | `default_branch` | 默认分支快照 |
-| `private_repository` | 是否为私有仓库，建议新增 |
+| `private_repository` | GitHub 返回的私有仓库标识，必须保存的权威快照 |
 | `webhook_id` | GitHub Webhook ID |
 | `registration_mode` | `AUTO` 或 `MANUAL` |
 | `events` | 仓库级 Webhook 事件集合 |
@@ -192,6 +192,14 @@ UNIQUE INDEX uidx_github_subscription_repository (github_repository_id)
 ```
 
 它保证同一个 GitHub 仓库只对应一条 Repository Subscription 和一个共享 Webhook。
+
+`private_repository` 不是可选优化。新建和更新 Repository Subscription 时，服务端必须使用 GitHub 仓库详情响应中的 `private` 值写入该字段，禁止接受前端覆盖。新部署的表结构将该字段定义为 `NOT NULL`。
+
+已有部署升级时不得把未知值直接默认为公开仓库。迁移分三步完成：
+
+1. 先增加允许为空的 `private_repository` 字段。
+2. 使用现有 OAuth Connection 的 token 逐条调用 GitHub 仓库详情接口回填，不使用 SQL `JOIN`。
+3. 全部回填成功后将字段改为 `NOT NULL`；回填前的 `NULL` 表示“未知”，不能按公开仓库展示或授权。
 
 ### 8.2 `github_trigger_config`
 
@@ -384,10 +392,21 @@ Pipeline 只能绑定 `ACTIVE` Subscription。
 
 ### 12.2 删除仓库订阅
 
-普通删除 Repository Subscription 前，必须按 `subscription_id` 单独查询 Trigger Config：
+存在绑定 Pipeline 不阻止删除 Repository Subscription。删除流程首先在本地事务中完成以下操作：
 
-- 存在任意绑定 Pipeline：返回 `409 GITHUB_SUBSCRIPTION_IN_USE`。
-- 不存在绑定 Pipeline：按照 Registration Mode 删除或处理 Webhook。
+1. 把 Subscription 状态改为 `DELETING`。
+2. 按 `subscription_id` 单独查询全部 Trigger Config。
+3. 将全部 Trigger Config 设置为 `enabled=false`，并记录禁用原因。
+4. 提交本地事务后，再根据 Registration Mode 处理远端 Webhook。
+
+本地禁用一旦提交，后续残留或并发到达的 Webhook 都不得创建 Delivery、Outbox 或 Pipeline Build。Pipeline 保留原 `subscription_id`，不得改绑到其他仓库。
+
+远端 Webhook 的状态转换如下：
+
+- `AUTO` 且不存在 `webhook_id`：直接把 Subscription 标记为 `DELETED`。
+- `AUTO` 且存在 `webhook_id`：调用 GitHub 删除 Webhook；成功后标记为 `DELETED`，失败时保持 `DELETING` 并记录错误，供后续重试。
+- `MANUAL` 且不存在 `webhook_id`：直接标记为 `DELETED`。
+- `MANUAL` 且存在 `webhook_id`：Firefly 不删除用户手工注册的 Webhook，把 Subscription 标记为 `ORPHANED`，返回 `409 GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED`，提示用户到 GitHub 删除该 Webhook。即使 Webhook 暂时残留，也不能再触发 Pipeline。
 
 强制断开 OAuth Connection 等系统级操作无法保留正常触发能力时：
 
@@ -412,7 +431,7 @@ Pipeline 只能绑定 `ACTIVE` Subscription。
 | 404 | `GITHUB_REPOSITORY_NOT_FOUND` | GitHub 仓库不存在或 Token 无权访问 |
 | 409 | `GITHUB_REPOSITORY_IMMUTABLE` | 尝试修改已有 Pipeline 的仓库 |
 | 409 | `GITHUB_TRIGGER_ALREADY_EXISTS` | Pipeline 已经存在 GitHub Trigger Config |
-| 409 | `GITHUB_SUBSCRIPTION_IN_USE` | 删除仍被 Pipeline 使用的 Subscription |
+| 409 | `GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED` | Trigger 已禁用，但用户仍需删除手工注册的 Webhook |
 | 502 | `GITHUB_API_ERROR` | GitHub API 调用失败 |
 
 对于 GitHub 返回的 404，不向客户端区分“仓库不存在”和“没有访问权限”，避免暴露私有仓库存在性。
@@ -457,6 +476,8 @@ Pipeline 只能绑定 `ACTIVE` Subscription。
 - 页面和请求模型只允许提交一个 `subscriptionId`。
 - 保存前会重新调用 GitHub 获取仓库详情。
 - 前端伪造的仓库 ID、URL、默认分支不会被保存。
+- `private_repository` 必须使用 GitHub 返回值保存，前端不能覆盖。
+- 已有记录回填完成前，`private_repository=NULL` 必须按未知处理，不能按公开仓库处理。
 - 相同 `github_repository_id` 重复选择时复用 Subscription。
 - GitHub 仓库改名后刷新快照但不创建新 Subscription。
 
@@ -482,7 +503,10 @@ Pipeline 只能绑定 `ACTIVE` Subscription。
 
 ### 16.4 删除和断开连接
 
-- Subscription 被 Pipeline 使用时普通删除返回 `409`。
+- 删除 Subscription 时首先禁用全部关联 Trigger Config，并保留原 `subscription_id`。
+- AUTO Webhook 删除成功后 Subscription 进入 `DELETED`。
+- AUTO Webhook 删除失败时 Subscription 保持 `DELETING`，Trigger Config 仍保持禁用。
+- MANUAL Webhook 仍存在时 Subscription 进入 `ORPHANED` 并返回 `GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED`。
 - 强制断开 Connection 后相关 Trigger Config 被禁用。
 - 禁用过程中不修改任何 Pipeline 的 `subscription_id`。
 - 残留 Webhook 请求不能触发已禁用的 Pipeline。
@@ -490,17 +514,18 @@ Pipeline 只能绑定 `ACTIVE` Subscription。
 ## 17. 实施顺序
 
 1. 为仓库列表增加分页响应和本地 Subscription 状态。
-2. 如业务界面需要展示私有属性，在 Subscription 增加 `private_repository` 快照字段。
+2. 在 Subscription 增加必需的 `private_repository` 快照字段，并按“可空字段、GitHub 回填、改为非空”的顺序迁移已有数据。
 3. Pipeline 创建页面实现仓库单选，并只提交一个 `subscriptionId`。
 4. Service 层增加“恰好一个 Active Subscription”的创建校验。
 5. Pipeline 更新 DTO 移除仓库字段，并增加服务端不可变防御校验。
-6. Subscription 删除前增加使用状态检查。
-7. 补充仓库选择、并发创建、不可变绑定和多 Pipeline 分发测试。
+6. 保持删除 Subscription 时先禁用 Trigger Config，再处理 AUTO/MANUAL Webhook 的状态机。
+7. 补充仓库选择、私有属性迁移、并发创建、不可变绑定、删除状态机和多 Pipeline 分发测试。
 
 ## 18. 验收标准
 
 - 用户创建 GitHub Pipeline 时只能选择一个仓库。
 - Firefly 保存的是 GitHub API 返回的仓库权威信息。
+- Firefly 必须保存 GitHub 返回的 `private_repository`；未知值不能按公开仓库处理。
 - Pipeline 创建后，界面和 API 均不能把它改绑到另一个仓库。
 - 同一仓库可以绑定多条 Pipeline，GitHub 中仍然只有一个 Firefly Webhook。
 - 一次 Webhook 可以根据各 Pipeline 的分支规则触发零到多条 Pipeline。
