@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class JobConfigDto {
+
     private Long id;
     private Long stageID;
     private String uuid;

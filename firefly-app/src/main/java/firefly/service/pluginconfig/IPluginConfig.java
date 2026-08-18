@@ -6,6 +6,7 @@ import firefly.bean.dto.AbstractPluginDto;
 import firefly.constant.PluginType;
 
 public interface IPluginConfig {
+
     PluginType getPluginType();
 
     Long savePlugin(JsonNode pluginRaw, Long jobConfigID);

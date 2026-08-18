@@ -14,7 +14,8 @@ import java.io.Serializable;
 @Accessors(chain = true)
 public class VolcanoTriggerDto extends BaseTriggerOriginDto implements Serializable {
 
-    @Serial private static final long serialVersionUID = 6321474757460847351L;
+    @Serial
+    private static final long serialVersionUID = 6321474757460847351L;
 
     private Long volcanoID;
 

@@ -38,27 +38,39 @@ import java.util.Optional;
 @ExtendWith(MockitoExtension.class)
 class PipelineBuildRetryTests {
 
-    @Mock private IPipelineBuildDao pipelineBuildDao;
-    @Mock private IStageBuildDao stageBuildDao;
-    @Mock private IJobBuildDao jobBuildDao;
-    @Mock private ITextPluginBuildDao textPluginBuildDao;
-    @Mock private ApplicationEventPublisher applicationEventPublisher;
-    @Mock private IPipelineConfigService pipelineConfig;
-    @Mock private IStageBuildService stageBuildService;
-    @Mock private IJobConfigService jobConfig;
-    @Mock private StageConfigServiceServiceImpl stageConfigService;
-    @Mock private JobBuildServiceImpl jobBuildService;
-    @Mock private TriggerCenter triggerCenter;
+    @Mock
+    private IPipelineBuildDao pipelineBuildDao;
+    @Mock
+    private IStageBuildDao stageBuildDao;
+    @Mock
+    private IJobBuildDao jobBuildDao;
+    @Mock
+    private ITextPluginBuildDao textPluginBuildDao;
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+    @Mock
+    private IPipelineConfigService pipelineConfig;
+    @Mock
+    private IStageBuildService stageBuildService;
+    @Mock
+    private IJobConfigService jobConfig;
+    @Mock
+    private StageConfigServiceServiceImpl stageConfigService;
+    @Mock
+    private JobBuildServiceImpl jobBuildService;
+    @Mock
+    private TriggerCenter triggerCenter;
 
-    @InjectMocks private PipelineBuildServiceImpl pipelineBuildService;
+    @InjectMocks
+    private PipelineBuildServiceImpl pipelineBuildService;
 
     @Test
     void reusesBuildRecordsAndResetsOnlyUnsuccessfulWork() {
         PipelineBuild pipeline =
-                new PipelineBuild()
-                        .setId(1L)
-                        .setPipelineStatus(BuildStatus.RUNNING)
-                        .setExecutionAttempt(1);
+            new PipelineBuild()
+                .setId(1L)
+                .setPipelineStatus(BuildStatus.RUNNING)
+                .setExecutionAttempt(1);
         StageBuild successfulStage = stage(10L, BuildStatus.SUCCESS, 0);
         StageBuild failedStage = stage(11L, BuildStatus.FAILURE, 0);
         StageBuild pendingStage = stage(12L, BuildStatus.PENDING, 0);
@@ -69,12 +81,12 @@ class PipelineBuildRetryTests {
         TextPluginBuild pendingPlugin = plugin(202L, 103L, BuildStatus.PENDING, 0);
 
         when(pipelineBuildDao.claimRetry(1L, BuildStatus.FAILURE, BuildStatus.RUNNING))
-                .thenReturn(1);
+            .thenReturn(1);
         when(pipelineBuildDao.findById(1L)).thenReturn(Optional.of(pipeline));
         when(stageBuildDao.getStageBuildByPipelineBuildID(1L))
-                .thenReturn(List.of(successfulStage, failedStage, pendingStage));
+            .thenReturn(List.of(successfulStage, failedStage, pendingStage));
         when(jobBuildDao.getJobBuildsByStageBuildID(11L))
-                .thenReturn(List.of(successfulJob, failedJob));
+            .thenReturn(List.of(successfulJob, failedJob));
         when(jobBuildDao.getJobBuildsByStageBuildID(12L)).thenReturn(List.of(pendingJob));
         when(textPluginBuildDao.findByJobBuildID(102L)).thenReturn(Optional.of(failedPlugin));
         when(textPluginBuildDao.findByJobBuildID(103L)).thenReturn(Optional.of(pendingPlugin));
@@ -102,7 +114,7 @@ class PipelineBuildRetryTests {
 
         verify(textPluginBuildDao, never()).findByJobBuildID(101L);
         ArgumentCaptor<PipelineRetryPreparedEvent> eventCaptor =
-                ArgumentCaptor.forClass(PipelineRetryPreparedEvent.class);
+            ArgumentCaptor.forClass(PipelineRetryPreparedEvent.class);
         verify(applicationEventPublisher).publishEvent(eventCaptor.capture());
         assertEquals(11L, eventCaptor.getValue().stageBuildID());
         assertEquals(1, eventCaptor.getValue().executionAttempt());
@@ -111,11 +123,11 @@ class PipelineBuildRetryTests {
     @Test
     void rejectsRetryWhenAtomicClaimDoesNotWin() {
         when(pipelineBuildDao.claimRetry(1L, BuildStatus.FAILURE, BuildStatus.RUNNING))
-                .thenReturn(0);
+            .thenReturn(0);
 
         assertThrows(
-                PipelineRetryNotAllowedException.class,
-                () -> pipelineBuildService.retryPipeline(1L));
+            PipelineRetryNotAllowedException.class,
+            () -> pipelineBuildService.retryPipeline(1L));
 
         verify(pipelineBuildDao, never()).findById(1L);
         verify(applicationEventPublisher, never()).publishEvent(org.mockito.ArgumentMatchers.any());
@@ -123,29 +135,29 @@ class PipelineBuildRetryTests {
 
     private StageBuild stage(Long id, BuildStatus status, Integer executionAttempt) {
         return new StageBuild()
-                .setId(id)
-                .setPipelineBuildID(1L)
-                .setStageID(id + 100L)
-                .setStageStatus(status)
-                .setExecutionAttempt(executionAttempt);
+            .setId(id)
+            .setPipelineBuildID(1L)
+            .setStageID(id + 100L)
+            .setStageStatus(status)
+            .setExecutionAttempt(executionAttempt);
     }
 
     private JobBuild job(Long id, Long stageBuildID, BuildStatus status, Integer executionAttempt) {
         return new JobBuild()
-                .setId(id)
-                .setStageBuildID(stageBuildID)
-                .setJobID(id + 100L)
-                .setJobStatus(status)
-                .setExecutionAttempt(executionAttempt);
+            .setId(id)
+            .setStageBuildID(stageBuildID)
+            .setJobID(id + 100L)
+            .setJobStatus(status)
+            .setExecutionAttempt(executionAttempt);
     }
 
     private TextPluginBuild plugin(
-            Long id, Long jobBuildID, BuildStatus status, Integer executionAttempt) {
+        Long id, Long jobBuildID, BuildStatus status, Integer executionAttempt) {
         return new TextPluginBuild()
-                .setId(id)
-                .setJobBuildID(jobBuildID)
-                .setPluginID(id + 100L)
-                .setTextPluginStatus(status)
-                .setExecutionAttempt(executionAttempt);
+            .setId(id)
+            .setJobBuildID(jobBuildID)
+            .setPluginID(id + 100L)
+            .setTextPluginStatus(status)
+            .setExecutionAttempt(executionAttempt);
     }
 }

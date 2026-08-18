@@ -8,6 +8,7 @@ import firefly.model.job.JobModel;
 import java.util.List;
 
 public interface IJobConfigService {
+
     JobConfigDto createJobConfig(JobConfigRequest jobConfigRequest, Long stageID, Long pluginID);
 
     JobConfigDto getJobConfigByID(Long jobID);

@@ -40,9 +40,9 @@ public class GitHubSecretCipher {
             cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(TAG_BITS, nonce));
             byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
             return new EncryptedSecret(
-                    Base64.getEncoder().encodeToString(ciphertext),
-                    nonce,
-                    properties.getKeyVersion());
+                Base64.getEncoder().encodeToString(ciphertext),
+                nonce,
+                properties.getKeyVersion());
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("Cannot encrypt GitHub secret", exception);
         }
@@ -54,7 +54,7 @@ public class GitHubSecretCipher {
         }
         if (!properties.getKeyVersion().equals(keyVersion)) {
             throw new IllegalStateException(
-                    "Unsupported GitHub encryption key version: " + keyVersion);
+                "Unsupported GitHub encryption key version: " + keyVersion);
         }
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -69,9 +69,9 @@ public class GitHubSecretCipher {
     private SecretKeySpec key() {
         if (!StringUtils.hasText(properties.getEncryptionKey())) {
             throw new GitHubIntegrationException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "GITHUB_ENCRYPTION_NOT_CONFIGURED",
-                    "GitHub storage encryption key is not configured");
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "GITHUB_ENCRYPTION_NOT_CONFIGURED",
+                "GitHub storage encryption key is not configured");
         }
         byte[] decoded;
         try {

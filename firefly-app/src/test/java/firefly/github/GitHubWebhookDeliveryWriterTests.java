@@ -33,22 +33,25 @@ import java.util.Optional;
 @ExtendWith(MockitoExtension.class)
 class GitHubWebhookDeliveryWriterTests {
 
-    @Mock private GitHubWebhookDeliveryRepository deliveryRepository;
-    @Mock private GitHubRepositorySubscriptionRepository subscriptionRepository;
-    @Mock private OutboxService outboxService;
+    @Mock
+    private GitHubWebhookDeliveryRepository deliveryRepository;
+    @Mock
+    private GitHubRepositorySubscriptionRepository subscriptionRepository;
+    @Mock
+    private OutboxService outboxService;
 
     private GitHubWebhookDeliveryWriter writer;
 
     @BeforeEach
     void setUp() {
         when(deliveryRepository.saveAndFlush(any(GitHubWebhookDeliveryEntity.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+            .thenAnswer(invocation -> invocation.getArgument(0));
         writer =
-                new GitHubWebhookDeliveryWriter(
-                        deliveryRepository,
-                        subscriptionRepository,
-                        outboxService,
-                        Clock.fixed(Instant.parse("2026-08-16T00:00:00Z"), ZoneOffset.UTC));
+            new GitHubWebhookDeliveryWriter(
+                deliveryRepository,
+                subscriptionRepository,
+                outboxService,
+                Clock.fixed(Instant.parse("2026-08-16T00:00:00Z"), ZoneOffset.UTC));
     }
 
     @Test
@@ -59,7 +62,7 @@ class GitHubWebhookDeliveryWriterTests {
 
         assertTrue(result.rejected());
         ArgumentCaptor<GitHubWebhookDeliveryEntity> saved =
-                ArgumentCaptor.forClass(GitHubWebhookDeliveryEntity.class);
+            ArgumentCaptor.forClass(GitHubWebhookDeliveryEntity.class);
         verify(deliveryRepository).save(saved.capture());
         assertEquals(GitHubDeliveryStatus.REJECTED, saved.getValue().getStatus());
     }
@@ -68,39 +71,39 @@ class GitHubWebhookDeliveryWriterTests {
     void unboundPingUsesConditionalDatabaseBinding() {
         GitHubRepositorySubscriptionEntity subscription = subscription(null);
         when(subscriptionRepository.bindWebhookIfUnbound(
-                        1L,
-                        99L,
-                        GitHubSubscriptionStatus.PROVISIONING,
-                        GitHubSubscriptionStatus.ACTIVE,
-                        java.time.LocalDateTime.of(2026, 8, 16, 0, 0)))
-                .thenReturn(1);
+            1L,
+            99L,
+            GitHubSubscriptionStatus.PROVISIONING,
+            GitHubSubscriptionStatus.ACTIVE,
+            java.time.LocalDateTime.of(2026, 8, 16, 0, 0)))
+            .thenReturn(1);
 
         GitHubDeliveryWriteResult result = writer.persist(subscription, ping(99L), "{}", 99L);
 
         assertTrue(result.created());
         assertFalse(result.rejected());
         verify(subscriptionRepository)
-                .bindWebhookIfUnbound(
-                        1L,
-                        99L,
-                        GitHubSubscriptionStatus.PROVISIONING,
-                        GitHubSubscriptionStatus.ACTIVE,
-                        java.time.LocalDateTime.of(2026, 8, 16, 0, 0));
+            .bindWebhookIfUnbound(
+                1L,
+                99L,
+                GitHubSubscriptionStatus.PROVISIONING,
+                GitHubSubscriptionStatus.ACTIVE,
+                java.time.LocalDateTime.of(2026, 8, 16, 0, 0));
     }
 
     @Test
     void concurrentDifferentHookCannotOverwriteWinner() {
         GitHubRepositorySubscriptionEntity subscription = subscription(null);
         when(subscriptionRepository.bindWebhookIfUnbound(
-                        1L,
-                        99L,
-                        GitHubSubscriptionStatus.PROVISIONING,
-                        GitHubSubscriptionStatus.ACTIVE,
-                        java.time.LocalDateTime.of(2026, 8, 16, 0, 0)))
-                .thenReturn(0);
+            1L,
+            99L,
+            GitHubSubscriptionStatus.PROVISIONING,
+            GitHubSubscriptionStatus.ACTIVE,
+            java.time.LocalDateTime.of(2026, 8, 16, 0, 0)))
+            .thenReturn(0);
         when(subscriptionRepository.findById(1L))
-                .thenReturn(
-                        Optional.of(subscription(100L).setStatus(GitHubSubscriptionStatus.ACTIVE)));
+            .thenReturn(
+                Optional.of(subscription(100L).setStatus(GitHubSubscriptionStatus.ACTIVE)));
 
         GitHubDeliveryWriteResult result = writer.persist(subscription, ping(99L), "{}", 99L);
 
@@ -110,32 +113,32 @@ class GitHubWebhookDeliveryWriterTests {
 
     private GitHubRepositorySubscriptionEntity subscription(Long webhookId) {
         return new GitHubRepositorySubscriptionEntity()
-                .setId(1L)
-                .setPublicId("subscription")
-                .setGithubRepositoryId(2L)
-                .setWebhookId(webhookId)
-                .setStatus(GitHubSubscriptionStatus.PROVISIONING);
+            .setId(1L)
+            .setPublicId("subscription")
+            .setGithubRepositoryId(2L)
+            .setWebhookId(webhookId)
+            .setStatus(GitHubSubscriptionStatus.PROVISIONING);
     }
 
     private GitHubWebhookEvent ping(Long hookId) {
         return new GitHubWebhookEvent(
-                "delivery",
-                "ping",
-                null,
-                2L,
-                "acme/repo",
-                "https://github.com/acme/repo",
-                "https://github.com/acme/repo.git",
-                hookId,
-                null,
-                null,
-                null,
-                null,
-                null,
-                3L,
-                "octocat",
-                Instant.parse("2026-08-16T00:00:00Z"),
-                false,
-                null);
+            "delivery",
+            "ping",
+            null,
+            2L,
+            "acme/repo",
+            "https://github.com/acme/repo",
+            "https://github.com/acme/repo.git",
+            hookId,
+            null,
+            null,
+            null,
+            null,
+            null,
+            3L,
+            "octocat",
+            Instant.parse("2026-08-16T00:00:00Z"),
+            false,
+            null);
     }
 }

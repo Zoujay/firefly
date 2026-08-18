@@ -44,32 +44,43 @@ import java.util.Optional;
 @Transactional
 public class PipelineBuildServiceImpl implements IPipelineBuildService {
 
-    @Autowired private IPipelineBuildDao pipelineBuildDao;
+    @Autowired
+    private IPipelineBuildDao pipelineBuildDao;
 
-    @Autowired private IStageBuildDao stageBuildDao;
+    @Autowired
+    private IStageBuildDao stageBuildDao;
 
-    @Autowired private IJobBuildDao jobBuildDao;
+    @Autowired
+    private IJobBuildDao jobBuildDao;
 
-    @Autowired private ITextPluginBuildDao textPluginBuildDao;
+    @Autowired
+    private ITextPluginBuildDao textPluginBuildDao;
 
-    @Autowired private ApplicationEventPublisher applicationEventPublisher;
+    @Autowired
+    private ApplicationEventPublisher applicationEventPublisher;
 
-    @Autowired private IPipelineConfigService pipelineConfig;
+    @Autowired
+    private IPipelineConfigService pipelineConfig;
 
-    @Autowired private IStageBuildService stageBuildService;
-    @Autowired private IJobConfigService jobConfig;
-    @Autowired private StageConfigServiceServiceImpl stageConfigService;
+    @Autowired
+    private IStageBuildService stageBuildService;
+    @Autowired
+    private IJobConfigService jobConfig;
+    @Autowired
+    private StageConfigServiceServiceImpl stageConfigService;
 
-    @Autowired private JobBuildServiceImpl jobBuildService;
+    @Autowired
+    private JobBuildServiceImpl jobBuildService;
 
-    @Autowired private TriggerCenter triggerCenter;
+    @Autowired
+    private TriggerCenter triggerCenter;
 
     @Override
     public Boolean updatePipelineBuildStatus(
-            Long pipelineBuildID, BuildStatus status, Integer executionAttempt) {
+        Long pipelineBuildID, BuildStatus status, Integer executionAttempt) {
         int result =
-                pipelineBuildDao.updatePipelineBuildStatus(
-                        pipelineBuildID, status, executionAttempt);
+            pipelineBuildDao.updatePipelineBuildStatus(
+                pipelineBuildID, status, executionAttempt);
         return result == 1;
     }
 
@@ -88,13 +99,13 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         }
         PipelineBuild pipelineBuild = entity.get();
         PipelineConfigDto pipelineConfigDto =
-                pipelineConfig.getPipelineConfigDtoByID(pipelineBuild.getPipelineID());
+            pipelineConfig.getPipelineConfigDtoByID(pipelineBuild.getPipelineID());
         PipelineBuildDto pipelineBuildDto = new PipelineBuildDto();
         pipelineBuildDto
-                .setBuildStatus(pipelineBuild.getPipelineStatus())
-                .setPipelineID(pipelineBuild.getPipelineID())
-                .setExecutionAttempt(pipelineBuild.getExecutionAttempt())
-                .setTriggerOrigin(TriggerOrigin.valueOf(pipelineConfigDto.getTriggerOrigin()));
+            .setBuildStatus(pipelineBuild.getPipelineStatus())
+            .setPipelineID(pipelineBuild.getPipelineID())
+            .setExecutionAttempt(pipelineBuild.getExecutionAttempt())
+            .setTriggerOrigin(TriggerOrigin.valueOf(pipelineConfigDto.getTriggerOrigin()));
         return pipelineBuildDto;
     }
 
@@ -102,11 +113,11 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
     public PipelineBuildDto parsePipelineBuildRequest(PipelineBuildRequest pipelineBuildRequest) {
         PipelineBuildDto pipelineBuildDto = new PipelineBuildDto();
         pipelineBuildDto
-                .setPipelineID(pipelineBuildRequest.getPipelineId())
-                .setPipelineUUID(pipelineBuildRequest.getUuid())
-                .setTriggerOrigin(pipelineBuildRequest.getTriggerOrigin())
-                .setExecutionAttempt(0)
-                .setBuildStatus(BuildStatus.PENDING);
+            .setPipelineID(pipelineBuildRequest.getPipelineId())
+            .setPipelineUUID(pipelineBuildRequest.getUuid())
+            .setTriggerOrigin(pipelineBuildRequest.getTriggerOrigin())
+            .setExecutionAttempt(0)
+            .setBuildStatus(BuildStatus.PENDING);
         return pipelineBuildDto;
     }
 
@@ -122,24 +133,24 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
     @Override
     public PipelineRetryResponse retryPipeline(Long pipelineBuildID) {
         int claimed =
-                pipelineBuildDao.claimRetry(
-                        pipelineBuildID, BuildStatus.FAILURE, BuildStatus.RUNNING);
+            pipelineBuildDao.claimRetry(
+                pipelineBuildID, BuildStatus.FAILURE, BuildStatus.RUNNING);
         if (claimed != 1) {
             throw new PipelineRetryNotAllowedException(
-                    "Pipeline build does not exist or is not in FAILURE: " + pipelineBuildID);
+                "Pipeline build does not exist or is not in FAILURE: " + pipelineBuildID);
         }
 
         PipelineBuild pipelineBuild =
-                pipelineBuildDao
-                        .findById(pipelineBuildID)
-                        .orElseThrow(
-                                () ->
-                                        new PipelineRetryNotAllowedException(
-                                                "Pipeline build does not exist: "
-                                                        + pipelineBuildID));
+            pipelineBuildDao
+                .findById(pipelineBuildID)
+                .orElseThrow(
+                    () ->
+                        new PipelineRetryNotAllowedException(
+                            "Pipeline build does not exist: "
+                                + pipelineBuildID));
         Integer executionAttempt = pipelineBuild.getExecutionAttempt();
         List<StageBuild> stageBuilds =
-                stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
+            stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
         StageBuild firstStageToRetry = null;
 
         for (StageBuild stageBuild : stageBuilds) {
@@ -158,20 +169,20 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
                 }
                 jobBuild.setJobStatus(BuildStatus.PENDING).setExecutionAttempt(executionAttempt);
                 textPluginBuildDao
-                        .findByJobBuildID(jobBuild.getId())
-                        .ifPresent(pluginBuild -> resetPluginBuild(pluginBuild, executionAttempt));
+                    .findByJobBuildID(jobBuild.getId())
+                    .ifPresent(pluginBuild -> resetPluginBuild(pluginBuild, executionAttempt));
             }
             jobBuildDao.saveAll(jobBuilds);
         }
 
         if (firstStageToRetry == null) {
             throw new PipelineRetryNotAllowedException(
-                    "Pipeline build has no failed or unfinished stage: " + pipelineBuildID);
+                "Pipeline build has no failed or unfinished stage: " + pipelineBuildID);
         }
 
         stageBuildDao.saveAll(stageBuilds);
         applicationEventPublisher.publishEvent(
-                new PipelineRetryPreparedEvent(firstStageToRetry.getId(), executionAttempt));
+            new PipelineRetryPreparedEvent(firstStageToRetry.getId(), executionAttempt));
         return new PipelineRetryResponse(pipelineBuildID, executionAttempt);
     }
 
@@ -186,37 +197,37 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
         List<StageConfigDto> stages = stageConfigService.getStageConfigsByPipelineID(pipelineID);
         for (StageConfigDto stageConfig : stages) {
             StageBuildDto stageBuildDto =
-                    this.assembleStageBuildDto(
-                            stageConfig.getId(),
-                            pipelineBuildId,
-                            BuildStatus.PENDING,
-                            pipelineBuildDto.getExecutionAttempt());
+                this.assembleStageBuildDto(
+                    stageConfig.getId(),
+                    pipelineBuildId,
+                    BuildStatus.PENDING,
+                    pipelineBuildDto.getExecutionAttempt());
             Long stageBuildID = stageBuildService.saveStageBuild(stageBuildDto);
             log.debug(
-                    "Created stage build: stageBuildID={}, pipelineBuildID={}",
-                    stageBuildID,
-                    pipelineBuildId);
+                "Created stage build: stageBuildID={}, pipelineBuildID={}",
+                stageBuildID,
+                pipelineBuildId);
             List<JobConfigDto> jobConfigs = jobConfig.getJobConfigsByStageID(stageConfig.getId());
             for (JobConfigDto jobConfig : jobConfigs) {
                 Long jobConfigID = jobConfig.getId();
                 Long pluginID = jobConfig.getPluginID();
                 PluginType pluginType = jobConfig.getPluginType();
                 JobBuildDto jobBuildDto =
-                        this.assembleJobBuildDto(
-                                jobConfigID,
-                                stageBuildID,
-                                BuildStatus.PENDING,
-                                pipelineBuildDto.getExecutionAttempt());
+                    this.assembleJobBuildDto(
+                        jobConfigID,
+                        stageBuildID,
+                        BuildStatus.PENDING,
+                        pipelineBuildDto.getExecutionAttempt());
                 Long jobBuildID = jobBuildService.saveJobBuild(jobBuildDto);
                 IPluginBuild pluginBuildService = PLUGIN_BUILD_MAP.get(pluginType);
                 JobBuildContext jobBuildContext = new JobBuildContext();
                 jobBuildContext
-                        .setJobBuildID(jobBuildID)
-                        .setJobConfigID(jobConfigID)
-                        .setPluginType(pluginType)
-                        .setPluginID(pluginID)
-                        .setStatus(BuildStatus.PENDING)
-                        .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt());
+                    .setJobBuildID(jobBuildID)
+                    .setJobConfigID(jobConfigID)
+                    .setPluginType(pluginType)
+                    .setPluginID(pluginID)
+                    .setStatus(BuildStatus.PENDING)
+                    .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt());
                 pluginBuildService.savePluginBuild(jobBuildContext);
             }
         }
@@ -226,38 +237,38 @@ public class PipelineBuildServiceImpl implements IPipelineBuildService {
     @Override
     public BaseMessage buildMessage(PipelineBuildDto pipelineBuildDto, Long pipelineBuildID) {
         return OriginCenter.TriggerOriginMap.get(pipelineBuildDto.getTriggerOrigin())
-                .buildMessage(pipelineBuildDto, pipelineBuildID);
+            .buildMessage(pipelineBuildDto, pipelineBuildID);
     }
 
     private PipelineBuild assemblePipelineBuild(PipelineBuildDto pipelineBuildDto) {
         PipelineBuild pipelineBuild = new PipelineBuild();
         pipelineBuild
-                .setPipelineStatus(pipelineBuildDto.getBuildStatus())
-                .setPipelineID(pipelineBuildDto.getPipelineID())
-                .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt());
+            .setPipelineStatus(pipelineBuildDto.getBuildStatus())
+            .setPipelineID(pipelineBuildDto.getPipelineID())
+            .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt());
 
         return pipelineBuild;
     }
 
     private StageBuildDto assembleStageBuildDto(
-            Long stageID, Long pipelineBuildId, BuildStatus status, Integer executionAttempt) {
+        Long stageID, Long pipelineBuildId, BuildStatus status, Integer executionAttempt) {
         StageBuildDto stageBuildDto = new StageBuildDto();
         stageBuildDto
-                .setStageConfigID(stageID)
-                .setPipelineBuildID(pipelineBuildId)
-                .setExecutionAttempt(executionAttempt)
-                .setStatus(status);
+            .setStageConfigID(stageID)
+            .setPipelineBuildID(pipelineBuildId)
+            .setExecutionAttempt(executionAttempt)
+            .setStatus(status);
         return stageBuildDto;
     }
 
     private JobBuildDto assembleJobBuildDto(
-            Long jobID, Long stageBuildID, BuildStatus status, Integer executionAttempt) {
+        Long jobID, Long stageBuildID, BuildStatus status, Integer executionAttempt) {
         JobBuildDto jobBuildDto = new JobBuildDto();
         jobBuildDto
-                .setJobConfigID(jobID)
-                .setStageBuildID(stageBuildID)
-                .setExecutionAttempt(executionAttempt)
-                .setStatus(status);
+            .setJobConfigID(jobID)
+            .setStageBuildID(stageBuildID)
+            .setExecutionAttempt(executionAttempt)
+            .setStatus(status);
         return jobBuildDto;
     }
 

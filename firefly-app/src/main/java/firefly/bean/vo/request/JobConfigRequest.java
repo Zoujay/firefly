@@ -20,7 +20,9 @@ import java.io.Serializable;
 @NoArgsConstructor
 @ToString
 public class JobConfigRequest implements Serializable {
-    @Serial private static final long serialVersionUID = -51357335357194653L;
+
+    @Serial
+    private static final long serialVersionUID = -51357335357194653L;
 
     @NotNull
     @Size(min = 64, max = 64)
@@ -30,6 +32,8 @@ public class JobConfigRequest implements Serializable {
     @Size(min = 10, max = 64)
     private String name;
 
-    @NotNull private PluginType pluginType;
-    @NotNull private JsonNode pluginRaw;
+    @NotNull
+    private PluginType pluginType;
+    @NotNull
+    private JsonNode pluginRaw;
 }

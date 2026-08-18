@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface GitHubTriggerConfigRepository
-        extends JpaRepository<GitHubTriggerConfigEntity, Long> {
+    extends JpaRepository<GitHubTriggerConfigEntity, Long> {
 
     Optional<GitHubTriggerConfigEntity> findByPipelineId(Long pipelineId);
 

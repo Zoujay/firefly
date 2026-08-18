@@ -12,9 +12,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 public abstract class AbstractTrigger<T extends BaseTriggerEntity, M extends BaseMessage>
-        implements ITrigger<M> {
+    implements ITrigger<M> {
 
-    @Autowired private OutboxService outboxService;
+    @Autowired
+    private OutboxService outboxService;
 
     protected abstract T saveRealTrigger(M message);
 
@@ -27,22 +28,22 @@ public abstract class AbstractTrigger<T extends BaseTriggerEntity, M extends Bas
         T triggerEntity = saveRealTrigger(message);
         if (triggerEntity == null || triggerEntity.getId() == null || triggerEntity.getId() <= 0) {
             throw new IllegalStateException(
-                    "Trigger record ID was not generated: " + getTriggerOrigin());
+                "Trigger record ID was not generated: " + getTriggerOrigin());
         }
 
         message.setTriggerID(triggerEntity.getId());
 
         TriggerPipelineMessage pipelineMessage =
-                new TriggerPipelineMessage()
-                        .setPipelineID(message.getPipelineID())
-                        .setPipelineBuildID(message.getPipelineBuildID())
-                        .setExecutionAttempt(message.getExecutionAttempt())
-                        .setBuildStatus(BuildStatus.RUNNING)
-                        .setMessageUUID(
-                                BusinessMessageUUID.pipeline(
-                                        message.getPipelineBuildID(),
-                                        message.getExecutionAttempt(),
-                                        BuildStatus.RUNNING));
+            new TriggerPipelineMessage()
+                .setPipelineID(message.getPipelineID())
+                .setPipelineBuildID(message.getPipelineBuildID())
+                .setExecutionAttempt(message.getExecutionAttempt())
+                .setBuildStatus(BuildStatus.RUNNING)
+                .setMessageUUID(
+                    BusinessMessageUUID.pipeline(
+                        message.getPipelineBuildID(),
+                        message.getExecutionAttempt(),
+                        BuildStatus.RUNNING));
 
         /*
          * The trigger record and Outbox event share this transaction. A
@@ -61,23 +62,23 @@ public abstract class AbstractTrigger<T extends BaseTriggerEntity, M extends Bas
         }
         if (message.getTriggerOrigin() != getTriggerOrigin()) {
             throw new IllegalArgumentException(
-                    "Trigger origin mismatch: expected "
-                            + getTriggerOrigin()
-                            + ", actual "
-                            + message.getTriggerOrigin());
+                "Trigger origin mismatch: expected "
+                    + getTriggerOrigin()
+                    + ", actual "
+                    + message.getTriggerOrigin());
         }
 
         Class<M> messageType = getMessageType();
         if (messageType == null) {
             throw new IllegalStateException(
-                    "Trigger message type is not configured: " + getTriggerOrigin());
+                "Trigger message type is not configured: " + getTriggerOrigin());
         }
         if (!messageType.isInstance(message)) {
             throw new IllegalArgumentException(
-                    "Trigger message type mismatch: expected "
-                            + messageType.getName()
-                            + ", actual "
-                            + message.getClass().getName());
+                "Trigger message type mismatch: expected "
+                    + messageType.getName()
+                    + ", actual "
+                    + message.getClass().getName());
         }
         return messageType.cast(message);
     }

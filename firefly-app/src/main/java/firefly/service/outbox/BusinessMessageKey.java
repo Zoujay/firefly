@@ -14,7 +14,8 @@ import firefly.github.message.GitHubWebhookMessage;
  */
 public final class BusinessMessageKey {
 
-    private BusinessMessageKey() {}
+    private BusinessMessageKey() {
+    }
 
     public static String from(KafkaBusinessMessage message) {
         if (message instanceof TriggerPipelineMessage pipeline) {
@@ -33,7 +34,7 @@ public final class BusinessMessageKey {
             return "github-delivery:" + github.getDeliveryId();
         }
         throw new IllegalArgumentException(
-                "Unsupported Kafka business message: " + message.getClass().getName());
+            "Unsupported Kafka business message: " + message.getClass().getName());
     }
 
     private static String key(String category, Long buildID, Integer executionAttempt) {

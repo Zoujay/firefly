@@ -19,18 +19,18 @@ class PipelineConfigServiceImplTests {
     @Test
     void assemblePipelineConfigDtoKeepsNameAndTriggerOriginInTheirOwnFields() {
         PipelineModel pipelineModel =
-                new PipelineModel()
-                        .setId(1L)
-                        .setPipelineUUID("p".repeat(64))
-                        .setPipelineName("test-pipeline")
-                        .setTriggerMode(TriggerModel.MANUAL)
-                        .setTriggerMatch(TriggerMatch.ACCURATE)
-                        .setTriggerOrigin(TriggerOrigin.VOLCANO);
+            new PipelineModel()
+                .setId(1L)
+                .setPipelineUUID("p".repeat(64))
+                .setPipelineName("test-pipeline")
+                .setTriggerMode(TriggerModel.MANUAL)
+                .setTriggerMatch(TriggerMatch.ACCURATE)
+                .setTriggerOrigin(TriggerOrigin.VOLCANO);
 
         PipelineConfigDto result = pipelineConfigService.assemblePipelineConfigDto(pipelineModel);
 
         assertAll(
-                () -> assertEquals("test-pipeline", result.getName()),
-                () -> assertEquals("VOLCANO", result.getTriggerOrigin()));
+            () -> assertEquals("test-pipeline", result.getName()),
+            () -> assertEquals("VOLCANO", result.getTriggerOrigin()));
     }
 }

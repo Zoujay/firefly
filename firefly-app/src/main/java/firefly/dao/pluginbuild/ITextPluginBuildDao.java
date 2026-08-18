@@ -16,16 +16,16 @@ public interface ITextPluginBuildDao extends JpaRepository<TextPluginBuild, Long
 
     @Modifying
     @Query(
-            """
+        """
             update TextPluginBuild t
             set t.textPluginStatus = :status
             where t.id = :id
               and t.executionAttempt = :executionAttempt
             """)
     Integer updatePluginBuildStatus(
-            @Param("id") Long id,
-            @Param("status") BuildStatus status,
-            @Param("executionAttempt") Integer executionAttempt);
+        @Param("id") Long id,
+        @Param("status") BuildStatus status,
+        @Param("executionAttempt") Integer executionAttempt);
 
     @Query("select t.jobBuildID from TextPluginBuild t where t.id = ?1")
     Long getJobBuildIDByPluginBuildID(Long id);

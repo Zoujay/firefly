@@ -17,11 +17,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class TextPluginBuildServiceImplTests {
 
-    @Mock private ITextPluginBuildDao textPluginBuildDao;
+    @Mock
+    private ITextPluginBuildDao textPluginBuildDao;
 
-    @Mock private OutboxService outboxService;
+    @Mock
+    private OutboxService outboxService;
 
-    @InjectMocks private TextPluginBuildServiceImpl textPluginBuildService;
+    @InjectMocks
+    private TextPluginBuildServiceImpl textPluginBuildService;
 
     @Test
     void returnsMappedJobBuildID() {

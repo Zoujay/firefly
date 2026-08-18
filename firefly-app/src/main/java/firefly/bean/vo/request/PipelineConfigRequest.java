@@ -24,7 +24,9 @@ import java.util.List;
 @NoArgsConstructor
 @ToString
 public class PipelineConfigRequest implements Serializable {
-    @Serial private static final long serialVersionUID = 6657589502599019811L;
+
+    @Serial
+    private static final long serialVersionUID = 6657589502599019811L;
 
     @NotNull
     @Size(min = 64, max = 64)
@@ -34,13 +36,19 @@ public class PipelineConfigRequest implements Serializable {
     @Size(min = 10, max = 64)
     private String name;
 
-    @NotNull private TriggerModel triggerModel;
-    @NotNull private TriggerMatch triggerMatch;
-    @NotNull private TriggerOrigin triggerOrigin;
+    @NotNull
+    private TriggerModel triggerModel;
+    @NotNull
+    private TriggerMatch triggerMatch;
+    @NotNull
+    private TriggerOrigin triggerOrigin;
 
     @Size(max = 512)
     private String branchPattern;
 
-    @NotNull private JsonNode originInfo;
-    @NotNull @Valid private List<StageConfigRequest> stageConfigs;
+    @NotNull
+    private JsonNode originInfo;
+    @NotNull
+    @Valid
+    private List<StageConfigRequest> stageConfigs;
 }

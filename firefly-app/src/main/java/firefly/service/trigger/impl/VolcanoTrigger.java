@@ -12,7 +12,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, VolcanoMessageEntity> {
 
-    @Autowired private IVolcanoTriggerDao volcanoTriggerDao;
+    @Autowired
+    private IVolcanoTriggerDao volcanoTriggerDao;
 
     @Override
     public TriggerOrigin getTriggerOrigin() {
@@ -28,9 +29,9 @@ public class VolcanoTrigger extends AbstractTrigger<VolcanoTriggerEntity, Volcan
     protected VolcanoTriggerEntity saveRealTrigger(VolcanoMessageEntity message) {
         VolcanoTriggerEntity triggerEntity = new VolcanoTriggerEntity();
         triggerEntity
-                .setAk(message.getAk())
-                .setSk(message.getSk())
-                .setPipelineID(message.getPipelineID());
+            .setAk(message.getAk())
+            .setSk(message.getSk())
+            .setPipelineID(message.getPipelineID());
         return volcanoTriggerDao.save(triggerEntity);
     }
 }

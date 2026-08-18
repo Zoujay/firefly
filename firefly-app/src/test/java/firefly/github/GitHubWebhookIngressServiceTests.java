@@ -29,47 +29,51 @@ import java.util.Optional;
 @ExtendWith(MockitoExtension.class)
 class GitHubWebhookIngressServiceTests {
 
-    @Mock private GitHubRepositorySubscriptionRepository subscriptionRepository;
-    @Mock private GitHubSubscriptionService subscriptionService;
-    @Mock private GitHubWebhookEventParser eventParser;
-    @Mock private GitHubWebhookDeliveryWriter deliveryWriter;
+    @Mock
+    private GitHubRepositorySubscriptionRepository subscriptionRepository;
+    @Mock
+    private GitHubSubscriptionService subscriptionService;
+    @Mock
+    private GitHubWebhookEventParser eventParser;
+    @Mock
+    private GitHubWebhookDeliveryWriter deliveryWriter;
 
     @Test
     void missingHookAndInvalidSignatureUseSameExternalError() {
         when(subscriptionRepository.findByWebhookId(99L)).thenReturn(Optional.empty());
         GitHubIntegrationException missing =
-                assertThrows(
-                        GitHubIntegrationException.class,
-                        () ->
-                                ingress()
-                                        .receive(
-                                                "delivery",
-                                                "push",
-                                                99L,
-                                                "repository",
-                                                2L,
-                                                "sha256=00",
-                                                "{}".getBytes()));
+            assertThrows(
+                GitHubIntegrationException.class,
+                () ->
+                    ingress()
+                        .receive(
+                            "delivery",
+                            "push",
+                            99L,
+                            "repository",
+                            2L,
+                            "sha256=00",
+                            "{}".getBytes()));
         GitHubRepositorySubscriptionEntity subscription =
-                new GitHubRepositorySubscriptionEntity()
-                        .setId(1L)
-                        .setGithubRepositoryId(2L)
-                        .setStatus(GitHubSubscriptionStatus.ACTIVE);
+            new GitHubRepositorySubscriptionEntity()
+                .setId(1L)
+                .setGithubRepositoryId(2L)
+                .setStatus(GitHubSubscriptionStatus.ACTIVE);
         when(subscriptionRepository.findByWebhookId(99L)).thenReturn(Optional.of(subscription));
         when(subscriptionService.webhookSecret(subscription)).thenReturn("secret");
         GitHubIntegrationException invalidSignature =
-                assertThrows(
-                        GitHubIntegrationException.class,
-                        () ->
-                                ingress()
-                                        .receive(
-                                                "delivery",
-                                                "push",
-                                                99L,
-                                                "repository",
-                                                2L,
-                                                "sha256=00",
-                                                "{}".getBytes()));
+            assertThrows(
+                GitHubIntegrationException.class,
+                () ->
+                    ingress()
+                        .receive(
+                            "delivery",
+                            "push",
+                            99L,
+                            "repository",
+                            2L,
+                            "sha256=00",
+                            "{}".getBytes()));
 
         assertEquals(missing.getCode(), invalidSignature.getCode());
         assertEquals(missing.getMessage(), invalidSignature.getMessage());
@@ -78,63 +82,63 @@ class GitHubWebhookIngressServiceTests {
     @Test
     void orphanedSubscriptionCannotEnterDeliveryPipeline() {
         GitHubRepositorySubscriptionEntity subscription =
-                new GitHubRepositorySubscriptionEntity()
-                        .setId(1L)
-                        .setGithubRepositoryId(2L)
-                        .setStatus(GitHubSubscriptionStatus.ORPHANED);
+            new GitHubRepositorySubscriptionEntity()
+                .setId(1L)
+                .setGithubRepositoryId(2L)
+                .setStatus(GitHubSubscriptionStatus.ORPHANED);
         when(subscriptionRepository.findByWebhookId(99L)).thenReturn(Optional.of(subscription));
         when(subscriptionService.webhookSecret(subscription)).thenReturn("secret");
         GitHubWebhookEvent event =
-                new GitHubWebhookEvent(
-                        "delivery",
-                        "push",
-                        null,
-                        2L,
-                        "acme/repo",
-                        "https://github.com/acme/repo",
-                        "https://github.com/acme/repo.git",
-                        null,
-                        "refs/heads/main",
-                        "main",
-                        null,
-                        "main",
-                        "abc",
-                        3L,
-                        "octocat",
-                        Instant.parse("2026-08-16T00:00:00Z"),
-                        false,
-                        null);
+            new GitHubWebhookEvent(
+                "delivery",
+                "push",
+                null,
+                2L,
+                "acme/repo",
+                "https://github.com/acme/repo",
+                "https://github.com/acme/repo.git",
+                null,
+                "refs/heads/main",
+                "main",
+                null,
+                "main",
+                "abc",
+                3L,
+                "octocat",
+                Instant.parse("2026-08-16T00:00:00Z"),
+                false,
+                null);
         when(eventParser.parse(any(), any(), any())).thenReturn(event);
 
         assertThrows(
-                GitHubIntegrationException.class,
-                () ->
-                        ingressWithNoopVerifier()
-                                .receive(
-                                        "delivery",
-                                        "push",
-                                        99L,
-                                        "repository",
-                                        2L,
-                                        "ignored",
-                                        "{}".getBytes()));
+            GitHubIntegrationException.class,
+            () ->
+                ingressWithNoopVerifier()
+                    .receive(
+                        "delivery",
+                        "push",
+                        99L,
+                        "repository",
+                        2L,
+                        "ignored",
+                        "{}".getBytes()));
 
         verify(deliveryWriter, never()).persist(any(), any(), any(), any());
     }
 
     private GitHubWebhookIngressService ingress() {
         return new GitHubWebhookIngressService(
-                subscriptionRepository,
-                subscriptionService,
-                new GitHubWebhookSignatureVerifier(),
-                eventParser,
-                deliveryWriter);
+            subscriptionRepository,
+            subscriptionService,
+            new GitHubWebhookSignatureVerifier(),
+            eventParser,
+            deliveryWriter);
     }
 
     private GitHubWebhookIngressService ingressWithNoopVerifier() {
         GitHubWebhookSignatureVerifier verifier =
-                org.mockito.Mockito.mock(GitHubWebhookSignatureVerifier.class);
+            org.mockito.Mockito.mock(GitHubWebhookSignatureVerifier.class);
         return new GitHubWebhookIngressService(
-                subscriptionRepository, subscriptionService, verifier, eventParser, deliveryWriter);
+            subscriptionRepository, subscriptionService, verifier, eventParser, deliveryWriter);
     }
 }

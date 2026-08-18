@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class GitHubWebhookMessage implements KafkaBusinessMessage {
+
     private String messageUUID;
     private String deliveryId;
 }

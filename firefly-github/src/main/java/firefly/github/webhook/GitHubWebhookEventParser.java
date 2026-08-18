@@ -22,9 +22,9 @@ public class GitHubWebhookEventParser {
 
     public GitHubWebhookEvent parse(String deliveryId, String eventType, byte[] rawPayload) {
         if (!StringUtils.hasText(deliveryId)
-                || !StringUtils.hasText(eventType)
-                || rawPayload == null
-                || rawPayload.length == 0) {
+            || !StringUtils.hasText(eventType)
+            || rawPayload == null
+            || rawPayload.length == 0) {
             throw invalidPayload("GitHub delivery, event and payload are required", null);
         }
         JsonNode root;
@@ -69,30 +69,30 @@ public class GitHubWebhookEventParser {
             headSha = text(pullRequest.path("head").path("sha"));
         } else if (!"ping".equals(eventType)) {
             throw new GitHubIntegrationException(
-                    HttpStatus.ACCEPTED,
-                    "GITHUB_WEBHOOK_EVENT_UNSUPPORTED",
-                    "GitHub webhook event is not supported: " + eventType);
+                HttpStatus.ACCEPTED,
+                "GITHUB_WEBHOOK_EVENT_UNSUPPORTED",
+                "GitHub webhook event is not supported: " + eventType);
         }
 
         return new GitHubWebhookEvent(
-                deliveryId,
-                eventType,
-                action,
-                repositoryId,
-                fullName,
-                repositoryUrl,
-                cloneUrl,
-                hookId,
-                ref,
-                sourceBranch,
-                targetBranch,
-                matchBranch,
-                headSha,
-                nullableLong(sender.path("id")),
-                text(sender.path("login")),
-                Instant.now(),
-                deleted,
-                root);
+            deliveryId,
+            eventType,
+            action,
+            repositoryId,
+            fullName,
+            repositoryUrl,
+            cloneUrl,
+            hookId,
+            ref,
+            sourceBranch,
+            targetBranch,
+            matchBranch,
+            headSha,
+            nullableLong(sender.path("id")),
+            text(sender.path("login")),
+            Instant.now(),
+            deleted,
+            root);
     }
 
     private String text(JsonNode node) {
@@ -109,6 +109,6 @@ public class GitHubWebhookEventParser {
 
     private GitHubIntegrationException invalidPayload(String message, Throwable cause) {
         return new GitHubIntegrationException(
-                HttpStatus.BAD_REQUEST, "GITHUB_WEBHOOK_PAYLOAD_INVALID", message, cause);
+            HttpStatus.BAD_REQUEST, "GITHUB_WEBHOOK_PAYLOAD_INVALID", message, cause);
     }
 }

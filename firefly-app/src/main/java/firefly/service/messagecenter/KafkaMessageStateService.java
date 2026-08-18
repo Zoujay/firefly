@@ -26,13 +26,17 @@ import java.util.List;
 @Service
 public class KafkaMessageStateService {
 
-    @Autowired private IPipelineMessageDao pipelineMessageDao;
+    @Autowired
+    private IPipelineMessageDao pipelineMessageDao;
 
-    @Autowired private IStageMessageDao stageMessageDao;
+    @Autowired
+    private IStageMessageDao stageMessageDao;
 
-    @Autowired private IJobMessageDao jobMessageDao;
+    @Autowired
+    private IJobMessageDao jobMessageDao;
 
-    @Autowired private IPluginMessageDao pluginMessageDao;
+    @Autowired
+    private IPluginMessageDao pluginMessageDao;
 
     /**
      * Atomically changes ARCHIVED or FAILURE to PROCESSING.
@@ -44,17 +48,17 @@ public class KafkaMessageStateService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean claim(MessageCategory category, String messageUUID, String processorID) {
         int updated =
-                dao(category)
-                        .claimForProcessing(
-                                messageUUID,
-                                List.of(
-                                        MessageProcessingStatus.ARCHIVED,
-                                        MessageProcessingStatus.FAILURE),
-                                MessageProcessingStatus.PROCESSING,
-                                processorID,
-                                LocalDateTime.now(),
-                                UNSET_TIME,
-                                StringUtils.EMPTY);
+            dao(category)
+                .claimForProcessing(
+                    messageUUID,
+                    List.of(
+                        MessageProcessingStatus.ARCHIVED,
+                        MessageProcessingStatus.FAILURE),
+                    MessageProcessingStatus.PROCESSING,
+                    processorID,
+                    LocalDateTime.now(),
+                    UNSET_TIME,
+                    StringUtils.EMPTY);
         return updated == 1;
     }
 
@@ -68,14 +72,14 @@ public class KafkaMessageStateService {
     @Transactional(propagation = Propagation.MANDATORY)
     public boolean markSuccess(MessageCategory category, String messageUUID, String processorID) {
         int updated =
-                dao(category)
-                        .markProcessingSuccess(
-                                messageUUID,
-                                MessageProcessingStatus.PROCESSING,
-                                MessageProcessingStatus.SUCCESS,
-                                processorID,
-                                LocalDateTime.now(),
-                                StringUtils.EMPTY);
+            dao(category)
+                .markProcessingSuccess(
+                    messageUUID,
+                    MessageProcessingStatus.PROCESSING,
+                    MessageProcessingStatus.SUCCESS,
+                    processorID,
+                    LocalDateTime.now(),
+                    StringUtils.EMPTY);
         return updated == 1;
     }
 
@@ -85,60 +89,60 @@ public class KafkaMessageStateService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markFailure(
-            MessageCategory category, String messageUUID, String processorID, Exception exception) {
+        MessageCategory category, String messageUUID, String processorID, Exception exception) {
         String error =
-                StringUtils.defaultIfBlank(exception.getMessage(), exception.getClass().getName());
+            StringUtils.defaultIfBlank(exception.getMessage(), exception.getClass().getName());
         error = StringUtils.left(error, 2048);
         int updated =
-                dao(category)
-                        .markProcessingFailure(
-                                messageUUID,
-                                MessageProcessingStatus.PROCESSING,
-                                MessageProcessingStatus.FAILURE,
-                                processorID,
-                                LocalDateTime.now(),
-                                error);
+            dao(category)
+                .markProcessingFailure(
+                    messageUUID,
+                    MessageProcessingStatus.PROCESSING,
+                    MessageProcessingStatus.FAILURE,
+                    processorID,
+                    LocalDateTime.now(),
+                    error);
         return updated == 1;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean resetProcessing(
-            MessageCategory category,
-            String messageUUID,
-            String expectedProcessorID,
-            String reason) {
+        MessageCategory category,
+        String messageUUID,
+        String expectedProcessorID,
+        String reason) {
         String error = StringUtils.left(StringUtils.defaultIfBlank(reason, "MANUAL_RESET"), 2048);
         int updated =
-                dao(category)
-                        .markProcessingFailure(
-                                messageUUID,
-                                MessageProcessingStatus.PROCESSING,
-                                MessageProcessingStatus.FAILURE,
-                                expectedProcessorID,
-                                LocalDateTime.now(),
-                                error);
+            dao(category)
+                .markProcessingFailure(
+                    messageUUID,
+                    MessageProcessingStatus.PROCESSING,
+                    MessageProcessingStatus.FAILURE,
+                    expectedProcessorID,
+                    LocalDateTime.now(),
+                    error);
         return updated == 1;
     }
 
     @Transactional(readOnly = true)
     public KafkaMessage getRequired(MessageCategory category, String messageUUID) {
         return dao(category)
-                .findByMessageUUID(messageUUID)
-                .orElseThrow(() -> new KafkaMessageNotFoundException(category, messageUUID));
+            .findByMessageUUID(messageUUID)
+            .orElseThrow(() -> new KafkaMessageNotFoundException(category, messageUUID));
     }
 
     @Transactional(readOnly = true)
     public KafkaMessageProcessingResponse getResponse(
-            MessageCategory category, String messageUUID) {
+        MessageCategory category, String messageUUID) {
         return KafkaMessageProcessingResponse.from(category, getRequired(category, messageUUID));
     }
 
     @Transactional(readOnly = true)
     public Page<KafkaMessageProcessingResponse> getResponses(
-            MessageCategory category, MessageProcessingStatus status, Pageable pageable) {
+        MessageCategory category, MessageProcessingStatus status, Pageable pageable) {
         return dao(category)
-                .findByProcessingStatusOrderByReceivedAtAsc(status, pageable)
-                .map(message -> KafkaMessageProcessingResponse.from(category, message));
+            .findByProcessingStatusOrderByReceivedAtAsc(status, pageable)
+            .map(message -> KafkaMessageProcessingResponse.from(category, message));
     }
 
     private IKafkaMessageDao<? extends KafkaMessage> dao(MessageCategory category) {

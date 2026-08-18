@@ -31,23 +31,28 @@ import java.util.UUID;
 @FireflyIntegrationTest
 class OutboxIntegrationTests {
 
-    @Autowired private OutboxService outboxService;
+    @Autowired
+    private OutboxService outboxService;
 
-    @Autowired private OutboxStateService stateService;
+    @Autowired
+    private OutboxStateService stateService;
 
-    @Autowired private IOutboxEventDao outboxEventDao;
+    @Autowired
+    private IOutboxEventDao outboxEventDao;
 
-    @Autowired private TransactionTemplate transactionTemplate;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
 
-    @MockitoBean private OutboxPublisher outboxPublisher;
+    @MockitoBean
+    private OutboxPublisher outboxPublisher;
 
     @Test
     void mandatoryRejectsEnqueueWithoutAnExistingTransaction() {
         TriggerStageMessage message = message();
 
         assertThrows(
-                IllegalTransactionStateException.class,
-                () -> outboxService.enqueue(STAGE_TOPIC, message));
+            IllegalTransactionStateException.class,
+            () -> outboxService.enqueue(STAGE_TOPIC, message));
 
         assertTrue(outboxEventDao.findByMessageUUID(message.getMessageUUID()).isEmpty());
     }
@@ -57,10 +62,10 @@ class OutboxIntegrationTests {
         TriggerStageMessage message = message();
 
         transactionTemplate.executeWithoutResult(
-                status -> outboxService.enqueue(STAGE_TOPIC, message));
+            status -> outboxService.enqueue(STAGE_TOPIC, message));
 
         OutboxEvent event =
-                outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
+            outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
         assertNotNull(event.getId());
         assertTrue(event.getId() > 0);
         assertEquals(message.getMessageUUID(), event.getMessageUUID());
@@ -74,13 +79,13 @@ class OutboxIntegrationTests {
         TriggerStageMessage message = message();
 
         assertThrows(
-                IllegalStateException.class,
-                () ->
-                        transactionTemplate.executeWithoutResult(
-                                status -> {
-                                    outboxService.enqueue(STAGE_TOPIC, message);
-                                    throw new IllegalStateException("rollback");
-                                }));
+            IllegalStateException.class,
+            () ->
+                transactionTemplate.executeWithoutResult(
+                    status -> {
+                        outboxService.enqueue(STAGE_TOPIC, message);
+                        throw new IllegalStateException("rollback");
+                    }));
 
         assertTrue(outboxEventDao.findByMessageUUID(message.getMessageUUID()).isEmpty());
         verify(outboxPublisher, never()).publishOnce(anyLong());
@@ -90,9 +95,9 @@ class OutboxIntegrationTests {
     void appliesConditionalPublicationStateTransitions() {
         TriggerStageMessage message = message();
         transactionTemplate.executeWithoutResult(
-                status -> outboxService.enqueue(STAGE_TOPIC, message));
+            status -> outboxService.enqueue(STAGE_TOPIC, message));
         Long outboxID =
-                outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow().getId();
+            outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow().getId();
 
         Optional<OutboxPublishTask> claimed = stateService.claim(outboxID, "publisher-1");
         assertTrue(claimed.isPresent());
@@ -100,8 +105,8 @@ class OutboxIntegrationTests {
         assertFalse(stateService.markSent(outboxID, "publisher-2"));
         assertTrue(stateService.markSent(outboxID, "publisher-1"));
         assertEquals(
-                OutboxStatus.SENT,
-                outboxEventDao.findById(outboxID).orElseThrow().getPublishStatus());
+            OutboxStatus.SENT,
+            outboxEventDao.findById(outboxID).orElseThrow().getPublishStatus());
     }
 
     @Test
@@ -109,14 +114,14 @@ class OutboxIntegrationTests {
         TriggerStageMessage message = message();
 
         transactionTemplate.executeWithoutResult(
-                status -> outboxService.enqueue(STAGE_TOPIC, message));
+            status -> outboxService.enqueue(STAGE_TOPIC, message));
         OutboxEvent first =
-                outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
+            outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
 
         transactionTemplate.executeWithoutResult(
-                status -> outboxService.enqueue(STAGE_TOPIC, message));
+            status -> outboxService.enqueue(STAGE_TOPIC, message));
         OutboxEvent duplicate =
-                outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
+            outboxEventDao.findByMessageUUID(message.getMessageUUID()).orElseThrow();
 
         assertEquals(first.getId(), duplicate.getId());
         assertEquals(1, outboxEventDao.countByMessageUUID(message.getMessageUUID()));
@@ -125,9 +130,9 @@ class OutboxIntegrationTests {
 
     private TriggerStageMessage message() {
         return new TriggerStageMessage()
-                .setMessageUUID(UUID.randomUUID().toString())
-                .setStageBuildID(11L)
-                .setBuildStatus(BuildStatus.RUNNING)
-                .setExecutionAttempt(0);
+            .setMessageUUID(UUID.randomUUID().toString())
+            .setStageBuildID(11L)
+            .setBuildStatus(BuildStatus.RUNNING)
+            .setExecutionAttempt(0);
     }
 }

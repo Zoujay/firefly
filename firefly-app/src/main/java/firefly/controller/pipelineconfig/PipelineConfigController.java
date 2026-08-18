@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 public class PipelineConfigController {
 
-    @Autowired private IPipelineConfigService pipelineConfig;
+    @Autowired
+    private IPipelineConfigService pipelineConfig;
 
     @RequestMapping(value = "/create/pipeline", method = RequestMethod.POST)
     public String CreatePipeline(@Valid @RequestBody PipelineConfigRequest pipelineConfigRequest) {

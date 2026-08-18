@@ -9,10 +9,11 @@ import java.util.UUID;
 
 public final class BusinessMessageUUID {
 
-    private BusinessMessageUUID() {}
+    private BusinessMessageUUID() {
+    }
 
     public static String pipeline(
-            Long pipelineBuildID, Integer executionAttempt, BuildStatus status) {
+        Long pipelineBuildID, Integer executionAttempt, BuildStatus status) {
         return generate("pipeline", pipelineBuildID, executionAttempt, status);
     }
 
@@ -25,16 +26,16 @@ public final class BusinessMessageUUID {
     }
 
     public static String plugin(
-            PluginType pluginType,
-            Long pluginBuildID,
-            Integer executionAttempt,
-            BuildStatus status) {
+        PluginType pluginType,
+        Long pluginBuildID,
+        Integer executionAttempt,
+        BuildStatus status) {
         Objects.requireNonNull(pluginType, "pluginType must not be null");
         return generate("plugin:" + pluginType.name(), pluginBuildID, executionAttempt, status);
     }
 
     private static String generate(
-            String messageType, Long buildID, Integer executionAttempt, BuildStatus status) {
+        String messageType, Long buildID, Integer executionAttempt, BuildStatus status) {
         Objects.requireNonNull(buildID, "buildID must not be null");
         Objects.requireNonNull(executionAttempt, "executionAttempt must not be null");
         Objects.requireNonNull(status, "status must not be null");
@@ -42,14 +43,14 @@ public final class BusinessMessageUUID {
             throw new IllegalArgumentException("executionAttempt must not be negative");
         }
         String businessKey =
-                "firefly:"
-                        + messageType
-                        + ":"
-                        + buildID
-                        + ":"
-                        + executionAttempt
-                        + ":"
-                        + status.name();
+            "firefly:"
+                + messageType
+                + ":"
+                + buildID
+                + ":"
+                + executionAttempt
+                + ":"
+                + status.name();
         return UUID.nameUUIDFromBytes(businessKey.getBytes(StandardCharsets.UTF_8)).toString();
     }
 }

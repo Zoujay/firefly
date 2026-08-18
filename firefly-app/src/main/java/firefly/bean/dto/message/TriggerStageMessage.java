@@ -16,7 +16,8 @@ import java.io.Serializable;
 @Accessors(chain = true)
 public class TriggerStageMessage implements Serializable, KafkaBusinessMessage {
 
-    @Serial private static final long serialVersionUID = -823258082885393580L;
+    @Serial
+    private static final long serialVersionUID = -823258082885393580L;
     private String messageUUID;
 
     private Long stageBuildID;

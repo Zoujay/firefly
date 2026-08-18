@@ -13,7 +13,8 @@ import java.util.Map;
 @Component
 public class OriginCenter implements InitializingBean {
 
-    @Autowired private List<ITriggerOrigin> triggerOrigins;
+    @Autowired
+    private List<ITriggerOrigin> triggerOrigins;
 
     public static Map<TriggerOrigin, ITriggerOrigin> TriggerOriginMap = new HashMap<>();
 

@@ -12,7 +12,9 @@ import java.util.List;
 
 @Data
 public class StageConfigRequest implements Serializable {
-    @Serial private static final long serialVersionUID = 1318158863443930509L;
+
+    @Serial
+    private static final long serialVersionUID = 1318158863443930509L;
 
     @NotNull
     @Size(min = 64, max = 64)
@@ -22,5 +24,7 @@ public class StageConfigRequest implements Serializable {
     @Size(min = 10, max = 64)
     private String name;
 
-    @NotNull @Valid private List<List<JobConfigRequest>> jobConfigs;
+    @NotNull
+    @Valid
+    private List<List<JobConfigRequest>> jobConfigs;
 }

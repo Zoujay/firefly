@@ -10,6 +10,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class StageConfigResponse {
+
     private Long id;
     private Long pipelineID;
     private String uuid;

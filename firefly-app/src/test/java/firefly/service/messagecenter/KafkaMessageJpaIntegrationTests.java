@@ -16,9 +16,11 @@ import java.util.concurrent.Executors;
 @FireflyIntegrationTest
 class KafkaMessageJpaIntegrationTests {
 
-    @Autowired private KafkaMessageStore kafkaMessageStore;
+    @Autowired
+    private KafkaMessageStore kafkaMessageStore;
 
-    @Autowired private IPipelineMessageDao pipelineMessageDao;
+    @Autowired
+    private IPipelineMessageDao pipelineMessageDao;
 
     @Test
     void savesTheSameBusinessUUIDOnlyOnceAcrossDifferentKafkaOffsets() {
@@ -26,15 +28,15 @@ class KafkaMessageJpaIntegrationTests {
         String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
 
         KafkaMessageSaveResult firstResult =
-                kafkaMessageStore.savePipelineMessages(
-                        List.of(
-                                new ConsumerRecord<>(
-                                        "pipeline_message", 0, 9_999_991L, messageUUID, payload)));
+            kafkaMessageStore.savePipelineMessages(
+                List.of(
+                    new ConsumerRecord<>(
+                        "pipeline_message", 0, 9_999_991L, messageUUID, payload)));
         KafkaMessageSaveResult duplicateResult =
-                kafkaMessageStore.savePipelineMessages(
-                        List.of(
-                                new ConsumerRecord<>(
-                                        "pipeline_message", 0, 9_999_992L, messageUUID, payload)));
+            kafkaMessageStore.savePipelineMessages(
+                List.of(
+                    new ConsumerRecord<>(
+                        "pipeline_message", 0, 9_999_992L, messageUUID, payload)));
 
         assertEquals(1, firstResult.newMessages().size());
         assertEquals(0, duplicateResult.newMessages().size());
@@ -47,17 +49,17 @@ class KafkaMessageJpaIntegrationTests {
         String messageUUID = BusinessMessageUUID.pipeline(9_999_998L, 0, BuildStatus.RUNNING);
         String payload = "{\"messageUUID\":\"" + messageUUID + "\"}";
         ConsumerRecord<String, String> first =
-                new ConsumerRecord<>("pipeline_message", 0, 9_999_981L, messageUUID, payload);
+            new ConsumerRecord<>("pipeline_message", 0, 9_999_981L, messageUUID, payload);
         ConsumerRecord<String, String> second =
-                new ConsumerRecord<>("pipeline_message", 0, 9_999_982L, messageUUID, payload);
+            new ConsumerRecord<>("pipeline_message", 0, 9_999_982L, messageUUID, payload);
 
         KafkaMessageSaveResult firstResult;
         KafkaMessageSaveResult secondResult;
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var firstTask =
-                    executor.submit(() -> kafkaMessageStore.savePipelineMessages(List.of(first)));
+                executor.submit(() -> kafkaMessageStore.savePipelineMessages(List.of(first)));
             var secondTask =
-                    executor.submit(() -> kafkaMessageStore.savePipelineMessages(List.of(second)));
+                executor.submit(() -> kafkaMessageStore.savePipelineMessages(List.of(second)));
             firstResult = firstTask.get();
             secondResult = secondTask.get();
         }

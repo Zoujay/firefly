@@ -21,16 +21,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class PipelineRetryMessagePublisherTests {
 
-    @Mock private OutboxService outboxService;
+    @Mock
+    private OutboxService outboxService;
 
-    @InjectMocks private PipelineRetryMessagePublisher publisher;
+    @InjectMocks
+    private PipelineRetryMessagePublisher publisher;
 
     @Test
     void publishesTheFirstRetryStageWithTheNewExecutionAttempt() {
         publisher.publish(new PipelineRetryPreparedEvent(11L, 2));
 
         ArgumentCaptor<TriggerStageMessage> messageCaptor =
-                ArgumentCaptor.forClass(TriggerStageMessage.class);
+            ArgumentCaptor.forClass(TriggerStageMessage.class);
         String expectedUUID = BusinessMessageUUID.stage(11L, 2, BuildStatus.RUNNING);
         verify(outboxService).enqueue(eq(STAGE_TOPIC), messageCaptor.capture());
         assertEquals(11L, messageCaptor.getValue().getStageBuildID());

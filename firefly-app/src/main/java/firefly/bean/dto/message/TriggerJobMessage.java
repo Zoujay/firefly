@@ -15,7 +15,9 @@ import java.io.Serializable;
 @AllArgsConstructor
 @Accessors(chain = true)
 public class TriggerJobMessage implements Serializable, KafkaBusinessMessage {
-    @Serial private static final long serialVersionUID = 1765961541468589051L;
+
+    @Serial
+    private static final long serialVersionUID = 1765961541468589051L;
 
     private String messageUUID;
 

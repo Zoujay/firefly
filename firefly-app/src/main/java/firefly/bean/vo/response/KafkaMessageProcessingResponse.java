@@ -42,21 +42,21 @@ public class KafkaMessageProcessingResponse {
     private String lastError;
 
     public static KafkaMessageProcessingResponse from(
-            MessageCategory category, KafkaMessage message) {
+        MessageCategory category, KafkaMessage message) {
         return new KafkaMessageProcessingResponse(
-                category,
-                message.getMessageUUID(),
-                message.getTopic(),
-                message.getKafkaPartition(),
-                message.getKafkaOffset(),
-                message.getMessageKey(),
-                message.getPayload(),
-                message.getReceivedAt(),
-                message.getProcessingStatus(),
-                message.getProcessingAttempt(),
-                message.getProcessorID(),
-                message.getProcessingStartedAt(),
-                message.getProcessingFinishedAt(),
-                message.getLastError());
+            category,
+            message.getMessageUUID(),
+            message.getTopic(),
+            message.getKafkaPartition(),
+            message.getKafkaOffset(),
+            message.getMessageKey(),
+            message.getPayload(),
+            message.getReceivedAt(),
+            message.getProcessingStatus(),
+            message.getProcessingAttempt(),
+            message.getProcessorID(),
+            message.getProcessingStartedAt(),
+            message.getProcessingFinishedAt(),
+            message.getLastError());
     }
 }

@@ -21,8 +21,8 @@ public class PkceGenerator {
         String verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
         try {
             byte[] digest =
-                    MessageDigest.getInstance("SHA-256")
-                            .digest(verifier.getBytes(StandardCharsets.US_ASCII));
+                MessageDigest.getInstance("SHA-256")
+                    .digest(verifier.getBytes(StandardCharsets.US_ASCII));
             String challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
             return new PkcePair(verifier, challenge);
         } catch (NoSuchAlgorithmException exception) {

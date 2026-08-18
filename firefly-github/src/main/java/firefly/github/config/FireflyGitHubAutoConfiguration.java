@@ -29,14 +29,14 @@ public class FireflyGitHubAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public GitHubOAuthClient gitHubOAuthClient(
-            GitHubProperties properties, RestClient.Builder restClientBuilder) {
+        GitHubProperties properties, RestClient.Builder restClientBuilder) {
         return new GitHubOAuthClient(properties, restClientBuilder);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public GitHubApiClient gitHubApiClient(
-            GitHubProperties properties, RestClient.Builder restClientBuilder) {
+        GitHubProperties properties, RestClient.Builder restClientBuilder) {
         return new GitHubApiClient(properties, restClientBuilder);
     }
 

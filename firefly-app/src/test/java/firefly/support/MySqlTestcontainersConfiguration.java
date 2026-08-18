@@ -13,7 +13,7 @@ public class MySqlTestcontainersConfiguration {
     @ServiceConnection
     MySQLContainer<?> mysqlContainer() {
         return new MySQLContainer<>(DockerImageName.parse("mysql:8.4"))
-                .withDatabaseName("firefly")
-                .withInitScript("v1.sql");
+            .withDatabaseName("firefly")
+            .withInitScript("v1.sql");
     }
 }

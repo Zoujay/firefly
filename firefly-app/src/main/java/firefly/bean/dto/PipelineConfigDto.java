@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class PipelineConfigDto {
+
     private Long id;
     private String uuid;
     private String name;

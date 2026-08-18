@@ -18,24 +18,24 @@ public class TriggerCenter implements ITriggerCenter {
     @Autowired
     public TriggerCenter(List<ITrigger<? extends BaseMessage>> triggers) {
         EnumMap<TriggerOrigin, ITrigger<? extends BaseMessage>> map =
-                new EnumMap<>(TriggerOrigin.class);
+            new EnumMap<>(TriggerOrigin.class);
 
         for (ITrigger<? extends BaseMessage> trigger : triggers) {
             TriggerOrigin origin = trigger.getTriggerOrigin();
             if (origin == null) {
                 throw new IllegalStateException(
-                        "Trigger origin must not be null: " + trigger.getClass().getName());
+                    "Trigger origin must not be null: " + trigger.getClass().getName());
             }
 
             ITrigger<? extends BaseMessage> existing = map.putIfAbsent(origin, trigger);
             if (existing != null) {
                 throw new IllegalStateException(
-                        "Duplicate Trigger implementation for "
-                                + origin
-                                + ": "
-                                + existing.getClass().getName()
-                                + " and "
-                                + trigger.getClass().getName());
+                    "Duplicate Trigger implementation for "
+                        + origin
+                        + ": "
+                        + existing.getClass().getName()
+                        + " and "
+                        + trigger.getClass().getName());
             }
         }
         this.triggerMap = Map.copyOf(map);

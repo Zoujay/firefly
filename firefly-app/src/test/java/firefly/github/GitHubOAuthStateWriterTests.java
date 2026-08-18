@@ -19,7 +19,8 @@ import java.util.Optional;
 @ExtendWith(MockitoExtension.class)
 class GitHubOAuthStateWriterTests {
 
-    @Mock private GitHubOAuthStateRepository stateRepository;
+    @Mock
+    private GitHubOAuthStateRepository stateRepository;
 
     @Test
     void returnsStateOnlyWhenConditionalDeleteWins() {
@@ -28,7 +29,7 @@ class GitHubOAuthStateWriterTests {
         when(stateRepository.consumePending(7L)).thenReturn(0);
 
         Optional<GitHubOAuthStateEntity> result =
-                new GitHubOAuthStateWriter(stateRepository).take("state");
+            new GitHubOAuthStateWriter(stateRepository).take("state");
 
         assertTrue(result.isEmpty());
         verify(stateRepository).consumePending(7L);
@@ -39,7 +40,7 @@ class GitHubOAuthStateWriterTests {
         when(stateRepository.findByState("missing")).thenReturn(Optional.empty());
 
         Optional<GitHubOAuthStateEntity> result =
-                new GitHubOAuthStateWriter(stateRepository).take("missing");
+            new GitHubOAuthStateWriter(stateRepository).take("missing");
 
         assertTrue(result.isEmpty());
         verify(stateRepository, never()).consumePending(org.mockito.ArgumentMatchers.anyLong());

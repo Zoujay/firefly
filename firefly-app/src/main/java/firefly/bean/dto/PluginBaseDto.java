@@ -14,6 +14,7 @@ import lombok.experimental.Accessors;
 @NoArgsConstructor
 @Accessors(chain = true)
 public class PluginBaseDto {
+
     private Long ID;
     private Long pluginID;
     private BuildStatus status;

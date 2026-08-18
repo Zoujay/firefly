@@ -15,7 +15,8 @@ import javax.sql.DataSource;
 @FireflyIntegrationTest
 class FireflyApplicationTests {
 
-    @Autowired private DataSource dataSource;
+    @Autowired
+    private DataSource dataSource;
 
     @Test
     void contextLoads() {

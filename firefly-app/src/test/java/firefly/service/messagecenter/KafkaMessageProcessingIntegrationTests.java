@@ -30,27 +30,32 @@ import java.util.UUID;
 @FireflyIntegrationTest
 class KafkaMessageProcessingIntegrationTests {
 
-    @Autowired private KafkaMessageStore kafkaMessageStore;
+    @Autowired
+    private KafkaMessageStore kafkaMessageStore;
 
-    @Autowired private KafkaMessageProcessingCoordinator processingCoordinator;
+    @Autowired
+    private KafkaMessageProcessingCoordinator processingCoordinator;
 
-    @Autowired private KafkaMessageStateService stateService;
+    @Autowired
+    private KafkaMessageStateService stateService;
 
-    @Autowired private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    @MockitoBean private MessageCenter messageCenter;
+    @MockitoBean
+    private MessageCenter messageCenter;
 
     @Test
     void processesAnInboxUUIDOnlyOnceAfterSuccess() throws Exception {
         TriggerPipelineMessage message = archiveMessage(101L);
 
         assertTrue(
-                processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
+            processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
         assertFalse(
-                processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
+            processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
 
         KafkaMessageProcessingResponse result =
-                stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
+            stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
         assertEquals(MessageProcessingStatus.SUCCESS, result.getProcessingStatus());
         assertEquals(1, result.getProcessingAttempt());
         verify(messageCenter, times(1)).onPipelineMessage(message);
@@ -60,42 +65,42 @@ class KafkaMessageProcessingIntegrationTests {
     void movesFailureBackThroughProcessingOnlyOnManualRetry() throws Exception {
         TriggerPipelineMessage message = archiveMessage(102L);
         when(messageCenter.onPipelineMessage(any()))
-                .thenThrow(new IllegalStateException("business failed"))
-                .thenReturn(true);
+            .thenThrow(new IllegalStateException("business failed"))
+            .thenReturn(true);
 
         assertFalse(
-                processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
+            processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
         KafkaMessageProcessingResponse failed =
-                stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
+            stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
         assertEquals(MessageProcessingStatus.FAILURE, failed.getProcessingStatus());
         assertEquals(1, failed.getProcessingAttempt());
         assertEquals("business failed", failed.getLastError());
 
         assertTrue(
-                processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
+            processingCoordinator.process(MessageCategory.PIPELINE, message.getMessageUUID()));
         KafkaMessageProcessingResponse succeeded =
-                stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
+            stateService.getResponse(MessageCategory.PIPELINE, message.getMessageUUID());
         assertEquals(MessageProcessingStatus.SUCCESS, succeeded.getProcessingStatus());
         assertEquals(2, succeeded.getProcessingAttempt());
     }
 
     private TriggerPipelineMessage archiveMessage(Long pipelineBuildID) throws Exception {
         TriggerPipelineMessage message =
-                new TriggerPipelineMessage()
-                        .setMessageUUID(UUID.randomUUID().toString())
-                        .setPipelineID(1L)
-                        .setPipelineBuildID(pipelineBuildID)
-                        .setBuildStatus(BuildStatus.RUNNING)
-                        .setExecutionAttempt(0);
+            new TriggerPipelineMessage()
+                .setMessageUUID(UUID.randomUUID().toString())
+                .setPipelineID(1L)
+                .setPipelineBuildID(pipelineBuildID)
+                .setBuildStatus(BuildStatus.RUNNING)
+                .setExecutionAttempt(0);
         String payload = objectMapper.writeValueAsString(message);
         kafkaMessageStore.savePipelineMessages(
-                List.of(
-                        new ConsumerRecord<>(
-                                PIPELINE_TOPIC,
-                                0,
-                                pipelineBuildID,
-                                message.getMessageUUID(),
-                                payload)));
+            List.of(
+                new ConsumerRecord<>(
+                    PIPELINE_TOPIC,
+                    0,
+                    pipelineBuildID,
+                    message.getMessageUUID(),
+                    payload)));
         return message;
     }
 }

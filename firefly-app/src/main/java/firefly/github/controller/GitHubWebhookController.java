@@ -27,35 +27,35 @@ public class GitHubWebhookController {
 
     @PostMapping(value = "/webhooks", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<GitHubWebhookResponse> receive(
-            @RequestHeader("X-GitHub-Delivery") String deliveryId,
-            @RequestHeader("X-GitHub-Event") String eventType,
-            @RequestHeader("X-GitHub-Hook-ID") String hookId,
-            @RequestHeader("X-GitHub-Hook-Installation-Target-Type") String targetType,
-            @RequestHeader("X-GitHub-Hook-Installation-Target-ID") String targetId,
-            @RequestHeader("X-Hub-Signature-256") String signature,
-            @RequestBody byte[] rawPayload) {
+        @RequestHeader("X-GitHub-Delivery") String deliveryId,
+        @RequestHeader("X-GitHub-Event") String eventType,
+        @RequestHeader("X-GitHub-Hook-ID") String hookId,
+        @RequestHeader("X-GitHub-Hook-Installation-Target-Type") String targetType,
+        @RequestHeader("X-GitHub-Hook-Installation-Target-ID") String targetId,
+        @RequestHeader("X-Hub-Signature-256") String signature,
+        @RequestBody byte[] rawPayload) {
         if (!StringUtils.hasText(deliveryId)
-                || !StringUtils.hasText(eventType)
-                || rawPayload == null
-                || rawPayload.length == 0) {
+            || !StringUtils.hasText(eventType)
+            || rawPayload == null
+            || rawPayload.length == 0) {
             throw badRequest("Required GitHub webhook data is missing");
         }
         if (rawPayload.length > MAX_PAYLOAD_BYTES) {
             throw new GitHubIntegrationException(
-                    HttpStatus.PAYLOAD_TOO_LARGE,
-                    "GITHUB_WEBHOOK_PAYLOAD_TOO_LARGE",
-                    "GitHub webhook payload exceeds 2 MiB");
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "GITHUB_WEBHOOK_PAYLOAD_TOO_LARGE",
+                "GitHub webhook payload exceeds 2 MiB");
         }
         try {
             GitHubWebhookResponse response =
-                    ingressService.receive(
-                            deliveryId,
-                            eventType,
-                            Long.valueOf(hookId),
-                            targetType,
-                            Long.valueOf(targetId),
-                            signature,
-                            rawPayload);
+                ingressService.receive(
+                    deliveryId,
+                    eventType,
+                    Long.valueOf(hookId),
+                    targetType,
+                    Long.valueOf(targetId),
+                    signature,
+                    rawPayload);
             return ResponseEntity.accepted().body(response);
         } catch (NumberFormatException exception) {
             throw badRequest("GitHub Hook or target ID is invalid");
@@ -64,6 +64,6 @@ public class GitHubWebhookController {
 
     private GitHubIntegrationException badRequest(String message) {
         return new GitHubIntegrationException(
-                HttpStatus.BAD_REQUEST, "GITHUB_WEBHOOK_REQUEST_INVALID", message);
+            HttpStatus.BAD_REQUEST, "GITHUB_WEBHOOK_REQUEST_INVALID", message);
     }
 }

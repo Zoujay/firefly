@@ -9,8 +9,9 @@ import firefly.model.stage.StageModel;
 import java.util.List;
 
 public interface IStageConfigService {
+
     StageConfigDto createStage(
-            StageConfigRequest pipelineConfigRequest, Long pipelineId, Integer stageOrder);
+        StageConfigRequest pipelineConfigRequest, Long pipelineId, Integer stageOrder);
 
     StageConfigDto getStageConfigByUUID(String stageUUID);
 
@@ -21,7 +22,7 @@ public interface IStageConfigService {
     List<StageConfigDto> getStageConfigsByPipelineID(Long pipelineID);
 
     StageConfigResponse assembleConfigResponse(
-            StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs);
+        StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs);
 
     StageModel assembleStageModel(StageConfigRequest request, Long pipelineID, Integer stageOrder);
 }

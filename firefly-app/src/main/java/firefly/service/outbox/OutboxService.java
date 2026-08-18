@@ -24,11 +24,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OutboxService {
 
-    @Autowired private IOutboxEventDao outboxEventDao;
+    @Autowired
+    private IOutboxEventDao outboxEventDao;
 
-    @Autowired private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    @Autowired private ApplicationEventPublisher applicationEventPublisher;
+    @Autowired
+    private ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void enqueue(String topic, KafkaBusinessMessage message) {
@@ -37,26 +40,26 @@ public class OutboxService {
             payload = objectMapper.writeValueAsString(message);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException(
-                    "Cannot serialize Outbox message " + message.getMessageUUID(), exception);
+                "Cannot serialize Outbox message " + message.getMessageUUID(), exception);
         }
 
         int inserted =
-                outboxEventDao.insertIfAbsent(
-                        message.getMessageUUID(),
-                        topic,
-                        BusinessMessageKey.from(message),
-                        message.getClass().getName(),
-                        payload);
+            outboxEventDao.insertIfAbsent(
+                message.getMessageUUID(),
+                topic,
+                BusinessMessageKey.from(message),
+                message.getClass().getName(),
+                payload);
         if (inserted == 1) {
             Long outboxID =
-                    outboxEventDao
-                            .findIDByMessageUUID(message.getMessageUUID())
-                            .orElseThrow(
-                                    () ->
-                                            new IllegalStateException(
-                                                    "Outbox event was inserted but cannot be found:"
-                                                            + " "
-                                                            + message.getMessageUUID()));
+                outboxEventDao
+                    .findIDByMessageUUID(message.getMessageUUID())
+                    .orElseThrow(
+                        () ->
+                            new IllegalStateException(
+                                "Outbox event was inserted but cannot be found:"
+                                    + " "
+                                    + message.getMessageUUID()));
             /*
              * The event is published inside the current transaction. Its
              * listener runs AFTER_COMMIT, so a rollback produces neither an

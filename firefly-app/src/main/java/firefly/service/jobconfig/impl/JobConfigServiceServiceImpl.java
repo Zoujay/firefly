@@ -27,12 +27,13 @@ import java.util.Optional;
 @Transactional
 public class JobConfigServiceServiceImpl implements IJobConfigService {
 
-    @Autowired private IJobConfigDao jobConfigDao;
+    @Autowired
+    private IJobConfigDao jobConfigDao;
 
     @Transactional
     @Override
     public JobConfigDto createJobConfig(
-            JobConfigRequest jobConfigRequest, Long stageID, Long pluginID) {
+        JobConfigRequest jobConfigRequest, Long stageID, Long pluginID) {
         JobModel jobModel = this.assembleJobModel(jobConfigRequest, stageID, pluginID);
         jobConfigDao.save(jobModel);
         return this.assembleJobConfigDto(jobModel);
@@ -79,25 +80,25 @@ public class JobConfigServiceServiceImpl implements IJobConfigService {
         IPluginConfig pluginConfig = PLUGIN_MAP.get(pluginType);
         AbstractPluginDto dto = pluginConfig.getPlugin(jobModel.getPluginID());
         return new JobConfigDto(
-                jobModel.getId(),
-                jobModel.getStageID(),
-                jobModel.getJobUUID(),
-                jobModel.getJobName(),
-                PluginType.valueOf(jobModel.getPluginType()),
-                jobModel.getPluginID(),
-                dto);
+            jobModel.getId(),
+            jobModel.getStageID(),
+            jobModel.getJobUUID(),
+            jobModel.getJobName(),
+            PluginType.valueOf(jobModel.getPluginType()),
+            jobModel.getPluginID(),
+            dto);
     }
 
     @Override
     public JobConfigResponse assembleJobConfigResponse(JobConfigDto jobConfigDto) {
         JsonNode node = new ObjectMapper().valueToTree(jobConfigDto.getPluginRaw());
         return new JobConfigResponse(
-                jobConfigDto.getId(),
-                jobConfigDto.getStageID(),
-                jobConfigDto.getUuid(),
-                jobConfigDto.getName(),
-                jobConfigDto.getPluginType().name(),
-                jobConfigDto.getPluginID(),
-                node);
+            jobConfigDto.getId(),
+            jobConfigDto.getStageID(),
+            jobConfigDto.getUuid(),
+            jobConfigDto.getName(),
+            jobConfigDto.getPluginType().name(),
+            jobConfigDto.getPluginID(),
+            node);
     }
 }

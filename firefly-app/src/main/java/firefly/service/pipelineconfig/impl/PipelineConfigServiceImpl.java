@@ -35,25 +35,30 @@ import java.util.*;
 @Transactional
 public class PipelineConfigServiceImpl implements IPipelineConfigService {
 
-    @Autowired private IPipelineConfigDao pipelineConfigDao;
+    @Autowired
+    private IPipelineConfigDao pipelineConfigDao;
 
-    @Autowired private IJobConfigDao jobConfigDao;
+    @Autowired
+    private IJobConfigDao jobConfigDao;
 
-    @Autowired private StageConfigServiceServiceImpl stageConfigServiceImpl;
+    @Autowired
+    private StageConfigServiceServiceImpl stageConfigServiceImpl;
 
-    @Autowired private JobConfigServiceServiceImpl jobConfigService;
+    @Autowired
+    private JobConfigServiceServiceImpl jobConfigService;
 
-    @Autowired private IJobRelationService jobRelationService;
+    @Autowired
+    private IJobRelationService jobRelationService;
 
     @Override
     @Transactional
     public String createPipeline(PipelineConfigRequest pipelineConfigRequest) {
         if (pipelineConfigRequest.getTriggerOrigin() == TriggerOrigin.GITHUB
-                && pipelineConfigRequest.getTriggerModel() == TriggerModel.AUTOMATIC
-                && (pipelineConfigRequest.getBranchPattern() == null
-                        || pipelineConfigRequest.getBranchPattern().isBlank())) {
+            && pipelineConfigRequest.getTriggerModel() == TriggerModel.AUTOMATIC
+            && (pipelineConfigRequest.getBranchPattern() == null
+            || pipelineConfigRequest.getBranchPattern().isBlank())) {
             throw new IllegalArgumentException(
-                    "branchPattern is required for automatic GitHub pipelines");
+                "branchPattern is required for automatic GitHub pipelines");
         }
         PipelineModel pipelineModel = this.assemblePipelineModel(pipelineConfigRequest, -1L);
         pipelineConfigDao.save(pipelineModel);
@@ -61,26 +66,26 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
 
         // save origin info
         Long originID =
-                OriginCenter.TriggerOriginMap.get(pipelineModel.getTriggerOrigin())
-                        .saveTriggerOrigin(pipelineConfigRequest.getOriginInfo(), pipelineId);
+            OriginCenter.TriggerOriginMap.get(pipelineModel.getTriggerOrigin())
+                .saveTriggerOrigin(pipelineConfigRequest.getOriginInfo(), pipelineId);
         pipelineModel.setOriginID(originID);
         pipelineConfigDao.save(pipelineModel);
         List<StageConfigRequest> stageConfigs = pipelineConfigRequest.getStageConfigs();
         for (int stageOrder = 0; stageOrder < stageConfigs.size(); stageOrder++) {
             StageConfigRequest stageConfigRequest = stageConfigs.get(stageOrder);
             StageConfigDto stageConfigDto =
-                    stageConfigServiceImpl.createStage(stageConfigRequest, pipelineId, stageOrder);
+                stageConfigServiceImpl.createStage(stageConfigRequest, pipelineId, stageOrder);
             List<List<JobConfigRequest>> jobs = stageConfigRequest.getJobConfigs();
             for (List<JobConfigRequest> jobList : jobs) {
                 List<JobModel> jobModels = new ArrayList<>();
                 for (JobConfigRequest job : jobList) {
                     JobModel jobModel =
-                            jobConfigService.assembleJobModel(job, stageConfigDto.getId(), 0L);
+                        jobConfigService.assembleJobModel(job, stageConfigDto.getId(), 0L);
                     jobConfigDao.save(jobModel);
                     PluginType type = job.getPluginType();
                     IPluginConfig pluginConfigService = PluginServiceParser.PLUGIN_MAP.get(type);
                     Long pluginID =
-                            pluginConfigService.savePlugin(job.getPluginRaw(), jobModel.getId());
+                        pluginConfigService.savePlugin(job.getPluginRaw(), jobModel.getId());
                     jobModel.setPluginID(pluginID);
                     jobConfigDao.save(jobModel);
                     jobModels.add(jobModel);
@@ -100,13 +105,13 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
                         isHead = true;
                     }
                     JobRelationDto jobRelationDto =
-                            assembleJobRelationDto(
-                                    jobModel.getId(),
-                                    pipelineId,
-                                    stageConfigDto.getId(),
-                                    nextJobID,
-                                    preJobID,
-                                    isHead);
+                        assembleJobRelationDto(
+                            jobModel.getId(),
+                            pipelineId,
+                            stageConfigDto.getId(),
+                            nextJobID,
+                            preJobID,
+                            isHead);
                     jobRelationService.saveJobRelation(jobRelationDto);
                 }
             }
@@ -117,21 +122,21 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
     @Override
     public PipelineConfigResponse getPipelineConfigByUUID(String pipelineUUID) {
         PipelineModel pipelineModel =
-                pipelineConfigDao.getPipelineConfigByPipelineUUID(pipelineUUID);
+            pipelineConfigDao.getPipelineConfigByPipelineUUID(pipelineUUID);
         if (pipelineModel == null) {
             return null;
         }
         PipelineConfigDto pipelineConfigDto = this.assemblePipelineConfigDto(pipelineModel);
         Long pipelineID = pipelineModel.getId();
         List<StageConfigDto> stageConfigDtos =
-                stageConfigServiceImpl.getStageConfigsByPipelineID(pipelineID);
+            stageConfigServiceImpl.getStageConfigsByPipelineID(pipelineID);
         List<StageConfigResponse> stageConfigResponses = new ArrayList<>();
         for (StageConfigDto stageDto : stageConfigDtos) {
             Long stageID = stageDto.getId();
             List<JobRelationDto> headJobRelationDtos =
-                    jobRelationService.getAllHeadJobRelationByStageID(stageID);
+                jobRelationService.getAllHeadJobRelationByStageID(stageID);
             List<JobRelationDto> allJobRelations =
-                    jobRelationService.getAllJobRelationByStageID(stageID);
+                jobRelationService.getAllJobRelationByStageID(stageID);
             Map<Long, JobRelationDto> jobRelationMap = new HashMap<>();
             for (JobRelationDto jobRelationDto : allJobRelations) {
                 jobRelationMap.put(jobRelationDto.getJobID(), jobRelationDto);
@@ -144,7 +149,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
                 Long nextJobID = jobRelationDto.getNextJobID();
                 JobConfigDto currentJob = jobConfigService.getJobConfigByID(currentJobID);
                 JobConfigResponse currentJobResponse =
-                        jobConfigService.assembleJobConfigResponse(currentJob);
+                    jobConfigService.assembleJobConfigResponse(currentJob);
                 parallelJobConfigDtos.add(currentJobResponse);
                 while (jobRelationMap.containsKey(nextJobID)) {
                     JobRelationDto nextRelationDto = jobRelationMap.get(nextJobID);
@@ -160,7 +165,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
                 jobConfigResponses.add(parallelJobConfigDtos);
             }
             StageConfigResponse stageConfigResponse =
-                    stageConfigServiceImpl.assembleConfigResponse(stageDto, jobConfigResponses);
+                stageConfigServiceImpl.assembleConfigResponse(stageDto, jobConfigResponses);
             stageConfigResponses.add(stageConfigResponse);
         }
         return this.assemblePipelineConfigResponse(pipelineConfigDto, stageConfigResponses);
@@ -187,7 +192,7 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
 
     @Override
     public PipelineConfigResponse assemblePipelineConfigResponse(
-            PipelineConfigDto pipelineConfigDto, List<StageConfigResponse> stageConfigResponses) {
+        PipelineConfigDto pipelineConfigDto, List<StageConfigResponse> stageConfigResponses) {
         PipelineConfigResponse pipelineConfigResponse = new PipelineConfigResponse();
         pipelineConfigResponse.setId(pipelineConfigDto.getId());
         pipelineConfigResponse.setUuid(pipelineConfigDto.getUuid());
@@ -215,20 +220,20 @@ public class PipelineConfigServiceImpl implements IPipelineConfigService {
     }
 
     private JobRelationDto assembleJobRelationDto(
-            Long jobID,
-            Long pipelineID,
-            Long stageID,
-            Long nextJobID,
-            Long previousJobID,
-            Boolean isHeadJob) {
+        Long jobID,
+        Long pipelineID,
+        Long stageID,
+        Long nextJobID,
+        Long previousJobID,
+        Boolean isHeadJob) {
         JobRelationDto jobRelationDto = new JobRelationDto();
         jobRelationDto
-                .setJobID(jobID)
-                .setPipelineID(pipelineID)
-                .setStageID(stageID)
-                .setNextJobID(nextJobID)
-                .setPreviousJobID(previousJobID)
-                .setIsHeadJob(isHeadJob);
+            .setJobID(jobID)
+            .setPipelineID(pipelineID)
+            .setStageID(stageID)
+            .setNextJobID(nextJobID)
+            .setPreviousJobID(previousJobID)
+            .setIsHeadJob(isHeadJob);
         return jobRelationDto;
     }
 }

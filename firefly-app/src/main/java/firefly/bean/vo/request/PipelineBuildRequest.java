@@ -21,15 +21,20 @@ import java.io.Serializable;
 @ToString
 public class PipelineBuildRequest implements Serializable {
 
-    @Serial private static final long serialVersionUID = 6657589502599019811L;
-    @NotNull private Long pipelineId;
+    @Serial
+    private static final long serialVersionUID = 6657589502599019811L;
+    @NotNull
+    private Long pipelineId;
 
     @NotNull
     @Size(min = 64, max = 64)
     private String uuid;
 
-    @NotNull private TriggerModel triggerModel;
-    @NotNull private TriggerMatch triggerMatch;
+    @NotNull
+    private TriggerModel triggerModel;
+    @NotNull
+    private TriggerMatch triggerMatch;
 
-    @NotNull private TriggerOrigin triggerOrigin;
+    @NotNull
+    private TriggerOrigin triggerOrigin;
 }

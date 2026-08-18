@@ -31,7 +31,7 @@ class BusinessMessageUUIDTests {
         assertNotEquals(runningStage, BusinessMessageUUID.stage(101L, 1, BuildStatus.RUNNING));
         assertNotEquals(runningStage, BusinessMessageUUID.job(101L, 0, BuildStatus.RUNNING));
         assertNotEquals(
-                BusinessMessageUUID.plugin(PluginType.TEXT, 101L, 0, BuildStatus.RUNNING),
-                BusinessMessageUUID.job(101L, 0, BuildStatus.RUNNING));
+            BusinessMessageUUID.plugin(PluginType.TEXT, 101L, 0, BuildStatus.RUNNING),
+            BusinessMessageUUID.job(101L, 0, BuildStatus.RUNNING));
     }
 }

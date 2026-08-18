@@ -16,7 +16,8 @@ import java.util.Map;
 @Service
 public class JobRelationServiceImpl implements IJobRelationService {
 
-    @Autowired private IJobRelationDao jobRelationDao;
+    @Autowired
+    private IJobRelationDao jobRelationDao;
 
     @Override
     public List<JobRelationDto> getJobRelationByStageIDAndHeadJobID(Long stageID, Long headJobID) {
@@ -69,7 +70,7 @@ public class JobRelationServiceImpl implements IJobRelationService {
     @Override
     public List<JobRelationDto> getAllHeadJobRelationByStageID(Long stageID) {
         List<JobRelation> jobRelations =
-                jobRelationDao.getAllHeadJobRelationsByStageID(stageID, true);
+            jobRelationDao.getAllHeadJobRelationsByStageID(stageID, true);
         List<JobRelationDto> result = new ArrayList<>();
         for (JobRelation jobRelation : jobRelations) {
             JobRelationDto dto = assembleJobRelationDto(jobRelation);
@@ -108,25 +109,25 @@ public class JobRelationServiceImpl implements IJobRelationService {
     private JobRelationDto assembleJobRelationDto(JobRelation jobRelation) {
         JobRelationDto jobRelationDto = new JobRelationDto();
         jobRelationDto
-                .setJobID(jobRelation.getJobID())
-                .setPreviousJobID(jobRelation.getPreviousJobID())
-                .setNextJobID(jobRelation.getNextJobID())
-                .setPipelineID(jobRelation.getPipelineID())
-                .setStageID(jobRelation.getStageID())
-                .setIsHeadJob(jobRelation.isHeadJob())
-                .setId(jobRelation.getId());
+            .setJobID(jobRelation.getJobID())
+            .setPreviousJobID(jobRelation.getPreviousJobID())
+            .setNextJobID(jobRelation.getNextJobID())
+            .setPipelineID(jobRelation.getPipelineID())
+            .setStageID(jobRelation.getStageID())
+            .setIsHeadJob(jobRelation.isHeadJob())
+            .setId(jobRelation.getId());
         return jobRelationDto;
     }
 
     public JobRelation assembleJobRelation(JobRelationDto jobRelationDto) {
         JobRelation jobRelation = new JobRelation();
         jobRelation
-                .setJobID(jobRelationDto.getJobID())
-                .setPreviousJobID(jobRelationDto.getPreviousJobID())
-                .setNextJobID(jobRelationDto.getNextJobID())
-                .setPipelineID(jobRelationDto.getPipelineID())
-                .setStageID(jobRelationDto.getStageID())
-                .setHeadJob(jobRelationDto.getIsHeadJob());
+            .setJobID(jobRelationDto.getJobID())
+            .setPreviousJobID(jobRelationDto.getPreviousJobID())
+            .setNextJobID(jobRelationDto.getNextJobID())
+            .setPipelineID(jobRelationDto.getPipelineID())
+            .setStageID(jobRelationDto.getStageID())
+            .setHeadJob(jobRelationDto.getIsHeadJob());
         return jobRelation;
     }
 }

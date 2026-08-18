@@ -19,10 +19,10 @@ public class GitHubDeliveryRecoveryScheduler {
     private final Clock clock;
 
     public GitHubDeliveryRecoveryScheduler(
-            GitHubWebhookDeliveryRepository deliveryRepository,
-            GitHubDeliveryStateService stateService,
-            GitHubWebhookProcessingService processingService,
-            Clock clock) {
+        GitHubWebhookDeliveryRepository deliveryRepository,
+        GitHubDeliveryStateService stateService,
+        GitHubWebhookProcessingService processingService,
+        Clock clock) {
         this.deliveryRepository = deliveryRepository;
         this.stateService = stateService;
         this.processingService = processingService;
@@ -34,16 +34,16 @@ public class GitHubDeliveryRecoveryScheduler {
         stateService.recoverExpired();
         LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         deliveryRepository
-                .findTop100ByStatusAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
-                        GitHubDeliveryStatus.RETRYABLE, now)
-                .forEach(
-                        delivery -> {
-                            try {
-                                processingService.process(delivery.getDeliveryId());
-                            } catch (RuntimeException ignored) {
-                                // The processing service persists the retry state and error
-                                // summary.
-                            }
-                        });
+            .findTop100ByStatusAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
+                GitHubDeliveryStatus.RETRYABLE, now)
+            .forEach(
+                delivery -> {
+                    try {
+                        processingService.process(delivery.getDeliveryId());
+                    } catch (RuntimeException ignored) {
+                        // The processing service persists the retry state and error
+                        // summary.
+                    }
+                });
     }
 }

@@ -26,7 +26,7 @@ class GitHubSecretCipherTests {
 
         assertNotEquals(first.ciphertext(), second.ciphertext());
         assertEquals(
-                "github-token",
-                cipher.decrypt(first.ciphertext(), first.nonce(), first.keyVersion()));
+            "github-token",
+            cipher.decrypt(first.ciphertext(), first.nonce(), first.keyVersion()));
     }
 }

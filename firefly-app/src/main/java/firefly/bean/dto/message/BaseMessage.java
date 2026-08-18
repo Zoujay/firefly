@@ -12,6 +12,7 @@ import lombok.experimental.Accessors;
 @NoArgsConstructor
 @Accessors(chain = true)
 public class BaseMessage {
+
     private Long pipelineBuildID;
     private Long pipelineID;
     private TriggerOrigin triggerOrigin;

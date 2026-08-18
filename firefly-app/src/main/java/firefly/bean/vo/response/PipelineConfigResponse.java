@@ -10,6 +10,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class PipelineConfigResponse {
+
     private Long id;
     private String uuid;
     private String name;

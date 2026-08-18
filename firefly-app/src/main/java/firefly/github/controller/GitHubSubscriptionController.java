@@ -36,10 +36,10 @@ public class GitHubSubscriptionController {
 
     @PutMapping("/connections/{connectionId}/repositories/{owner}/{repository}/subscription")
     public GitHubSubscriptionResponse upsert(
-            @PathVariable String connectionId,
-            @PathVariable String owner,
-            @PathVariable String repository,
-            @Valid @RequestBody GitHubSubscriptionRequest request) {
+        @PathVariable String connectionId,
+        @PathVariable String owner,
+        @PathVariable String repository,
+        @Valid @RequestBody GitHubSubscriptionRequest request) {
         return subscriptionService.upsert(connectionId, owner, repository, request);
     }
 

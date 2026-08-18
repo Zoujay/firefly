@@ -19,9 +19,11 @@ import java.util.List;
 @ExtendWith(MockitoExtension.class)
 class TriggerCenterTests {
 
-    @Mock private ITrigger<VolcanoMessageEntity> volcanoTrigger;
+    @Mock
+    private ITrigger<VolcanoMessageEntity> volcanoTrigger;
 
-    @Mock private ITrigger<GithubMessageEntity> githubTrigger;
+    @Mock
+    private ITrigger<GithubMessageEntity> githubTrigger;
 
     @Test
     void dispatchesToTheTriggerRegisteredForTheMessageOrigin() {
@@ -53,8 +55,8 @@ class TriggerCenterTests {
         when(githubTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.VOLCANO);
 
         assertThrows(
-                IllegalStateException.class,
-                () -> new TriggerCenter(List.of(volcanoTrigger, githubTrigger)));
+            IllegalStateException.class,
+            () -> new TriggerCenter(List.of(volcanoTrigger, githubTrigger)));
     }
 
     @Test
@@ -62,7 +64,7 @@ class TriggerCenterTests {
         TriggerCenter triggerCenter = new TriggerCenter(List.of());
 
         assertThrows(
-                IllegalArgumentException.class,
-                () -> triggerCenter.dispatch(new VolcanoMessageEntity()));
+            IllegalArgumentException.class,
+            () -> triggerCenter.dispatch(new VolcanoMessageEntity()));
     }
 }

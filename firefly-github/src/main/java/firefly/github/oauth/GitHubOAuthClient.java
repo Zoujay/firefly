@@ -34,25 +34,25 @@ public class GitHubOAuthClient {
         StringJoiner scope = new StringJoiner(" ");
         properties.getScopes().forEach(scope::add);
         return UriComponentsBuilder.fromUri(properties.getOauthBaseUrl())
-                .path("/login/oauth/authorize")
-                .queryParam("client_id", properties.getClientId())
-                .queryParam("redirect_uri", properties.getRedirectUri())
-                .queryParam("scope", scope.toString())
-                .queryParam("state", state)
-                .queryParam("code_challenge", codeChallenge)
-                .queryParam("code_challenge_method", "S256")
-                .build()
-                .encode()
-                .toUri();
+            .path("/login/oauth/authorize")
+            .queryParam("client_id", properties.getClientId())
+            .queryParam("redirect_uri", properties.getRedirectUri())
+            .queryParam("scope", scope.toString())
+            .queryParam("state", state)
+            .queryParam("code_challenge", codeChallenge)
+            .queryParam("code_challenge_method", "S256")
+            .build()
+            .encode()
+            .toUri();
     }
 
     public GitHubOAuthResult exchange(String code, String codeVerifier) {
         requireConfigured();
         if (!StringUtils.hasText(code) || !StringUtils.hasText(codeVerifier)) {
             throw new GitHubIntegrationException(
-                    HttpStatus.BAD_REQUEST,
-                    "GITHUB_OAUTH_CALLBACK_INVALID",
-                    "OAuth code and PKCE verifier are required");
+                HttpStatus.BAD_REQUEST,
+                "GITHUB_OAUTH_CALLBACK_INVALID",
+                "OAuth code and PKCE verifier are required");
         }
 
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -64,27 +64,27 @@ public class GitHubOAuthClient {
 
         try {
             GitHubOAuthToken token =
-                    restClient
-                            .post()
-                            .uri(properties.getOauthBaseUrl().resolve("/login/oauth/access_token"))
-                            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                            .accept(MediaType.APPLICATION_JSON)
-                            .body(form)
-                            .retrieve()
-                            .body(GitHubOAuthToken.class);
+                restClient
+                    .post()
+                    .uri(properties.getOauthBaseUrl().resolve("/login/oauth/access_token"))
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .body(form)
+                    .retrieve()
+                    .body(GitHubOAuthToken.class);
             if (token == null || !StringUtils.hasText(token.accessToken())) {
                 throw upstream("GitHub returned an empty OAuth access token", null);
             }
             GitHubUser user =
-                    restClient
-                            .get()
-                            .uri(properties.getApiBaseUrl().resolve("/user"))
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token.accessToken())
-                            .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
-                            .header("X-GitHub-Api-Version", properties.getApiVersion())
-                            .header(HttpHeaders.USER_AGENT, properties.getUserAgent())
-                            .retrieve()
-                            .body(GitHubUser.class);
+                restClient
+                    .get()
+                    .uri(properties.getApiBaseUrl().resolve("/user"))
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token.accessToken())
+                    .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", properties.getApiVersion())
+                    .header(HttpHeaders.USER_AGENT, properties.getUserAgent())
+                    .retrieve()
+                    .body(GitHubUser.class);
             if (user == null || user.id() == null || !StringUtils.hasText(user.login())) {
                 throw upstream("GitHub returned an invalid user", null);
             }
@@ -98,17 +98,17 @@ public class GitHubOAuthClient {
 
     private void requireConfigured() {
         if (!StringUtils.hasText(properties.getClientId())
-                || !StringUtils.hasText(properties.getClientSecret())
-                || properties.getRedirectUri() == null) {
+            || !StringUtils.hasText(properties.getClientSecret())
+            || properties.getRedirectUri() == null) {
             throw new GitHubIntegrationException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "GITHUB_OAUTH_NOT_CONFIGURED",
-                    "GitHub OAuth client is not configured");
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "GITHUB_OAUTH_NOT_CONFIGURED",
+                "GitHub OAuth client is not configured");
         }
     }
 
     private GitHubIntegrationException upstream(String message, Throwable cause) {
         return new GitHubIntegrationException(
-                HttpStatus.BAD_GATEWAY, "GITHUB_UPSTREAM_ERROR", message, cause);
+            HttpStatus.BAD_GATEWAY, "GITHUB_UPSTREAM_ERROR", message, cause);
     }
 }

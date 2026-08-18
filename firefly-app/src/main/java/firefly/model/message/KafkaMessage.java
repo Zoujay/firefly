@@ -82,12 +82,12 @@ public abstract class KafkaMessage {
     private String lastError = StringUtils.EMPTY;
 
     protected KafkaMessage(
-            String messageUUID,
-            String topic,
-            Integer kafkaPartition,
-            Long kafkaOffset,
-            String messageKey,
-            String payload) {
+        String messageUUID,
+        String topic,
+        Integer kafkaPartition,
+        Long kafkaOffset,
+        String messageKey,
+        String payload) {
         this.messageUUID = messageUUID;
         this.topic = topic;
         this.kafkaPartition = kafkaPartition;

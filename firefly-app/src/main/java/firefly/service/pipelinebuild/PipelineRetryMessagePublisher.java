@@ -14,7 +14,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class PipelineRetryMessagePublisher {
 
-    @Autowired private OutboxService outboxService;
+    @Autowired
+    private OutboxService outboxService;
 
     /*
      * BEFORE_COMMIT is required here: OutboxService uses MANDATORY and must
@@ -26,13 +27,13 @@ public class PipelineRetryMessagePublisher {
     public void publish(PipelineRetryPreparedEvent event) {
         TriggerStageMessage message = new TriggerStageMessage();
         message.setStageBuildID(event.stageBuildID())
-                .setBuildStatus(BuildStatus.RUNNING)
-                .setExecutionAttempt(event.executionAttempt())
-                .setMessageUUID(
-                        BusinessMessageUUID.stage(
-                                event.stageBuildID(),
-                                event.executionAttempt(),
-                                BuildStatus.RUNNING));
+            .setBuildStatus(BuildStatus.RUNNING)
+            .setExecutionAttempt(event.executionAttempt())
+            .setMessageUUID(
+                BusinessMessageUUID.stage(
+                    event.stageBuildID(),
+                    event.executionAttempt(),
+                    BuildStatus.RUNNING));
         outboxService.enqueue(KafkaConfiguration.STAGE_TOPIC, message);
     }
 }

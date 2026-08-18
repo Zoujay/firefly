@@ -17,6 +17,7 @@ import java.util.Optional;
 
 @Repository
 public interface IJobBuildDao extends JpaRepository<JobBuild, Long> {
+
     @Query("select j from JobBuild as j where j.stageBuildID = ?1")
     List<JobBuild> getJobBuildsByStageBuildID(Long stageBuildID);
 
@@ -26,7 +27,7 @@ public interface IJobBuildDao extends JpaRepository<JobBuild, Long> {
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
-            """
+        """
             update JobBuild j
             set j.jobStatus = :targetStatus
             where j.id = :jobBuildID
@@ -34,13 +35,13 @@ public interface IJobBuildDao extends JpaRepository<JobBuild, Long> {
               and j.jobStatus = :expectedStatus
             """)
     Integer transitionJobBuildStatus(
-            @Param("jobBuildID") Long jobBuildID,
-            @Param("expectedStatus") BuildStatus expectedStatus,
-            @Param("targetStatus") BuildStatus targetStatus,
-            @Param("executionAttempt") Integer executionAttempt);
+        @Param("jobBuildID") Long jobBuildID,
+        @Param("expectedStatus") BuildStatus expectedStatus,
+        @Param("targetStatus") BuildStatus targetStatus,
+        @Param("executionAttempt") Integer executionAttempt);
 
     @Query(
-            "select j from JobBuild as j where j.jobID = ?1 and j.stageBuildID = ?2 order by j.id"
-                    + " desc limit 1")
+        "select j from JobBuild as j where j.jobID = ?1 and j.stageBuildID = ?2 order by j.id"
+            + " desc limit 1")
     Optional<JobBuild> getJobBuildByJobConfigIDAndStageBuildID(Long jobConfigID, Long stageBuildID);
 }

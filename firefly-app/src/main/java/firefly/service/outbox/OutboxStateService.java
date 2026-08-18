@@ -22,7 +22,8 @@ import java.util.Optional;
 @Service
 public class OutboxStateService {
 
-    @Autowired private IOutboxEventDao outboxEventDao;
+    @Autowired
+    private IOutboxEventDao outboxEventDao;
 
     /**
      * Atomically performs PENDING/FAILED -> PUBLISHING in an independent transaction. Only the
@@ -32,25 +33,25 @@ public class OutboxStateService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<OutboxPublishTask> claim(Long outboxID, String publisherID) {
         int updated =
-                outboxEventDao.claimForPublishing(
-                        outboxID,
-                        List.of(OutboxStatus.PENDING, OutboxStatus.FAILED),
-                        OutboxStatus.PUBLISHING,
-                        publisherID,
-                        LocalDateTime.now(),
-                        UNSET_TIME,
-                        StringUtils.EMPTY);
+            outboxEventDao.claimForPublishing(
+                outboxID,
+                List.of(OutboxStatus.PENDING, OutboxStatus.FAILED),
+                OutboxStatus.PUBLISHING,
+                publisherID,
+                LocalDateTime.now(),
+                UNSET_TIME,
+                StringUtils.EMPTY);
         if (updated != 1) {
             return Optional.empty();
         }
         OutboxEvent event = getRequired(outboxID);
         return Optional.of(
-                new OutboxPublishTask(
-                        event.getId(),
-                        event.getTopic(),
-                        event.getMessageKey(),
-                        event.getPayload(),
-                        publisherID));
+            new OutboxPublishTask(
+                event.getId(),
+                event.getTopic(),
+                event.getMessageKey(),
+                event.getPayload(),
+                publisherID));
     }
 
     /**
@@ -60,13 +61,13 @@ public class OutboxStateService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markSent(Long outboxID, String publisherID) {
         return outboxEventDao.markSent(
-                        outboxID,
-                        OutboxStatus.PUBLISHING,
-                        OutboxStatus.SENT,
-                        publisherID,
-                        LocalDateTime.now(),
-                        StringUtils.EMPTY)
-                == 1;
+            outboxID,
+            OutboxStatus.PUBLISHING,
+            OutboxStatus.SENT,
+            publisherID,
+            LocalDateTime.now(),
+            StringUtils.EMPTY)
+            == 1;
     }
 
     /**
@@ -76,18 +77,18 @@ public class OutboxStateService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markFailed(Long outboxID, String publisherID, Exception exception) {
         String error =
-                StringUtils.left(
-                        StringUtils.defaultIfBlank(
-                                exception.getMessage(), exception.getClass().getName()),
-                        2048);
+            StringUtils.left(
+                StringUtils.defaultIfBlank(
+                    exception.getMessage(), exception.getClass().getName()),
+                2048);
         return outboxEventDao.markFailed(
-                        outboxID,
-                        OutboxStatus.PUBLISHING,
-                        OutboxStatus.FAILED,
-                        publisherID,
-                        LocalDateTime.now(),
-                        error)
-                == 1;
+            outboxID,
+            OutboxStatus.PUBLISHING,
+            OutboxStatus.FAILED,
+            publisherID,
+            LocalDateTime.now(),
+            error)
+            == 1;
     }
 
     /**
@@ -98,20 +99,20 @@ public class OutboxStateService {
     public boolean resetPublishing(Long outboxID, String expectedPublisherID, String reason) {
         String error = StringUtils.left(StringUtils.defaultIfBlank(reason, "MANUAL_RESET"), 2048);
         return outboxEventDao.markFailed(
-                        outboxID,
-                        OutboxStatus.PUBLISHING,
-                        OutboxStatus.FAILED,
-                        expectedPublisherID,
-                        LocalDateTime.now(),
-                        error)
-                == 1;
+            outboxID,
+            OutboxStatus.PUBLISHING,
+            OutboxStatus.FAILED,
+            expectedPublisherID,
+            LocalDateTime.now(),
+            error)
+            == 1;
     }
 
     @Transactional(readOnly = true)
     public OutboxEvent getRequired(Long outboxID) {
         return outboxEventDao
-                .findById(outboxID)
-                .orElseThrow(() -> new OutboxEventNotFoundException(outboxID));
+            .findById(outboxID)
+            .orElseThrow(() -> new OutboxEventNotFoundException(outboxID));
     }
 
     @Transactional(readOnly = true)
@@ -122,7 +123,7 @@ public class OutboxStateService {
     @Transactional(readOnly = true)
     public Page<OutboxEventResponse> getResponses(OutboxStatus status, Pageable pageable) {
         return outboxEventDao
-                .findByPublishStatusOrderByCreatedAtAsc(status, pageable)
-                .map(OutboxEventResponse::from);
+            .findByPublishStatusOrderByCreatedAtAsc(status, pageable)
+            .map(OutboxEventResponse::from);
     }
 }

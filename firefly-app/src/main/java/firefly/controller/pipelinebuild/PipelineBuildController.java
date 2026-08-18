@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class PipelineBuildController {
 
-    @Autowired private IPipelineBuildService pipelineBuildService;
+    @Autowired
+    private IPipelineBuildService pipelineBuildService;
 
     @RequestMapping(value = "/manual_trigger/pipeline", method = RequestMethod.POST)
     public Long TriggerPipeline(@Valid @RequestBody PipelineBuildRequest pipelineBuildRequest) {

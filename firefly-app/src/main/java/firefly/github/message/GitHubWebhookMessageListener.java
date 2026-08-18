@@ -24,33 +24,33 @@ public class GitHubWebhookMessageListener {
     private final GitHubWebhookProcessingService processingService;
 
     public GitHubWebhookMessageListener(
-            ObjectMapper objectMapper, GitHubWebhookProcessingService processingService) {
+        ObjectMapper objectMapper, GitHubWebhookProcessingService processingService) {
         this.objectMapper = objectMapper;
         this.processingService = processingService;
     }
 
     @KafkaListener(topics = GITHUB_WEBHOOK_TOPIC)
     public void onWebhookMessages(
-            List<ConsumerRecord<String, String>> records, Acknowledgment acknowledgment) {
+        List<ConsumerRecord<String, String>> records, Acknowledgment acknowledgment) {
         for (ConsumerRecord<String, String> record : records) {
             try {
                 GitHubWebhookMessage message =
-                        objectMapper.readValue(record.value(), GitHubWebhookMessage.class);
+                    objectMapper.readValue(record.value(), GitHubWebhookMessage.class);
                 processingService.process(message.getDeliveryId());
             } catch (JsonProcessingException exception) {
                 log.error(
-                        "Invalid GitHub webhook message at {}-{}@{}",
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        exception);
+                    "Invalid GitHub webhook message at {}-{}@{}",
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    exception);
             } catch (RuntimeException exception) {
                 log.error(
-                        "GitHub delivery processing failed at {}-{}@{}; delivery is RETRYABLE",
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        exception);
+                    "GitHub delivery processing failed at {}-{}@{}; delivery is RETRYABLE",
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    exception);
             }
         }
         acknowledgment.acknowledge();

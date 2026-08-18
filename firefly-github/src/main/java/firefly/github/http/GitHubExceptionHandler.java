@@ -12,8 +12,8 @@ public class GitHubExceptionHandler {
     @ExceptionHandler(GitHubIntegrationException.class)
     public ResponseEntity<GitHubErrorResponse> handle(GitHubIntegrationException exception) {
         return ResponseEntity.status(exception.getStatus())
-                .body(
-                        new GitHubErrorResponse(
-                                exception.getCode(), exception.getMessage(), Instant.now()));
+            .body(
+                new GitHubErrorResponse(
+                    exception.getCode(), exception.getMessage(), Instant.now()));
     }
 }

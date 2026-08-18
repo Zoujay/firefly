@@ -12,5 +12,6 @@ import java.io.Serializable;
 @Data
 public class TextPluginBuildDto extends PluginBaseDto implements Serializable {
 
-    @Serial private static final long serialVersionUID = 2779689409435933725L;
+    @Serial
+    private static final long serialVersionUID = 2779689409435933725L;
 }

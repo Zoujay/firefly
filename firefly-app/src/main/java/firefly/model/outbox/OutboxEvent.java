@@ -26,21 +26,21 @@ import java.time.LocalDateTime;
 /**
  * Durable record of a Kafka message that Firefly intends to publish.
  *
- * <p>Outbox solves the gap between changing MySQL state and sending Kafka: the business changes and
- * this row are committed in one database transaction. Kafka publication happens only after that
+ * <p>Outbox solves the gap between changing MySQL state and sending Kafka: the business changes
+ * and this row are committed in one database transaction. Kafka publication happens only after that
  * commit. A crash or send failure therefore leaves an explicit PENDING/PUBLISHING/FAILED row for
  * manual recovery instead of silently losing the downstream event.
  */
 @Getter
 @Entity
 @Table(
-        name = "outbox_event",
-        uniqueConstraints =
-                @UniqueConstraint(name = "uidx_outbox_message_uuid", columnNames = "message_uuid"),
-        indexes =
-                @Index(
-                        name = "idx_outbox_publish_status",
-                        columnList = "publish_status,created_at,id"))
+    name = "outbox_event",
+    uniqueConstraints =
+    @UniqueConstraint(name = "uidx_outbox_message_uuid", columnNames = "message_uuid"),
+    indexes =
+    @Index(
+        name = "idx_outbox_publish_status",
+        columnList = "publish_status,created_at,id"))
 public class OutboxEvent {
 
     @Id

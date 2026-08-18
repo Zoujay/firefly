@@ -19,9 +19,9 @@ public class GitHubWebhookSignatureVerifier {
 
     public void verify(byte[] payload, String signature, String secret) {
         if (payload == null
-                || !StringUtils.hasText(signature)
-                || !StringUtils.hasText(secret)
-                || !signature.startsWith(PREFIX)) {
+            || !StringUtils.hasText(signature)
+            || !StringUtils.hasText(secret)
+            || !signature.startsWith(PREFIX)) {
             throw invalidSignature();
         }
         String suppliedHex = signature.substring(PREFIX.length());
@@ -49,8 +49,8 @@ public class GitHubWebhookSignatureVerifier {
 
     private GitHubIntegrationException invalidSignature() {
         return new GitHubIntegrationException(
-                HttpStatus.FORBIDDEN,
-                "GITHUB_WEBHOOK_SIGNATURE_INVALID",
-                "GitHub webhook authentication failed");
+            HttpStatus.FORBIDDEN,
+            "GITHUB_WEBHOOK_SIGNATURE_INVALID",
+            "GitHub webhook authentication failed");
     }
 }

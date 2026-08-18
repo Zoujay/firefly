@@ -21,23 +21,25 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class TextPluginConfigImplTests {
 
-    @Spy private ObjectMapper objectMapper = new ObjectMapper();
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
-    @InjectMocks private TextPluginConfigImpl textPluginConfig;
+    @InjectMocks
+    private TextPluginConfigImpl textPluginConfig;
 
     @Test
     void assembleTextPluginConfigUsesJobConfigId() {
         TextPluginModel model =
-                new TextPluginModel().setId(10L).setJobConfigID(20L).setText("test plugin");
+            new TextPluginModel().setId(10L).setJobConfigID(20L).setText("test plugin");
 
         TextPluginConfigDto result = textPluginConfig.assembleTextPluginConfigDto(model);
         JsonNode json = new ObjectMapper().valueToTree(result);
 
         assertAll(
-                () -> assertEquals(20L, result.getJobConfigID()),
-                () -> assertEquals(20L, json.get("jobConfigID").longValue()),
-                () -> assertTrue(json.has("jobConfigID")),
-                () -> assertFalse(json.has("jobID")));
+            () -> assertEquals(20L, result.getJobConfigID()),
+            () -> assertEquals(20L, json.get("jobConfigID").longValue()),
+            () -> assertTrue(json.has("jobConfigID")),
+            () -> assertFalse(json.has("jobID")));
     }
 
     @Test

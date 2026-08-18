@@ -17,11 +17,14 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class OutboxPublisher {
 
-    @Autowired private OutboxStateService stateService;
+    @Autowired
+    private OutboxStateService stateService;
 
-    @Autowired private KafkaTemplate<String, Object> kafkaTemplate;
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
-    @Autowired private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /**
      * Performs exactly one publication attempt; there is deliberately no loop, scheduler, or
@@ -45,18 +48,18 @@ public class OutboxPublisher {
             kafkaTemplate.send(task.topic(), task.messageKey(), payload).get(10, TimeUnit.SECONDS);
             if (!stateService.markSent(task.id(), task.publisherID())) {
                 log.error(
-                        "Kafka sent Outbox event {}, but PUBLISHING -> SENT "
-                                + "did not match; manual verification is required",
-                        task.id());
+                    "Kafka sent Outbox event {}, but PUBLISHING -> SENT "
+                        + "did not match; manual verification is required",
+                    task.id());
                 return false;
             }
             return true;
         } catch (Exception exception) {
             stateService.markFailed(task.id(), task.publisherID(), exception);
             log.error(
-                    "Failed to publish Outbox event {}; manual retry is required",
-                    task.id(),
-                    exception);
+                "Failed to publish Outbox event {}; manual retry is required",
+                task.id(),
+                exception);
             return false;
         }
     }

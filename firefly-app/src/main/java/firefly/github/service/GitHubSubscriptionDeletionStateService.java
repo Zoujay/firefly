@@ -22,9 +22,9 @@ public class GitHubSubscriptionDeletionStateService {
     private final Clock clock;
 
     public GitHubSubscriptionDeletionStateService(
-            GitHubRepositorySubscriptionRepository subscriptionRepository,
-            GitHubTriggerConfigRepository triggerConfigRepository,
-            Clock clock) {
+        GitHubRepositorySubscriptionRepository subscriptionRepository,
+        GitHubTriggerConfigRepository triggerConfigRepository,
+        Clock clock) {
         this.subscriptionRepository = subscriptionRepository;
         this.triggerConfigRepository = triggerConfigRepository;
         this.clock = clock;
@@ -33,32 +33,32 @@ public class GitHubSubscriptionDeletionStateService {
     @Transactional
     public GitHubSubscriptionDeletionTarget begin(String subscriptionPublicId) {
         GitHubRepositorySubscriptionEntity subscription =
-                subscriptionRepository
-                        .findByPublicId(subscriptionPublicId)
-                        .orElseThrow(() -> notFound(subscriptionPublicId));
+            subscriptionRepository
+                .findByPublicId(subscriptionPublicId)
+                .orElseThrow(() -> notFound(subscriptionPublicId));
         LocalDateTime now = now();
         subscription
-                .setStatus(GitHubSubscriptionStatus.DELETING)
-                .setLastError("")
-                .setUpdatedAt(now);
+            .setStatus(GitHubSubscriptionStatus.DELETING)
+            .setLastError("")
+            .setUpdatedAt(now);
         subscriptionRepository.save(subscription);
 
         var configs = triggerConfigRepository.findAllBySubscriptionId(subscription.getId());
         configs.forEach(
-                config ->
-                        config.setEnabled(false)
-                                .setDisabledReason("SUBSCRIPTION_DELETED")
-                                .setUpdatedAt(now));
+            config ->
+                config.setEnabled(false)
+                    .setDisabledReason("SUBSCRIPTION_DELETED")
+                    .setUpdatedAt(now));
         triggerConfigRepository.saveAll(configs);
 
         return new GitHubSubscriptionDeletionTarget(
-                subscription.getId(),
-                subscription.getPublicId(),
-                subscription.getConnectionId(),
-                subscription.getOwner(),
-                subscription.getRepositoryName(),
-                subscription.getWebhookId(),
-                subscription.getRegistrationMode());
+            subscription.getId(),
+            subscription.getPublicId(),
+            subscription.getConnectionId(),
+            subscription.getOwner(),
+            subscription.getRepositoryName(),
+            subscription.getWebhookId(),
+            subscription.getRegistrationMode());
     }
 
     @Transactional
@@ -73,9 +73,9 @@ public class GitHubSubscriptionDeletionStateService {
 
     private void update(Long subscriptionId, GitHubSubscriptionStatus status, String error) {
         GitHubRepositorySubscriptionEntity subscription =
-                subscriptionRepository
-                        .findById(subscriptionId)
-                        .orElseThrow(() -> notFound(String.valueOf(subscriptionId)));
+            subscriptionRepository
+                .findById(subscriptionId)
+                .orElseThrow(() -> notFound(String.valueOf(subscriptionId)));
         subscription.setStatus(status).setLastError(error).setUpdatedAt(now());
         subscriptionRepository.save(subscription);
     }
@@ -89,9 +89,9 @@ public class GitHubSubscriptionDeletionStateService {
 
     private GitHubIntegrationException notFound(String id) {
         return new GitHubIntegrationException(
-                HttpStatus.NOT_FOUND,
-                "GITHUB_SUBSCRIPTION_NOT_FOUND",
-                "GitHub repository subscription was not found: " + id);
+            HttpStatus.NOT_FOUND,
+            "GITHUB_SUBSCRIPTION_NOT_FOUND",
+            "GitHub repository subscription was not found: " + id);
     }
 
     private LocalDateTime now() {

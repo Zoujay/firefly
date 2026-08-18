@@ -16,6 +16,7 @@ import lombok.experimental.Accessors;
 @Table(name = "text_plugin_build")
 @Accessors(chain = true)
 public class TextPluginBuild extends BasePluginBuild {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

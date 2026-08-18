@@ -15,7 +15,7 @@ public interface GitHubOAuthStateRepository extends JpaRepository<GitHubOAuthSta
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
-            """
+        """
             delete from GitHubOAuthStateEntity s
              where s.id = :id
                and s.consumedAt is null

@@ -24,7 +24,8 @@ import java.util.List;
 @ExtendWith(MockitoExtension.class)
 class GitHubTriggerMatcherTests {
 
-    @Mock private GithubTriggerOriginServiceImpl configService;
+    @Mock
+    private GithubTriggerOriginServiceImpl configService;
 
     @Test
     void matchesPrefixBranchAndPullRequestAction() {
@@ -32,19 +33,19 @@ class GitHubTriggerMatcherTests {
         when(configService.read("actions")).thenReturn(List.of("synchronize"));
         GitHubTriggerMatcher matcher = new GitHubTriggerMatcher(configService);
         GitHubTriggerConfigEntity config =
-                new GitHubTriggerConfigEntity()
-                        .setPipelineId(10L)
-                        .setEnabled(true)
-                        .setEvents("events")
-                        .setPullRequestActions("actions")
-                        .setIgnoreDeletePush(true);
+            new GitHubTriggerConfigEntity()
+                .setPipelineId(10L)
+                .setEnabled(true)
+                .setEvents("events")
+                .setPullRequestActions("actions")
+                .setIgnoreDeletePush(true);
         PipelineModel pipeline =
-                new PipelineModel()
-                        .setId(10L)
-                        .setTriggerOrigin(TriggerOrigin.GITHUB)
-                        .setTriggerMode(TriggerModel.AUTOMATIC)
-                        .setTriggerMatch(TriggerMatch.PREFIX)
-                        .setBranchPattern("release/");
+            new PipelineModel()
+                .setId(10L)
+                .setTriggerOrigin(TriggerOrigin.GITHUB)
+                .setTriggerMode(TriggerModel.AUTOMATIC)
+                .setTriggerMatch(TriggerMatch.PREFIX)
+                .setBranchPattern("release/");
         GitHubWebhookEvent event = event("pull_request", "synchronize", "release/1.0", false);
 
         assertTrue(matcher.matches(event, config, pipeline));
@@ -55,19 +56,19 @@ class GitHubTriggerMatcherTests {
         when(configService.read("events")).thenReturn(List.of("push"));
         GitHubTriggerMatcher matcher = new GitHubTriggerMatcher(configService);
         GitHubTriggerConfigEntity config =
-                new GitHubTriggerConfigEntity()
-                        .setPipelineId(10L)
-                        .setEnabled(true)
-                        .setEvents("events")
-                        .setPullRequestActions("actions")
-                        .setIgnoreDeletePush(true);
+            new GitHubTriggerConfigEntity()
+                .setPipelineId(10L)
+                .setEnabled(true)
+                .setEvents("events")
+                .setPullRequestActions("actions")
+                .setIgnoreDeletePush(true);
         PipelineModel pipeline =
-                new PipelineModel()
-                        .setId(10L)
-                        .setTriggerOrigin(TriggerOrigin.GITHUB)
-                        .setTriggerMode(TriggerModel.AUTOMATIC)
-                        .setTriggerMatch(TriggerMatch.ACCURATE)
-                        .setBranchPattern("main");
+            new PipelineModel()
+                .setId(10L)
+                .setTriggerOrigin(TriggerOrigin.GITHUB)
+                .setTriggerMode(TriggerModel.AUTOMATIC)
+                .setTriggerMatch(TriggerMatch.ACCURATE)
+                .setBranchPattern("main");
 
         assertFalse(matcher.matches(event("push", null, "main", true), config, pipeline));
         pipeline.setTriggerMode(TriggerModel.MANUAL);
@@ -75,25 +76,25 @@ class GitHubTriggerMatcherTests {
     }
 
     private GitHubWebhookEvent event(
-            String eventType, String action, String branch, boolean deleted) {
+        String eventType, String action, String branch, boolean deleted) {
         return new GitHubWebhookEvent(
-                "11111111-1111-1111-1111-111111111111",
-                eventType,
-                action,
-                1L,
-                "acme/repo",
-                "https://github.com/acme/repo",
-                "https://github.com/acme/repo.git",
-                2L,
-                null,
-                branch,
-                branch,
-                branch,
-                "abc",
-                3L,
-                "octocat",
-                Instant.parse("2026-08-15T00:00:00Z"),
-                deleted,
-                null);
+            "11111111-1111-1111-1111-111111111111",
+            eventType,
+            action,
+            1L,
+            "acme/repo",
+            "https://github.com/acme/repo",
+            "https://github.com/acme/repo.git",
+            2L,
+            null,
+            branch,
+            branch,
+            branch,
+            "abc",
+            3L,
+            "octocat",
+            Instant.parse("2026-08-15T00:00:00Z"),
+            deleted,
+            null);
     }
 }

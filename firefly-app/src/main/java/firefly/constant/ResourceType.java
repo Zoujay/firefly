@@ -5,5 +5,6 @@ public enum ResourceType {
     EC2("ec2");
     private String value;
 
-    private ResourceType(String value) {}
+    private ResourceType(String value) {
+    }
 }

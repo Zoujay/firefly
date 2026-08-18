@@ -20,9 +20,11 @@ import java.util.Optional;
 @Transactional
 public class TextPluginConfigImpl implements IPluginConfig {
 
-    @Autowired private ITextPluginConfigDao textPluginConfigDao;
+    @Autowired
+    private ITextPluginConfigDao textPluginConfigDao;
 
-    @Autowired private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public PluginType getPluginType() {
@@ -31,7 +33,7 @@ public class TextPluginConfigImpl implements IPluginConfig {
 
     public TextPluginConfigDto parseJobConfigRequest(JsonNode pluginRaw, Long jobConfigID) {
         TextPluginConfigDto pluginConfigDto =
-                objectMapper.convertValue(pluginRaw, TextPluginConfigDto.class);
+            objectMapper.convertValue(pluginRaw, TextPluginConfigDto.class);
         pluginConfigDto.setJobConfigID(jobConfigID);
         return pluginConfigDto;
     }

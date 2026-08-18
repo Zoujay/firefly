@@ -25,13 +25,18 @@ import java.util.Optional;
 @Service
 @Transactional
 public class JobBuildServiceImpl implements IJobBuildService {
-    @Autowired private IJobBuildDao jobBuildDao;
 
-    @Autowired private IStageBuildService stageBuildService;
+    @Autowired
+    private IJobBuildDao jobBuildDao;
 
-    @Autowired private IJobRelationService jobRelationService;
+    @Autowired
+    private IStageBuildService stageBuildService;
 
-    @Autowired private IStageConfigService stageConfig;
+    @Autowired
+    private IJobRelationService jobRelationService;
+
+    @Autowired
+    private IStageConfigService stageConfig;
 
     @Override
     public Long saveJobBuild(JobBuildDto jobBuildDto) {
@@ -51,20 +56,20 @@ public class JobBuildServiceImpl implements IJobBuildService {
 
     @Override
     public Boolean updateJobBuildStatus(
-            Long jobBuildID, BuildStatus status, Integer executionAttempt) {
+        Long jobBuildID, BuildStatus status, Integer executionAttempt) {
         BuildStatus expectedStatus =
-                status == BuildStatus.RUNNING ? BuildStatus.PENDING : BuildStatus.RUNNING;
+            status == BuildStatus.RUNNING ? BuildStatus.PENDING : BuildStatus.RUNNING;
         int result =
-                jobBuildDao.transitionJobBuildStatus(
-                        jobBuildID, expectedStatus, status, executionAttempt);
+            jobBuildDao.transitionJobBuildStatus(
+                jobBuildID, expectedStatus, status, executionAttempt);
         return result == 1;
     }
 
     @Override
     public JobBuildDto getJobBuildByJobConfigIDAndStageBuildID(
-            Long jobConfigID, Long stageBuildID) {
+        Long jobConfigID, Long stageBuildID) {
         Optional<JobBuild> jobBuildOptional =
-                jobBuildDao.getJobBuildByJobConfigIDAndStageBuildID(jobConfigID, stageBuildID);
+            jobBuildDao.getJobBuildByJobConfigIDAndStageBuildID(jobConfigID, stageBuildID);
         return jobBuildOptional.map(this::assembleJobBuildDto).orElse(null);
     }
 
@@ -72,7 +77,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
     public List<JobBuildDto> getHeadJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
         List<JobRelationDto> jobRelationDtos =
-                jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
+            jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
         List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
         for (JobBuild build : jobBuilds) {
             for (JobRelationDto jobRelationDto : jobRelationDtos) {
@@ -87,7 +92,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
 
     @Override
     public List<JobBuildDto> getRunnableJobBuildsByStageBuildID(
-            Long stageConfigID, Long stageBuildID) {
+        Long stageConfigID, Long stageBuildID) {
         List<JobBuild> jobBuilds = jobBuildDao.getJobBuildsByStageBuildID(stageBuildID);
         Map<Long, JobBuild> jobBuildByConfigID = new HashMap<>();
         for (JobBuild jobBuild : jobBuilds) {
@@ -96,11 +101,11 @@ public class JobBuildServiceImpl implements IJobBuildService {
 
         List<JobBuildDto> runnableJobs = new ArrayList<>();
         List<JobRelationDto> headRelations =
-                jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
+            jobRelationService.getAllHeadJobRelationByStageID(stageConfigID);
         for (JobRelationDto headRelation : headRelations) {
             List<JobRelationDto> chain =
-                    jobRelationService.getJobRelationByStageIDAndHeadJobID(
-                            stageConfigID, headRelation.getJobID());
+                jobRelationService.getJobRelationByStageIDAndHeadJobID(
+                    stageConfigID, headRelation.getJobID());
             for (JobRelationDto relation : chain) {
                 JobBuild jobBuild = jobBuildByConfigID.get(relation.getJobID());
                 if (jobBuild != null && jobBuild.getJobStatus() != BuildStatus.SUCCESS) {
@@ -115,7 +120,7 @@ public class JobBuildServiceImpl implements IJobBuildService {
     @Override
     public List<JobBuildDto> getTailJobBuildsByStageBuildID(Long stageConfigID, Long stageBuildID) {
         return getTailJobBuilds(
-                stageConfigID, jobBuildDao.getJobBuildsByStageBuildID(stageBuildID));
+            stageConfigID, jobBuildDao.getJobBuildsByStageBuildID(stageBuildID));
     }
 
     /**
@@ -127,13 +132,13 @@ public class JobBuildServiceImpl implements IJobBuildService {
     @Transactional(propagation = Propagation.MANDATORY)
     public List<JobBuildDto> getTailJobBuildsForUpdate(Long stageConfigID, Long stageBuildID) {
         return getTailJobBuilds(
-                stageConfigID, jobBuildDao.getJobBuildsByStageBuildIDForUpdate(stageBuildID));
+            stageConfigID, jobBuildDao.getJobBuildsByStageBuildIDForUpdate(stageBuildID));
     }
 
     private List<JobBuildDto> getTailJobBuilds(Long stageConfigID, List<JobBuild> jobBuilds) {
         List<JobBuildDto> jobBuildDtos = new ArrayList<>();
         List<JobRelationDto> jobRelationDtos =
-                jobRelationService.getAllTailJobRelationByStageID(stageConfigID);
+            jobRelationService.getAllTailJobRelationByStageID(stageConfigID);
         for (JobBuild build : jobBuilds) {
             for (JobRelationDto jobRelationDto : jobRelationDtos) {
                 if (Objects.equals(jobRelationDto.getJobID(), build.getJobID())) {
@@ -175,19 +180,19 @@ public class JobBuildServiceImpl implements IJobBuildService {
     private JobBuild assembleJobBuild(JobBuildDto jobBuildDto, BuildStatus status) {
         JobBuild jobBuild = new JobBuild();
         jobBuild.setStageBuildID(jobBuildDto.getStageBuildID())
-                .setJobID(jobBuildDto.getJobConfigID())
-                .setExecutionAttempt(jobBuildDto.getExecutionAttempt())
-                .setJobStatus(status);
+            .setJobID(jobBuildDto.getJobConfigID())
+            .setExecutionAttempt(jobBuildDto.getExecutionAttempt())
+            .setJobStatus(status);
         return jobBuild;
     }
 
     private JobBuildDto assembleJobBuildDto(JobBuild jobBuild) {
         JobBuildDto dto = new JobBuildDto();
         dto.setStageBuildID(jobBuild.getStageBuildID())
-                .setJobConfigID(jobBuild.getJobID())
-                .setJobBuildID(jobBuild.getId())
-                .setExecutionAttempt(jobBuild.getExecutionAttempt())
-                .setStatus(jobBuild.getJobStatus());
+            .setJobConfigID(jobBuild.getJobID())
+            .setJobBuildID(jobBuild.getId())
+            .setExecutionAttempt(jobBuild.getExecutionAttempt())
+            .setStatus(jobBuild.getJobStatus());
         return dto;
     }
 }

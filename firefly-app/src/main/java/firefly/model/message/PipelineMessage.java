@@ -10,29 +10,29 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(
-        name = "pipeline_message",
-        uniqueConstraints = {
-            @UniqueConstraint(name = "uidx_pipeline_message_uuid", columnNames = "message_uuid"),
-            @UniqueConstraint(
-                    name = "uidx_pipeline_message_position",
-                    columnNames = {"topic", "kafka_partition", "kafka_offset"})
-        },
-        indexes = {
-            @Index(name = "idx_pipeline_message_received_at", columnList = "received_at"),
-            @Index(
-                    name = "idx_pipeline_message_processing",
-                    columnList = "processing_status,received_at,id")
-        })
+    name = "pipeline_message",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uidx_pipeline_message_uuid", columnNames = "message_uuid"),
+        @UniqueConstraint(
+            name = "uidx_pipeline_message_position",
+            columnNames = {"topic", "kafka_partition", "kafka_offset"})
+    },
+    indexes = {
+        @Index(name = "idx_pipeline_message_received_at", columnList = "received_at"),
+        @Index(
+            name = "idx_pipeline_message_processing",
+            columnList = "processing_status,received_at,id")
+    })
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PipelineMessage extends KafkaMessage {
 
     public PipelineMessage(
-            String messageUUID,
-            String topic,
-            Integer kafkaPartition,
-            Long kafkaOffset,
-            String messageKey,
-            String payload) {
+        String messageUUID,
+        String topic,
+        Integer kafkaPartition,
+        Long kafkaOffset,
+        String messageKey,
+        String payload) {
         super(messageUUID, topic, kafkaPartition, kafkaOffset, messageKey, payload);
     }
 }

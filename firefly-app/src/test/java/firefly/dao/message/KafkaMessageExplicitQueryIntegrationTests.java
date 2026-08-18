@@ -30,15 +30,19 @@ import java.util.UUID;
 class KafkaMessageExplicitQueryIntegrationTests {
 
     private static final List<MessageProcessingStatus> CLAIMABLE_STATUSES =
-            List.of(MessageProcessingStatus.ARCHIVED, MessageProcessingStatus.FAILURE);
+        List.of(MessageProcessingStatus.ARCHIVED, MessageProcessingStatus.FAILURE);
 
-    @Autowired private IPipelineMessageDao pipelineMessageDao;
+    @Autowired
+    private IPipelineMessageDao pipelineMessageDao;
 
-    @Autowired private IStageMessageDao stageMessageDao;
+    @Autowired
+    private IStageMessageDao stageMessageDao;
 
-    @Autowired private IJobMessageDao jobMessageDao;
+    @Autowired
+    private IJobMessageDao jobMessageDao;
 
-    @Autowired private IPluginMessageDao pluginMessageDao;
+    @Autowired
+    private IPluginMessageDao pluginMessageDao;
 
     private long nextOffset = 10_000_000L;
 
@@ -51,18 +55,18 @@ class KafkaMessageExplicitQueryIntegrationTests {
     }
 
     private <T extends KafkaMessage> void verifyStateTransitions(
-            IKafkaMessageDao<T> dao, T successfulMessage, T retriedMessage) {
+        IKafkaMessageDao<T> dao, T successfulMessage, T retriedMessage) {
         dao.save(successfulMessage);
         assertEquals(1, claim(dao, successfulMessage.getMessageUUID(), "success-worker"));
         assertEquals(
-                1,
-                dao.markProcessingSuccess(
-                        successfulMessage.getMessageUUID(),
-                        MessageProcessingStatus.PROCESSING,
-                        MessageProcessingStatus.SUCCESS,
-                        "success-worker",
-                        LocalDateTime.now(),
-                        StringUtils.EMPTY));
+            1,
+            dao.markProcessingSuccess(
+                successfulMessage.getMessageUUID(),
+                MessageProcessingStatus.PROCESSING,
+                MessageProcessingStatus.SUCCESS,
+                "success-worker",
+                LocalDateTime.now(),
+                StringUtils.EMPTY));
         KafkaMessage success = findRequired(dao, successfulMessage.getMessageUUID());
         assertEquals(MessageProcessingStatus.SUCCESS, success.getProcessingStatus());
         assertEquals(1, success.getProcessingAttempt());
@@ -71,23 +75,23 @@ class KafkaMessageExplicitQueryIntegrationTests {
         dao.save(retriedMessage);
         assertEquals(1, claim(dao, retriedMessage.getMessageUUID(), "failure-worker"));
         assertEquals(
-                0,
-                dao.markProcessingSuccess(
-                        retriedMessage.getMessageUUID(),
-                        MessageProcessingStatus.PROCESSING,
-                        MessageProcessingStatus.SUCCESS,
-                        "wrong-worker",
-                        LocalDateTime.now(),
-                        StringUtils.EMPTY));
+            0,
+            dao.markProcessingSuccess(
+                retriedMessage.getMessageUUID(),
+                MessageProcessingStatus.PROCESSING,
+                MessageProcessingStatus.SUCCESS,
+                "wrong-worker",
+                LocalDateTime.now(),
+                StringUtils.EMPTY));
         assertEquals(
-                1,
-                dao.markProcessingFailure(
-                        retriedMessage.getMessageUUID(),
-                        MessageProcessingStatus.PROCESSING,
-                        MessageProcessingStatus.FAILURE,
-                        "failure-worker",
-                        LocalDateTime.now(),
-                        "business failed"));
+            1,
+            dao.markProcessingFailure(
+                retriedMessage.getMessageUUID(),
+                MessageProcessingStatus.PROCESSING,
+                MessageProcessingStatus.FAILURE,
+                "failure-worker",
+                LocalDateTime.now(),
+                "business failed"));
         KafkaMessage failure = findRequired(dao, retriedMessage.getMessageUUID());
         assertEquals(MessageProcessingStatus.FAILURE, failure.getProcessingStatus());
         assertEquals(1, failure.getProcessingAttempt());
@@ -102,59 +106,59 @@ class KafkaMessageExplicitQueryIntegrationTests {
     }
 
     private <T extends KafkaMessage> int claim(
-            IKafkaMessageDao<T> dao, String messageUUID, String processorID) {
+        IKafkaMessageDao<T> dao, String messageUUID, String processorID) {
         return dao.claimForProcessing(
-                messageUUID,
-                CLAIMABLE_STATUSES,
-                MessageProcessingStatus.PROCESSING,
-                processorID,
-                LocalDateTime.now(),
-                UNSET_TIME,
-                StringUtils.EMPTY);
+            messageUUID,
+            CLAIMABLE_STATUSES,
+            MessageProcessingStatus.PROCESSING,
+            processorID,
+            LocalDateTime.now(),
+            UNSET_TIME,
+            StringUtils.EMPTY);
     }
 
     private <T extends KafkaMessage> KafkaMessage findRequired(
-            IKafkaMessageDao<T> dao, String messageUUID) {
+        IKafkaMessageDao<T> dao, String messageUUID) {
         return dao.findByMessageUUID(messageUUID).orElseThrow();
     }
 
     private PipelineMessage pipelineMessage() {
         return new PipelineMessage(
-                UUID.randomUUID().toString(),
-                PIPELINE_TOPIC,
-                0,
-                nextOffset++,
-                UUID.randomUUID().toString(),
-                "{}");
+            UUID.randomUUID().toString(),
+            PIPELINE_TOPIC,
+            0,
+            nextOffset++,
+            UUID.randomUUID().toString(),
+            "{}");
     }
 
     private StageMessage stageMessage() {
         return new StageMessage(
-                UUID.randomUUID().toString(),
-                STAGE_TOPIC,
-                0,
-                nextOffset++,
-                UUID.randomUUID().toString(),
-                "{}");
+            UUID.randomUUID().toString(),
+            STAGE_TOPIC,
+            0,
+            nextOffset++,
+            UUID.randomUUID().toString(),
+            "{}");
     }
 
     private JobMessage jobMessage() {
         return new JobMessage(
-                UUID.randomUUID().toString(),
-                JOB_TOPIC,
-                0,
-                nextOffset++,
-                UUID.randomUUID().toString(),
-                "{}");
+            UUID.randomUUID().toString(),
+            JOB_TOPIC,
+            0,
+            nextOffset++,
+            UUID.randomUUID().toString(),
+            "{}");
     }
 
     private PluginMessage pluginMessage() {
         return new PluginMessage(
-                UUID.randomUUID().toString(),
-                PLUGIN_TOPIC,
-                0,
-                nextOffset++,
-                UUID.randomUUID().toString(),
-                "{}");
+            UUID.randomUUID().toString(),
+            PLUGIN_TOPIC,
+            0,
+            nextOffset++,
+            UUID.randomUUID().toString(),
+            "{}");
     }
 }

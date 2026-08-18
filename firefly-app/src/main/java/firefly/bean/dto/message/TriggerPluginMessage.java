@@ -17,7 +17,8 @@ import java.io.Serializable;
 @Accessors(chain = true)
 public class TriggerPluginMessage implements Serializable, KafkaBusinessMessage {
 
-    @Serial private static final long serialVersionUID = -4709514640861674239L;
+    @Serial
+    private static final long serialVersionUID = -4709514640861674239L;
 
     private String messageUUID;
 

@@ -24,19 +24,24 @@ import java.util.UUID;
 @Service
 public class KafkaMessageStore {
 
-    @Autowired private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    @Autowired private IPipelineMessageDao pipelineMessageDao;
+    @Autowired
+    private IPipelineMessageDao pipelineMessageDao;
 
-    @Autowired private IStageMessageDao stageMessageDao;
+    @Autowired
+    private IStageMessageDao stageMessageDao;
 
-    @Autowired private IJobMessageDao jobMessageDao;
+    @Autowired
+    private IJobMessageDao jobMessageDao;
 
-    @Autowired private IPluginMessageDao pluginMessageDao;
+    @Autowired
+    private IPluginMessageDao pluginMessageDao;
 
     @Transactional
     public KafkaMessageSaveResult savePipelineMessages(
-            List<ConsumerRecord<String, String>> messages) {
+        List<ConsumerRecord<String, String>> messages) {
         return saveMessages(messages, pipelineMessageDao::insertIfAbsent);
     }
 
@@ -52,12 +57,12 @@ public class KafkaMessageStore {
 
     @Transactional
     public KafkaMessageSaveResult savePluginMessages(
-            List<ConsumerRecord<String, String>> messages) {
+        List<ConsumerRecord<String, String>> messages) {
         return saveMessages(messages, pluginMessageDao::insertIfAbsent);
     }
 
     private KafkaMessageSaveResult saveMessages(
-            List<ConsumerRecord<String, String>> messages, MessageInserter inserter) {
+        List<ConsumerRecord<String, String>> messages, MessageInserter inserter) {
         if (messages.isEmpty()) {
             return new KafkaMessageSaveResult(List.of(), 0);
         }
@@ -72,13 +77,13 @@ public class KafkaMessageStore {
         for (Map.Entry<String, ConsumerRecord<String, String>> entry : uniqueMessages.entrySet()) {
             ConsumerRecord<String, String> message = entry.getValue();
             int inserted =
-                    inserter.insertIfAbsent(
-                            entry.getKey(),
-                            message.topic(),
-                            message.partition(),
-                            message.offset(),
-                            message.key() == null ? StringUtils.EMPTY : message.key(),
-                            message.value());
+                inserter.insertIfAbsent(
+                    entry.getKey(),
+                    message.topic(),
+                    message.partition(),
+                    message.offset(),
+                    message.key() == null ? StringUtils.EMPTY : message.key(),
+                    message.value());
             if (inserted == 1) {
                 newMessages.add(message);
             }
@@ -118,16 +123,16 @@ public class KafkaMessageStore {
     }
 
     private IllegalArgumentException invalidMessage(
-            ConsumerRecord<String, String> message, String reason, Exception cause) {
+        ConsumerRecord<String, String> message, String reason, Exception cause) {
         String description =
-                "Invalid Kafka business message at "
-                        + message.topic()
-                        + "-"
-                        + message.partition()
-                        + "@"
-                        + message.offset()
-                        + ": "
-                        + reason;
+            "Invalid Kafka business message at "
+                + message.topic()
+                + "-"
+                + message.partition()
+                + "@"
+                + message.offset()
+                + ": "
+                + reason;
         return new IllegalArgumentException(description, cause);
     }
 
@@ -135,11 +140,11 @@ public class KafkaMessageStore {
     private interface MessageInserter {
 
         int insertIfAbsent(
-                String messageUUID,
-                String topic,
-                Integer kafkaPartition,
-                Long kafkaOffset,
-                String messageKey,
-                String payload);
+            String messageUUID,
+            String topic,
+            Integer kafkaPartition,
+            Long kafkaOffset,
+            String messageKey,
+            String payload);
     }
 }

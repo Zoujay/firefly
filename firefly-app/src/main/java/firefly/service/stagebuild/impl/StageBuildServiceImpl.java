@@ -21,7 +21,8 @@ import java.util.Optional;
 @Transactional
 public class StageBuildServiceImpl implements IStageBuildService {
 
-    @Autowired private IStageBuildDao stageBuildDao;
+    @Autowired
+    private IStageBuildDao stageBuildDao;
 
     @Override
     public Long saveStageBuild(StageBuildDto stageBuildDto) {
@@ -48,21 +49,21 @@ public class StageBuildServiceImpl implements IStageBuildService {
     @Transactional(propagation = Propagation.MANDATORY)
     public StageBuildDto lockStageBuild(Long stageBuildID, Integer executionAttempt) {
         StageBuild stageBuild =
-                stageBuildDao
-                        .findForUpdate(stageBuildID, executionAttempt)
-                        .orElseThrow(
-                                () ->
-                                        new IllegalStateException(
-                                                "Stage build does not exist or executionAttempt is"
-                                                        + " stale: "
-                                                        + stageBuildID));
+            stageBuildDao
+                .findForUpdate(stageBuildID, executionAttempt)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Stage build does not exist or executionAttempt is"
+                                + " stale: "
+                                + stageBuildID));
         return assembleStageBuildDto(stageBuild);
     }
 
     @Override
     public StageBuildDto getFirstStageToRun(Long pipelineBuildID) {
         List<StageBuild> stageBuilds =
-                stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
+            stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
         if (CollectionUtils.isEmpty(stageBuilds)) {
             return null;
         }
@@ -83,7 +84,7 @@ public class StageBuildServiceImpl implements IStageBuildService {
     @Override
     public List<StageBuildDto> getStageBuildsByPipelineBuildID(Long pipelineBuildID) {
         List<StageBuild> stageBuilds =
-                stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
+            stageBuildDao.getStageBuildByPipelineBuildID(pipelineBuildID);
         if (CollectionUtils.isEmpty(stageBuilds)) {
             return Collections.emptyList();
         }
@@ -94,50 +95,50 @@ public class StageBuildServiceImpl implements IStageBuildService {
 
     @Override
     public Boolean updateStageBuildStatusByID(
-            BuildStatus status, Long id, Integer executionAttempt) {
+        BuildStatus status, Long id, Integer executionAttempt) {
         Integer res = stageBuildDao.updateStageBuildStatusByID(status, id, executionAttempt);
         return res >= 1;
     }
 
     @Override
     public Boolean transitionStageBuildStatus(
-            Long stageBuildID,
-            BuildStatus expectedStatus,
-            BuildStatus targetStatus,
-            Integer executionAttempt) {
+        Long stageBuildID,
+        BuildStatus expectedStatus,
+        BuildStatus targetStatus,
+        Integer executionAttempt) {
         Integer affectedRows =
-                stageBuildDao.transitionStageBuildStatus(
-                        stageBuildID, expectedStatus, targetStatus, executionAttempt);
+            stageBuildDao.transitionStageBuildStatus(
+                stageBuildID, expectedStatus, targetStatus, executionAttempt);
         return affectedRows == 1;
     }
 
     @Override
     public StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(
-            Long stageConfigID, Long pipelineBuildID) {
+        Long stageConfigID, Long pipelineBuildID) {
         Optional<StageBuild> stageBuild =
-                stageBuildDao.getStageBuildByStageConfigIDAndPipelineBuildID(
-                        stageConfigID, pipelineBuildID);
+            stageBuildDao.getStageBuildByStageConfigIDAndPipelineBuildID(
+                stageConfigID, pipelineBuildID);
         return stageBuild.map(this::assembleStageBuildDto).orElse(null);
     }
 
     private StageBuild assembleStageBuild(StageBuildDto stageBuildDto) {
         StageBuild stageBuild = new StageBuild();
         stageBuild
-                .setStageStatus(stageBuildDto.getStatus())
-                .setPipelineBuildID(stageBuildDto.getPipelineBuildID())
-                .setExecutionAttempt(stageBuildDto.getExecutionAttempt())
-                .setStageID(stageBuildDto.getStageConfigID());
+            .setStageStatus(stageBuildDto.getStatus())
+            .setPipelineBuildID(stageBuildDto.getPipelineBuildID())
+            .setExecutionAttempt(stageBuildDto.getExecutionAttempt())
+            .setStageID(stageBuildDto.getStageConfigID());
         return stageBuild;
     }
 
     private StageBuildDto assembleStageBuildDto(StageBuild stageBuild) {
         StageBuildDto stageBuildDto = new StageBuildDto();
         stageBuildDto
-                .setStageBuildID(stageBuild.getId())
-                .setStatus(stageBuild.getStageStatus())
-                .setPipelineBuildID(stageBuild.getPipelineBuildID())
-                .setExecutionAttempt(stageBuild.getExecutionAttempt())
-                .setStageConfigID(stageBuild.getStageID());
+            .setStageBuildID(stageBuild.getId())
+            .setStatus(stageBuild.getStageStatus())
+            .setPipelineBuildID(stageBuild.getPipelineBuildID())
+            .setExecutionAttempt(stageBuild.getExecutionAttempt())
+            .setStageConfigID(stageBuild.getStageID());
         return stageBuildDto;
     }
 }

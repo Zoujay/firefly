@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface GitHubRepositorySubscriptionRepository
-        extends JpaRepository<GitHubRepositorySubscriptionEntity, Long> {
+    extends JpaRepository<GitHubRepositorySubscriptionEntity, Long> {
 
     Optional<GitHubRepositorySubscriptionEntity> findByPublicId(String publicId);
 
@@ -24,11 +24,11 @@ public interface GitHubRepositorySubscriptionRepository
     List<GitHubRepositorySubscriptionEntity> findAllByConnectionId(Long connectionId);
 
     List<GitHubRepositorySubscriptionEntity> findAllByGithubRepositoryIdAndWebhookIdIsNullAndStatus(
-            Long repositoryId, GitHubSubscriptionStatus status);
+        Long repositoryId, GitHubSubscriptionStatus status);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
-            """
+        """
             update GitHubRepositorySubscriptionEntity s
                set s.webhookId = :webhookId,
                    s.status = :active,
@@ -39,15 +39,15 @@ public interface GitHubRepositorySubscriptionRepository
                and s.status = :provisioning
             """)
     int bindWebhookIfUnbound(
-            @Param("id") Long id,
-            @Param("webhookId") Long webhookId,
-            @Param("provisioning") GitHubSubscriptionStatus provisioning,
-            @Param("active") GitHubSubscriptionStatus active,
-            @Param("updatedAt") LocalDateTime updatedAt);
+        @Param("id") Long id,
+        @Param("webhookId") Long webhookId,
+        @Param("provisioning") GitHubSubscriptionStatus provisioning,
+        @Param("active") GitHubSubscriptionStatus active,
+        @Param("updatedAt") LocalDateTime updatedAt);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
-            """
+        """
             update GitHubRepositorySubscriptionEntity s
                set s.status = :active,
                    s.lastError = '',
@@ -57,9 +57,9 @@ public interface GitHubRepositorySubscriptionRepository
                and s.status = :provisioning
             """)
     int activateBoundWebhook(
-            @Param("id") Long id,
-            @Param("webhookId") Long webhookId,
-            @Param("provisioning") GitHubSubscriptionStatus provisioning,
-            @Param("active") GitHubSubscriptionStatus active,
-            @Param("updatedAt") LocalDateTime updatedAt);
+        @Param("id") Long id,
+        @Param("webhookId") Long webhookId,
+        @Param("provisioning") GitHubSubscriptionStatus provisioning,
+        @Param("active") GitHubSubscriptionStatus active,
+        @Param("updatedAt") LocalDateTime updatedAt);
 }

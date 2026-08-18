@@ -16,4 +16,6 @@ import java.lang.annotation.Target;
 @Inherited
 @SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
 @Import(MySqlTestcontainersConfiguration.class)
-public @interface FireflyIntegrationTest {}
+public @interface FireflyIntegrationTest {
+
+}

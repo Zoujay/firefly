@@ -16,7 +16,8 @@ import java.time.ZoneOffset;
 @Service
 public class GithubTrigger extends AbstractTrigger<GithubTriggerEntity, GithubMessageEntity> {
 
-    @Autowired private IGithubTriggerDao githubTriggerDao;
+    @Autowired
+    private IGithubTriggerDao githubTriggerDao;
 
     @Override
     public TriggerOrigin getTriggerOrigin() {
@@ -32,23 +33,23 @@ public class GithubTrigger extends AbstractTrigger<GithubTriggerEntity, GithubMe
     protected GithubTriggerEntity saveRealTrigger(GithubMessageEntity message) {
         GithubTriggerEntity triggerEntity = new GithubTriggerEntity();
         triggerEntity
-                .setGithubRepoURL(message.getRepositoryUrl())
-                .setDeliveryId(message.getDeliveryId())
-                .setPipelineId(message.getPipelineID())
-                .setPipelineBuildId(message.getPipelineBuildID())
-                .setGithubRepositoryId(message.getRepositoryId())
-                .setEventType(message.getEventType())
-                .setAction(message.getAction())
-                .setSourceBranch(message.getSourceBranch())
-                .setTargetBranch(message.getTargetBranch())
-                .setHeadSha(message.getHeadSha())
-                .setLegacyRecord(false)
-                .setCreatedAt(
-                        LocalDateTime.ofInstant(
-                                message.getReceivedAt() == null
-                                        ? Instant.now()
-                                        : message.getReceivedAt(),
-                                ZoneOffset.UTC));
+            .setGithubRepoURL(message.getRepositoryUrl())
+            .setDeliveryId(message.getDeliveryId())
+            .setPipelineId(message.getPipelineID())
+            .setPipelineBuildId(message.getPipelineBuildID())
+            .setGithubRepositoryId(message.getRepositoryId())
+            .setEventType(message.getEventType())
+            .setAction(message.getAction())
+            .setSourceBranch(message.getSourceBranch())
+            .setTargetBranch(message.getTargetBranch())
+            .setHeadSha(message.getHeadSha())
+            .setLegacyRecord(false)
+            .setCreatedAt(
+                LocalDateTime.ofInstant(
+                    message.getReceivedAt() == null
+                        ? Instant.now()
+                        : message.getReceivedAt(),
+                    ZoneOffset.UTC));
         return githubTriggerDao.save(triggerEntity);
     }
 }

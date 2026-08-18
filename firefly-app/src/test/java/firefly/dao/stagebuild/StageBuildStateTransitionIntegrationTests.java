@@ -22,19 +22,21 @@ import java.util.concurrent.TimeUnit;
 @FireflyIntegrationTest
 class StageBuildStateTransitionIntegrationTests {
 
-    @Autowired private IStageBuildDao stageBuildDao;
+    @Autowired
+    private IStageBuildDao stageBuildDao;
 
-    @Autowired private IStageBuildService stageBuildService;
+    @Autowired
+    private IStageBuildService stageBuildService;
 
     @Test
     void allowsOnlyOneVirtualThreadToCompleteAStage() throws Exception {
         StageBuild stageBuild =
-                stageBuildDao.saveAndFlush(
-                        new StageBuild()
-                                .setPipelineBuildID(9101L)
-                                .setStageID(9201L)
-                                .setStageStatus(BuildStatus.RUNNING)
-                                .setExecutionAttempt(1));
+            stageBuildDao.saveAndFlush(
+                new StageBuild()
+                    .setPipelineBuildID(9101L)
+                    .setStageID(9201L)
+                    .setStageStatus(BuildStatus.RUNNING)
+                    .setExecutionAttempt(1));
 
         int taskCount = 20;
         CountDownLatch ready = new CountDownLatch(taskCount);
@@ -44,16 +46,16 @@ class StageBuildStateTransitionIntegrationTests {
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < taskCount; i++) {
                 results.add(
-                        executor.submit(
-                                () -> {
-                                    ready.countDown();
-                                    start.await();
-                                    return stageBuildService.transitionStageBuildStatus(
-                                            stageBuild.getId(),
-                                            BuildStatus.RUNNING,
-                                            BuildStatus.SUCCESS,
-                                            1);
-                                }));
+                    executor.submit(
+                        () -> {
+                            ready.countDown();
+                            start.await();
+                            return stageBuildService.transitionStageBuildStatus(
+                                stageBuild.getId(),
+                                BuildStatus.RUNNING,
+                                BuildStatus.SUCCESS,
+                                1);
+                        }));
             }
 
             assertTrue(ready.await(10, TimeUnit.SECONDS));
@@ -68,8 +70,8 @@ class StageBuildStateTransitionIntegrationTests {
 
             assertEquals(1L, successfulTransitions);
             assertEquals(
-                    BuildStatus.SUCCESS,
-                    stageBuildDao.findById(stageBuild.getId()).orElseThrow().getStageStatus());
+                BuildStatus.SUCCESS,
+                stageBuildDao.findById(stageBuild.getId()).orElseThrow().getStageStatus());
         } finally {
             stageBuildDao.deleteById(stageBuild.getId());
         }
@@ -78,17 +80,17 @@ class StageBuildStateTransitionIntegrationTests {
     @Test
     void rejectsAStatusTransitionFromAnOlderExecutionAttempt() {
         StageBuild stageBuild =
-                stageBuildDao.saveAndFlush(
-                        new StageBuild()
-                                .setPipelineBuildID(9102L)
-                                .setStageID(9202L)
-                                .setStageStatus(BuildStatus.RUNNING)
-                                .setExecutionAttempt(2));
+            stageBuildDao.saveAndFlush(
+                new StageBuild()
+                    .setPipelineBuildID(9102L)
+                    .setStageID(9202L)
+                    .setStageStatus(BuildStatus.RUNNING)
+                    .setExecutionAttempt(2));
 
         try {
             Boolean transitioned =
-                    stageBuildService.transitionStageBuildStatus(
-                            stageBuild.getId(), BuildStatus.RUNNING, BuildStatus.SUCCESS, 1);
+                stageBuildService.transitionStageBuildStatus(
+                    stageBuild.getId(), BuildStatus.RUNNING, BuildStatus.SUCCESS, 1);
 
             assertEquals(false, transitioned);
             StageBuild persisted = stageBuildDao.findById(stageBuild.getId()).orElseThrow();

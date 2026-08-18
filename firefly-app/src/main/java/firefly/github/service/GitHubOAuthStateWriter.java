@@ -25,7 +25,7 @@ public class GitHubOAuthStateWriter {
             return Optional.empty();
         }
         return stateRepository.consumePending(pending.get().getId()) == 1
-                ? pending
-                : Optional.empty();
+            ? pending
+            : Optional.empty();
     }
 }

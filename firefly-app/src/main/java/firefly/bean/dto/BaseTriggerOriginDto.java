@@ -1,3 +1,5 @@
 package firefly.bean.dto;
 
-public class BaseTriggerOriginDto {}
+public class BaseTriggerOriginDto {
+
+}

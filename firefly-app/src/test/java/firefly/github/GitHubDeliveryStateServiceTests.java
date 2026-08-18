@@ -28,27 +28,28 @@ import java.util.Optional;
 class GitHubDeliveryStateServiceTests {
 
     private static final Clock CLOCK =
-            Clock.fixed(Instant.parse("2026-08-16T00:00:00Z"), ZoneOffset.UTC);
+        Clock.fixed(Instant.parse("2026-08-16T00:00:00Z"), ZoneOffset.UTC);
 
-    @Mock private GitHubWebhookDeliveryRepository deliveryRepository;
+    @Mock
+    private GitHubWebhookDeliveryRepository deliveryRepository;
 
     @Test
     void staleProcessorCannotFinishDelivery() {
         GitHubWebhookDeliveryEntity delivery =
-                new GitHubWebhookDeliveryEntity().setDeliveryId("delivery").setProcessingAttempt(1);
+            new GitHubWebhookDeliveryEntity().setDeliveryId("delivery").setProcessingAttempt(1);
         when(deliveryRepository.findByDeliveryId("delivery")).thenReturn(Optional.of(delivery));
         when(deliveryRepository.finishOwned(
-                        eq("delivery"),
-                        eq("old-worker"),
-                        eq(GitHubDeliveryStatus.PROCESSING),
-                        eq(GitHubDeliveryStatus.SUCCESS),
-                        eq(""),
-                        any(LocalDateTime.class),
-                        eq(null)))
-                .thenReturn(0);
+            eq("delivery"),
+            eq("old-worker"),
+            eq(GitHubDeliveryStatus.PROCESSING),
+            eq(GitHubDeliveryStatus.SUCCESS),
+            eq(""),
+            any(LocalDateTime.class),
+            eq(null)))
+            .thenReturn(0);
 
         boolean finished =
-                service().finish("delivery", "old-worker", GitHubDeliveryStatus.SUCCESS, "");
+            service().finish("delivery", "old-worker", GitHubDeliveryStatus.SUCCESS, "");
 
         assertFalse(finished);
     }
@@ -56,28 +57,28 @@ class GitHubDeliveryStateServiceTests {
     @Test
     void ownedProcessorCanFinishDelivery() {
         GitHubWebhookDeliveryEntity delivery =
-                new GitHubWebhookDeliveryEntity().setDeliveryId("delivery").setProcessingAttempt(1);
+            new GitHubWebhookDeliveryEntity().setDeliveryId("delivery").setProcessingAttempt(1);
         when(deliveryRepository.findByDeliveryId("delivery")).thenReturn(Optional.of(delivery));
         when(deliveryRepository.finishOwned(
-                        eq("delivery"),
-                        eq("worker"),
-                        eq(GitHubDeliveryStatus.PROCESSING),
-                        eq(GitHubDeliveryStatus.SUCCESS),
-                        eq(""),
-                        any(LocalDateTime.class),
-                        eq(null)))
-                .thenReturn(1);
+            eq("delivery"),
+            eq("worker"),
+            eq(GitHubDeliveryStatus.PROCESSING),
+            eq(GitHubDeliveryStatus.SUCCESS),
+            eq(""),
+            any(LocalDateTime.class),
+            eq(null)))
+            .thenReturn(1);
 
         assertTrue(service().finish("delivery", "worker", GitHubDeliveryStatus.SUCCESS, ""));
         verify(deliveryRepository)
-                .finishOwned(
-                        eq("delivery"),
-                        eq("worker"),
-                        eq(GitHubDeliveryStatus.PROCESSING),
-                        eq(GitHubDeliveryStatus.SUCCESS),
-                        eq(""),
-                        any(LocalDateTime.class),
-                        eq(null));
+            .finishOwned(
+                eq("delivery"),
+                eq("worker"),
+                eq(GitHubDeliveryStatus.PROCESSING),
+                eq(GitHubDeliveryStatus.SUCCESS),
+                eq(""),
+                any(LocalDateTime.class),
+                eq(null));
     }
 
     private GitHubDeliveryStateService service() {

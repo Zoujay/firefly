@@ -20,9 +20,11 @@ import java.util.UUID;
 @Service
 public class KafkaMessageProcessingCoordinator {
 
-    @Autowired private KafkaMessageStateService stateService;
+    @Autowired
+    private KafkaMessageStateService stateService;
 
-    @Autowired private KafkaMessageProcessingTransaction processingTransaction;
+    @Autowired
+    private KafkaMessageProcessingTransaction processingTransaction;
 
     public boolean process(MessageCategory category, String messageUUID) {
         String processorID = UUID.randomUUID().toString();
@@ -35,22 +37,22 @@ public class KafkaMessageProcessingCoordinator {
             return true;
         } catch (Exception exception) {
             boolean marked =
-                    stateService.markFailure(category, messageUUID, processorID, exception);
+                stateService.markFailure(category, messageUUID, processorID, exception);
             if (!marked) {
                 log.error(
-                        "Failed to record Inbox processing failure: category={}, messageUUID={},"
-                                + " processorID={}",
-                        category,
-                        messageUUID,
-                        processorID,
-                        exception);
+                    "Failed to record Inbox processing failure: category={}, messageUUID={},"
+                        + " processorID={}",
+                    category,
+                    messageUUID,
+                    processorID,
+                    exception);
             } else {
                 log.error(
-                        "Inbox processing failed and requires manual recovery: category={},"
-                                + " messageUUID={}",
-                        category,
-                        messageUUID,
-                        exception);
+                    "Inbox processing failed and requires manual recovery: category={},"
+                        + " messageUUID={}",
+                    category,
+                    messageUUID,
+                    exception);
             }
             return false;
         }

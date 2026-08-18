@@ -11,7 +11,9 @@ import java.io.Serializable;
 @ToString
 @Data
 public class TextPluginConfigDto extends AbstractPluginDto implements Serializable {
-    @Serial private static final long serialVersionUID = -195154578987742967L;
+
+    @Serial
+    private static final long serialVersionUID = -195154578987742967L;
     private String text;
     private Long jobConfigID;
 }

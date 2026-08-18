@@ -28,23 +28,27 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @FireflyIntegrationTest
 class TriggerTransactionIntegrationTests {
 
-    @Autowired private IGithubTriggerDao githubTriggerDao;
+    @Autowired
+    private IGithubTriggerDao githubTriggerDao;
 
-    @Autowired private IVolcanoTriggerDao volcanoTriggerDao;
+    @Autowired
+    private IVolcanoTriggerDao volcanoTriggerDao;
 
-    @Autowired private VolcanoTrigger volcanoTrigger;
+    @Autowired
+    private VolcanoTrigger volcanoTrigger;
 
-    @MockitoBean private OutboxService outboxService;
+    @MockitoBean
+    private OutboxService outboxService;
 
     @Test
     void inheritsGeneratedIdsFromBaseTriggerEntity() {
         GithubTriggerEntity github =
-                githubTriggerDao.saveAndFlush(
-                        new GithubTriggerEntity()
-                                .setGithubRepoURL("https://github.com/example/repository"));
+            githubTriggerDao.saveAndFlush(
+                new GithubTriggerEntity()
+                    .setGithubRepoURL("https://github.com/example/repository"));
         VolcanoTriggerEntity volcano =
-                volcanoTriggerDao.saveAndFlush(
-                        new VolcanoTriggerEntity().setPipelineID(100L).setAk("ak").setSk("sk"));
+            volcanoTriggerDao.saveAndFlush(
+                new VolcanoTriggerEntity().setPipelineID(100L).setAk("ak").setSk("sk"));
 
         try {
             assertNotNull(github.getId());
@@ -61,15 +65,15 @@ class TriggerTransactionIntegrationTests {
     void rollsBackTriggerRecordWhenOutboxWriteFails() {
         long originalCount = volcanoTriggerDao.count();
         doThrow(new IllegalStateException("outbox failed"))
-                .when(outboxService)
-                .enqueue(eq(PIPELINE_TOPIC), any(TriggerPipelineMessage.class));
+            .when(outboxService)
+            .enqueue(eq(PIPELINE_TOPIC), any(TriggerPipelineMessage.class));
         VolcanoMessageEntity message = new VolcanoMessageEntity();
         message.setAk("rollback-ak");
         message.setSk("rollback-sk");
         message.setPipelineID(101L)
-                .setPipelineBuildID(201L)
-                .setExecutionAttempt(0)
-                .setTriggerOrigin(TriggerOrigin.VOLCANO);
+            .setPipelineBuildID(201L)
+            .setExecutionAttempt(0)
+            .setTriggerOrigin(TriggerOrigin.VOLCANO);
 
         assertThrows(IllegalStateException.class, () -> volcanoTrigger.dispatch(message));
 
