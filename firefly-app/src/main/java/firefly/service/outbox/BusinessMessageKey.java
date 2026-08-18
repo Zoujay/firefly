@@ -14,29 +14,29 @@ import firefly.github.message.GitHubWebhookMessage;
  */
 public final class BusinessMessageKey {
 
-  private BusinessMessageKey() {}
+    private BusinessMessageKey() {}
 
-  public static String from(KafkaBusinessMessage message) {
-    if (message instanceof TriggerPipelineMessage pipeline) {
-      return key("pipeline", pipeline.getPipelineBuildID(), pipeline.getExecutionAttempt());
+    public static String from(KafkaBusinessMessage message) {
+        if (message instanceof TriggerPipelineMessage pipeline) {
+            return key("pipeline", pipeline.getPipelineBuildID(), pipeline.getExecutionAttempt());
+        }
+        if (message instanceof TriggerStageMessage stage) {
+            return key("stage", stage.getStageBuildID(), stage.getExecutionAttempt());
+        }
+        if (message instanceof TriggerJobMessage job) {
+            return key("job", job.getJobBuildID(), job.getExecutionAttempt());
+        }
+        if (message instanceof TriggerPluginMessage plugin) {
+            return key("plugin", plugin.getPluginBuildID(), plugin.getExecutionAttempt());
+        }
+        if (message instanceof GitHubWebhookMessage github) {
+            return "github-delivery:" + github.getDeliveryId();
+        }
+        throw new IllegalArgumentException(
+                "Unsupported Kafka business message: " + message.getClass().getName());
     }
-    if (message instanceof TriggerStageMessage stage) {
-      return key("stage", stage.getStageBuildID(), stage.getExecutionAttempt());
-    }
-    if (message instanceof TriggerJobMessage job) {
-      return key("job", job.getJobBuildID(), job.getExecutionAttempt());
-    }
-    if (message instanceof TriggerPluginMessage plugin) {
-      return key("plugin", plugin.getPluginBuildID(), plugin.getExecutionAttempt());
-    }
-    if (message instanceof GitHubWebhookMessage github) {
-      return "github-delivery:" + github.getDeliveryId();
-    }
-    throw new IllegalArgumentException(
-        "Unsupported Kafka business message: " + message.getClass().getName());
-  }
 
-  private static String key(String category, Long buildID, Integer executionAttempt) {
-    return category + ":" + buildID + ":" + executionAttempt;
-  }
+    private static String key(String category, Long buildID, Integer executionAttempt) {
+        return category + ":" + buildID + ":" + executionAttempt;
+    }
 }

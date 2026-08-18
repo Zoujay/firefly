@@ -1,7 +1,9 @@
 package firefly.model.pipeline;
 
 import firefly.constant.BuildStatus;
+
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
@@ -13,17 +15,17 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class PipelineBuild {
 
-  @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
-  private Long id;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-  @Column(name = "pipeline_id")
-  private Long pipelineID;
+    @Column(name = "pipeline_id")
+    private Long pipelineID;
 
-  @Enumerated(EnumType.STRING)
-  @Column(name = "pipeline_status")
-  private BuildStatus pipelineStatus;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pipeline_status")
+    private BuildStatus pipelineStatus;
 
-  @Column(name = "execution_attempt", nullable = false)
-  private Integer executionAttempt = 0;
+    @Column(name = "execution_attempt", nullable = false)
+    private Integer executionAttempt = 0;
 }

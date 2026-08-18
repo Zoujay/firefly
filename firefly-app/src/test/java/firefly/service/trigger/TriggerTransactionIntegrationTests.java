@@ -1,6 +1,7 @@
 package firefly.service.trigger;
 
 import static firefly.constant.KafkaConfiguration.PIPELINE_TOPIC;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -19,6 +20,7 @@ import firefly.model.trigger.VolcanoTriggerEntity;
 import firefly.service.outbox.OutboxService;
 import firefly.service.trigger.impl.VolcanoTrigger;
 import firefly.support.FireflyIntegrationTest;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -26,51 +28,51 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @FireflyIntegrationTest
 class TriggerTransactionIntegrationTests {
 
-  @Autowired private IGithubTriggerDao githubTriggerDao;
+    @Autowired private IGithubTriggerDao githubTriggerDao;
 
-  @Autowired private IVolcanoTriggerDao volcanoTriggerDao;
+    @Autowired private IVolcanoTriggerDao volcanoTriggerDao;
 
-  @Autowired private VolcanoTrigger volcanoTrigger;
+    @Autowired private VolcanoTrigger volcanoTrigger;
 
-  @MockitoBean private OutboxService outboxService;
+    @MockitoBean private OutboxService outboxService;
 
-  @Test
-  void inheritsGeneratedIdsFromBaseTriggerEntity() {
-    GithubTriggerEntity github =
-        githubTriggerDao.saveAndFlush(
-            new GithubTriggerEntity().setGithubRepoURL("https://github.com/example/repository"));
-    VolcanoTriggerEntity volcano =
-        volcanoTriggerDao.saveAndFlush(
-            new VolcanoTriggerEntity().setPipelineID(100L).setAk("ak").setSk("sk"));
+    @Test
+    void inheritsGeneratedIdsFromBaseTriggerEntity() {
+        GithubTriggerEntity github =
+                githubTriggerDao.saveAndFlush(
+                        new GithubTriggerEntity()
+                                .setGithubRepoURL("https://github.com/example/repository"));
+        VolcanoTriggerEntity volcano =
+                volcanoTriggerDao.saveAndFlush(
+                        new VolcanoTriggerEntity().setPipelineID(100L).setAk("ak").setSk("sk"));
 
-    try {
-      assertNotNull(github.getId());
-      assertTrue(github.getId() > 0);
-      assertNotNull(volcano.getId());
-      assertTrue(volcano.getId() > 0);
-    } finally {
-      githubTriggerDao.deleteById(github.getId());
-      volcanoTriggerDao.deleteById(volcano.getId());
+        try {
+            assertNotNull(github.getId());
+            assertTrue(github.getId() > 0);
+            assertNotNull(volcano.getId());
+            assertTrue(volcano.getId() > 0);
+        } finally {
+            githubTriggerDao.deleteById(github.getId());
+            volcanoTriggerDao.deleteById(volcano.getId());
+        }
     }
-  }
 
-  @Test
-  void rollsBackTriggerRecordWhenOutboxWriteFails() {
-    long originalCount = volcanoTriggerDao.count();
-    doThrow(new IllegalStateException("outbox failed"))
-        .when(outboxService)
-        .enqueue(eq(PIPELINE_TOPIC), any(TriggerPipelineMessage.class));
-    VolcanoMessageEntity message = new VolcanoMessageEntity();
-    message.setAk("rollback-ak");
-    message.setSk("rollback-sk");
-    message
-        .setPipelineID(101L)
-        .setPipelineBuildID(201L)
-        .setExecutionAttempt(0)
-        .setTriggerOrigin(TriggerOrigin.VOLCANO);
+    @Test
+    void rollsBackTriggerRecordWhenOutboxWriteFails() {
+        long originalCount = volcanoTriggerDao.count();
+        doThrow(new IllegalStateException("outbox failed"))
+                .when(outboxService)
+                .enqueue(eq(PIPELINE_TOPIC), any(TriggerPipelineMessage.class));
+        VolcanoMessageEntity message = new VolcanoMessageEntity();
+        message.setAk("rollback-ak");
+        message.setSk("rollback-sk");
+        message.setPipelineID(101L)
+                .setPipelineBuildID(201L)
+                .setExecutionAttempt(0)
+                .setTriggerOrigin(TriggerOrigin.VOLCANO);
 
-    assertThrows(IllegalStateException.class, () -> volcanoTrigger.dispatch(message));
+        assertThrows(IllegalStateException.class, () -> volcanoTrigger.dispatch(message));
 
-    assertEquals(originalCount, volcanoTriggerDao.count());
-  }
+        assertEquals(originalCount, volcanoTriggerDao.count());
+    }
 }

@@ -9,11 +9,11 @@ import org.testcontainers.utility.DockerImageName;
 @TestConfiguration(proxyBeanMethods = false)
 public class MySqlTestcontainersConfiguration {
 
-  @Bean
-  @ServiceConnection
-  MySQLContainer<?> mysqlContainer() {
-    return new MySQLContainer<>(DockerImageName.parse("mysql:8.4"))
-        .withDatabaseName("firefly")
-        .withInitScript("v1.sql");
-  }
+    @Bean
+    @ServiceConnection
+    MySQLContainer<?> mysqlContainer() {
+        return new MySQLContainer<>(DockerImageName.parse("mysql:8.4"))
+                .withDatabaseName("firefly")
+                .withInitScript("v1.sql");
+    }
 }

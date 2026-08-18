@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<code_scheme name="GoogleStyle">
+<!-- Derived from Google Java Style; Firefly uses four-space indentation. -->
+<code_scheme name="FireflyGoogleStyle">
   <option name="OTHER_INDENT_OPTIONS">
     <value>
-      <option name="INDENT_SIZE" value="2" />
-      <option name="CONTINUATION_INDENT_SIZE" value="4" />
-      <option name="TAB_SIZE" value="2" />
+      <option name="INDENT_SIZE" value="4" />
+      <option name="CONTINUATION_INDENT_SIZE" value="8" />
+      <option name="TAB_SIZE" value="4" />
       <option name="USE_TAB_CHARACTER" value="false" />
       <option name="SMART_TABS" value="false" />
       <option name="LABEL_INDENT_SIZE" value="0" />
@@ -134,9 +135,9 @@
     <option name="FOR_BRACE_FORCE" value="3" />
     <option name="PARENT_SETTINGS_INSTALLED" value="true" />
     <indentOptions>
-      <option name="INDENT_SIZE" value="2" />
-      <option name="CONTINUATION_INDENT_SIZE" value="4" />
-      <option name="TAB_SIZE" value="2" />
+      <option name="INDENT_SIZE" value="4" />
+      <option name="CONTINUATION_INDENT_SIZE" value="8" />
+      <option name="TAB_SIZE" value="4" />
     </indentOptions>
   </codeStyleSettings>
   <codeStyleSettings language="JSON">

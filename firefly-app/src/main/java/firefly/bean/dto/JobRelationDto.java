@@ -11,11 +11,11 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class JobRelationDto {
 
-  private Long id;
-  private Long pipelineID;
-  private Long stageID;
-  private Long jobID;
-  private Long nextJobID;
-  private Long previousJobID;
-  private Boolean isHeadJob;
+    private Long id;
+    private Long pipelineID;
+    private Long stageID;
+    private Long jobID;
+    private Long nextJobID;
+    private Long previousJobID;
+    private Boolean isHeadJob;
 }

@@ -13,10 +13,10 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class OutboxAfterCommitListener {
 
-  @Autowired private OutboxPublisher outboxPublisher;
+    @Autowired private OutboxPublisher outboxPublisher;
 
-  @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-  public void publish(OutboxCreatedEvent event) {
-    outboxPublisher.publishOnce(event.outboxID());
-  }
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void publish(OutboxCreatedEvent event) {
+        outboxPublisher.publishOnce(event.outboxID());
+    }
 }

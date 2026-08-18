@@ -18,11 +18,11 @@ package firefly.constant;
  * is no database poller or automatic retry.
  */
 public enum MessageProcessingStatus {
-  ARCHIVED,
+    ARCHIVED,
 
-  PROCESSING,
+    PROCESSING,
 
-  SUCCESS,
+    SUCCESS,
 
-  FAILURE
+    FAILURE
 }

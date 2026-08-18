@@ -1,12 +1,14 @@
 package firefly.bean.dto.message;
 
 import firefly.constant.BuildStatus;
-import java.io.Serial;
-import java.io.Serializable;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
+
+import java.io.Serial;
+import java.io.Serializable;
 
 @Data
 @NoArgsConstructor
@@ -14,14 +16,14 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class TriggerPipelineMessage implements Serializable, KafkaBusinessMessage {
 
-  @Serial private static final long serialVersionUID = -823258082885393580L;
-  private String messageUUID;
+    @Serial private static final long serialVersionUID = -823258082885393580L;
+    private String messageUUID;
 
-  private Long pipelineID;
+    private Long pipelineID;
 
-  private Long pipelineBuildID;
+    private Long pipelineBuildID;
 
-  private BuildStatus buildStatus;
+    private BuildStatus buildStatus;
 
-  private Integer executionAttempt = 0;
+    private Integer executionAttempt = 0;
 }

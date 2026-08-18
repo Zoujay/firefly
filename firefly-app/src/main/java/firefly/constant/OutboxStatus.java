@@ -17,11 +17,11 @@ package firefly.constant;
  * events.
  */
 public enum OutboxStatus {
-  PENDING,
+    PENDING,
 
-  PUBLISHING,
+    PUBLISHING,
 
-  SENT,
+    SENT,
 
-  FAILED
+    FAILED
 }

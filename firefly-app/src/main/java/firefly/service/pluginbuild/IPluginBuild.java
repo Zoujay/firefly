@@ -7,18 +7,18 @@ import firefly.constant.PluginType;
 
 public interface IPluginBuild {
 
-  PluginType getPluginType();
+    PluginType getPluginType();
 
-  Long getPluginBuildIDByJobBuildID(Long jobBuildID);
+    Long getPluginBuildIDByJobBuildID(Long jobBuildID);
 
-  Long getJobBuildID(Long pluginBuildID);
+    Long getJobBuildID(Long pluginBuildID);
 
-  Long savePluginBuild(JobBuildContext jobBuildContext);
+    Long savePluginBuild(JobBuildContext jobBuildContext);
 
-  Boolean executePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
+    Boolean executePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
 
-  Boolean updatePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
+    Boolean updatePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
 
-  TriggerPluginMessage triggerPluginBuild(
-      Long pluginBuildID, BuildStatus status, Integer executionAttempt);
+    TriggerPluginMessage triggerPluginBuild(
+            Long pluginBuildID, BuildStatus status, Integer executionAttempt);
 }

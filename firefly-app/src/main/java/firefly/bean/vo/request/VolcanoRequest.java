@@ -13,6 +13,6 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class VolcanoRequest {
 
-  private String ak;
-  private String sk;
+    private String ak;
+    private String sk;
 }

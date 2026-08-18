@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import firefly.dao.pluginbuild.ITextPluginBuildDao;
 import firefly.service.outbox.OutboxService;
 import firefly.service.pluginbuild.impl.TextPluginBuildServiceImpl;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -16,23 +17,23 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class TextPluginBuildServiceImplTests {
 
-  @Mock private ITextPluginBuildDao textPluginBuildDao;
+    @Mock private ITextPluginBuildDao textPluginBuildDao;
 
-  @Mock private OutboxService outboxService;
+    @Mock private OutboxService outboxService;
 
-  @InjectMocks private TextPluginBuildServiceImpl textPluginBuildService;
+    @InjectMocks private TextPluginBuildServiceImpl textPluginBuildService;
 
-  @Test
-  void returnsMappedJobBuildID() {
-    when(textPluginBuildDao.getJobBuildIDByPluginBuildID(70L)).thenReturn(50L);
+    @Test
+    void returnsMappedJobBuildID() {
+        when(textPluginBuildDao.getJobBuildIDByPluginBuildID(70L)).thenReturn(50L);
 
-    assertEquals(50L, textPluginBuildService.getJobBuildID(70L));
-  }
+        assertEquals(50L, textPluginBuildService.getJobBuildID(70L));
+    }
 
-  @Test
-  void rejectsMissingJobBuildMapping() {
-    when(textPluginBuildDao.getJobBuildIDByPluginBuildID(70L)).thenReturn(null);
+    @Test
+    void rejectsMissingJobBuildMapping() {
+        when(textPluginBuildDao.getJobBuildIDByPluginBuildID(70L)).thenReturn(null);
 
-    assertThrows(IllegalStateException.class, () -> textPluginBuildService.getJobBuildID(70L));
-  }
+        assertThrows(IllegalStateException.class, () -> textPluginBuildService.getJobBuildID(70L));
+    }
 }

@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @ResponseStatus(HttpStatus.CONFLICT)
 public class PipelineRetryNotAllowedException extends RuntimeException {
 
-  public PipelineRetryNotAllowedException(String message) {
-    super(message);
-  }
+    public PipelineRetryNotAllowedException(String message) {
+        super(message);
+    }
 }

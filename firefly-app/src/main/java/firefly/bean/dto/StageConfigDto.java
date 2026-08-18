@@ -11,9 +11,9 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class StageConfigDto {
 
-  private Long id;
-  private Long pipelineID;
-  private String uuid;
-  private String name;
-  private Integer stageOrder;
+    private Long id;
+    private Long pipelineID;
+    private String uuid;
+    private String name;
+    private Integer stageOrder;
 }
