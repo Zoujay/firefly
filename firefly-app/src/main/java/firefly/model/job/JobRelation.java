@@ -1,6 +1,5 @@
 package firefly.model.job;
 
-
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -15,25 +14,25 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class JobRelation {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "pipeline_id")
-    private Long pipelineID;
+  @Column(name = "pipeline_id")
+  private Long pipelineID;
 
-    @Column(name = "stage_id")
-    private Long stageID;
+  @Column(name = "stage_id")
+  private Long stageID;
 
-    @Column(name = "job_id")
-    private Long jobID;
+  @Column(name = "job_id")
+  private Long jobID;
 
-    @Column(name = "next_job_id")
-    private Long nextJobID;
+  @Column(name = "next_job_id")
+  private Long nextJobID;
 
-    @Column(name = "previous_job_id")
-    private Long previousJobID;
+  @Column(name = "previous_job_id")
+  private Long previousJobID;
 
-    @Column(name = "is_head_job")
-    private boolean isHeadJob;
+  @Column(name = "is_head_job")
+  private boolean isHeadJob;
 }

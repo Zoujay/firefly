@@ -12,6 +12,6 @@ import lombok.experimental.Accessors;
 @AllArgsConstructor
 @Accessors(chain = true)
 public class VolcanoMessageEntity extends BaseMessage {
-    private String ak;
-    private String sk;
+  private String ak;
+  private String sk;
 }

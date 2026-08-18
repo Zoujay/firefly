@@ -6,15 +6,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
-
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Accessors(chain = true)
 public class JobBuildDto {
-    private Long stageBuildID;
-    private Long jobConfigID;
-    private Long jobBuildID;
-    private BuildStatus status;
-    private Integer executionAttempt = 0;
+  private Long stageBuildID;
+  private Long jobConfigID;
+  private Long jobBuildID;
+  private BuildStatus status;
+  private Integer executionAttempt = 0;
 }

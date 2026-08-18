@@ -5,7 +5,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
-
 @Data
 @NoArgsConstructor
 @Entity
@@ -13,20 +12,19 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class StageModel {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "pipeline_id")
-    private Long pipeline_id = 0L;
+  @Column(name = "pipeline_id")
+  private Long pipeline_id = 0L;
 
-    @Column(name = "stage_order", nullable = false)
-    private Integer stageOrder;
+  @Column(name = "stage_order", nullable = false)
+  private Integer stageOrder;
 
-    @Column(name = "stage_uuid")
-    private String stageUUID;
+  @Column(name = "stage_uuid")
+  private String stageUUID;
 
-    @Column(name = "stage_name")
-    private String stageName;
-
+  @Column(name = "stage_name")
+  private String stageName;
 }

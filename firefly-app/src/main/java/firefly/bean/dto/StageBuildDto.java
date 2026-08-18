@@ -11,10 +11,9 @@ import lombok.experimental.Accessors;
 @AllArgsConstructor
 @Accessors(chain = true)
 public class StageBuildDto {
-    private Long stageBuildID;
-    private Long stageConfigID;
-    private Long pipelineBuildID;
-    private BuildStatus status;
-    private Integer executionAttempt = 0;
-
+  private Long stageBuildID;
+  private Long stageConfigID;
+  private Long pipelineBuildID;
+  private BuildStatus status;
+  private Integer executionAttempt = 0;
 }

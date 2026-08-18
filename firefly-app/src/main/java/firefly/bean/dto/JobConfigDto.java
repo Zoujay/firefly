@@ -9,11 +9,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class JobConfigDto {
-    private Long id;
-    private Long stageID;
-    private String uuid;
-    private String name;
-    private PluginType pluginType;
-    private Long pluginID;
-    private AbstractPluginDto pluginRaw;
+  private Long id;
+  private Long stageID;
+  private String uuid;
+  private String name;
+  private PluginType pluginType;
+  private Long pluginID;
+  private AbstractPluginDto pluginRaw;
 }

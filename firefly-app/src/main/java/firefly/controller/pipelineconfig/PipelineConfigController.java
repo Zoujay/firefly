@@ -10,18 +10,15 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 public class PipelineConfigController {
 
-    @Autowired
-    private IPipelineConfigService pipelineConfig;
+  @Autowired private IPipelineConfigService pipelineConfig;
 
-    @RequestMapping(value = "/create/pipeline", method = RequestMethod.POST)
-    public String CreatePipeline(@Valid @RequestBody PipelineConfigRequest pipelineConfigRequest) {
-        return pipelineConfig.createPipeline(pipelineConfigRequest);
-    }
+  @RequestMapping(value = "/create/pipeline", method = RequestMethod.POST)
+  public String CreatePipeline(@Valid @RequestBody PipelineConfigRequest pipelineConfigRequest) {
+    return pipelineConfig.createPipeline(pipelineConfigRequest);
+  }
 
-
-    @RequestMapping(value = "/pipeline", method = RequestMethod.GET)
-    public PipelineConfigResponse GetPipeline(@RequestParam String uuid) {
-        return pipelineConfig.getPipelineConfigByUUID(uuid);
-    }
-
+  @RequestMapping(value = "/pipeline", method = RequestMethod.GET)
+  public PipelineConfigResponse GetPipeline(@RequestParam String uuid) {
+    return pipelineConfig.getPipelineConfigByUUID(uuid);
+  }
 }

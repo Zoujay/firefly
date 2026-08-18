@@ -8,25 +8,20 @@ import firefly.constant.BuildStatus;
 
 public interface IPipelineBuildService {
 
-    Boolean updatePipelineBuildStatus(
-            Long pipelineBuildID,
-            BuildStatus status,
-            Integer executionAttempt
-    );
+  Boolean updatePipelineBuildStatus(
+      Long pipelineBuildID, BuildStatus status, Integer executionAttempt);
 
-    Long savePipelineBuild(PipelineBuildDto pipelineBuildDto);
+  Long savePipelineBuild(PipelineBuildDto pipelineBuildDto);
 
-    PipelineBuildDto getPipelineBuild(Long pipelineBuildID);
+  PipelineBuildDto getPipelineBuild(Long pipelineBuildID);
 
-    PipelineBuildDto parsePipelineBuildRequest(PipelineBuildRequest pipelineBuildRequest);
+  PipelineBuildDto parsePipelineBuildRequest(PipelineBuildRequest pipelineBuildRequest);
 
-    Long triggerPipeline(PipelineBuildRequest pipelineBuildRequest);
+  Long triggerPipeline(PipelineBuildRequest pipelineBuildRequest);
 
-    PipelineRetryResponse retryPipeline(Long pipelineBuildID);
+  PipelineRetryResponse retryPipeline(Long pipelineBuildID);
 
-    Long buildPipeline(PipelineBuildDto pipelineBuildDto);
+  Long buildPipeline(PipelineBuildDto pipelineBuildDto);
 
-    BaseMessage buildMessage(PipelineBuildDto pipelineBuildDto, Long pipelineBuildID);
-
-
+  BaseMessage buildMessage(PipelineBuildDto pipelineBuildDto, Long pipelineBuildID);
 }

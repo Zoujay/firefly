@@ -5,9 +5,9 @@ import firefly.bean.dto.AbstractPluginDto;
 import firefly.constant.PluginType;
 
 public interface IPluginConfig {
-    PluginType getPluginType();
+  PluginType getPluginType();
 
-    Long savePlugin(JsonNode pluginRaw, Long jobConfigID);
+  Long savePlugin(JsonNode pluginRaw, Long jobConfigID);
 
-    AbstractPluginDto getPlugin(Long id);
+  AbstractPluginDto getPlugin(Long id);
 }

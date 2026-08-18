@@ -10,12 +10,11 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class JobConfigResponse {
 
-    private Long id;
-    private Long stageID;
-    private String uuid;
-    private String name;
-    private String pluginType;
-    private Long pluginID;
-    private JsonNode pluginRaw;
-
+  private Long id;
+  private Long stageID;
+  private String uuid;
+  private String name;
+  private String pluginType;
+  private Long pluginID;
+  private JsonNode pluginRaw;
 }

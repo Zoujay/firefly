@@ -13,11 +13,10 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class JobBuildContext {
 
-    private Long jobConfigID;
-    private Long jobBuildID;
-    private Long pluginID;
-    private PluginType pluginType;
-    private BuildStatus status;
-    private Integer executionAttempt = 0;
-
+  private Long jobConfigID;
+  private Long jobBuildID;
+  private Long pluginID;
+  private PluginType pluginType;
+  private BuildStatus status;
+  private Integer executionAttempt = 0;
 }

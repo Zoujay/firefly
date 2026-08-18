@@ -1,6 +1,5 @@
 package firefly.model.plugin;
 
-
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -14,14 +13,13 @@ import lombok.experimental.Accessors;
 @Table(name = "text_plugin_config")
 @Accessors(chain = true)
 public class TextPluginModel extends BasePluginModel {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "job_config_id")
-    private Long jobConfigID;
+  @Column(name = "job_config_id")
+  private Long jobConfigID;
 
-    @Column(name = "text")
-    private String text;
-
+  @Column(name = "text")
+  private String text;
 }

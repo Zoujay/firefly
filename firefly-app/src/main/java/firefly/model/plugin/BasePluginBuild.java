@@ -1,5 +1,3 @@
 package firefly.model.plugin;
 
-public class BasePluginBuild {
-
-}
+public class BasePluginBuild {}

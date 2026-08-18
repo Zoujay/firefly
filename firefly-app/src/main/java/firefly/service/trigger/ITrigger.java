@@ -5,10 +5,9 @@ import firefly.constant.TriggerOrigin;
 
 public interface ITrigger<M extends BaseMessage> {
 
-    TriggerOrigin getTriggerOrigin();
+  TriggerOrigin getTriggerOrigin();
 
-    Class<M> getMessageType();
+  Class<M> getMessageType();
 
-    void dispatch(BaseMessage message);
-
+  void dispatch(BaseMessage message);
 }

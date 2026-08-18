@@ -7,7 +7,6 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
-
 @EqualsAndHashCode(callSuper = true)
 @Data
 @Accessors(chain = true)
@@ -15,13 +14,12 @@ import lombok.experimental.Accessors;
 @Table(name = "volcano_trigger")
 public class VolcanoTriggerEntity extends BaseTriggerEntity {
 
-    @Column(name = "pipeline_id")
-    private Long pipelineID;
+  @Column(name = "pipeline_id")
+  private Long pipelineID;
 
-    @Column(name = "ak")
-    private String ak;
+  @Column(name = "ak")
+  private String ak;
 
-    @Column(name = "sk")
-    private String sk;
-
+  @Column(name = "sk")
+  private String sk;
 }

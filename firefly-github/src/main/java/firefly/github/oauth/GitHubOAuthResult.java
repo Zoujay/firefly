@@ -1,4 +1,3 @@
 package firefly.github.oauth;
 
-public record GitHubOAuthResult(GitHubOAuthToken token, GitHubUser user) {
-}
+public record GitHubOAuthResult(GitHubOAuthToken token, GitHubUser user) {}

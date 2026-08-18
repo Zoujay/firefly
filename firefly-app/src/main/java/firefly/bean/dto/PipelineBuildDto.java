@@ -12,10 +12,10 @@ import lombok.experimental.Accessors;
 @NoArgsConstructor
 @Accessors(chain = true)
 public class PipelineBuildDto {
-    private TriggerOrigin triggerOrigin;
-    private Long TriggerOriginID;
-    private Long pipelineID;
-    private String pipelineUUID;
-    private BuildStatus buildStatus;
-    private Integer executionAttempt = 0;
+  private TriggerOrigin triggerOrigin;
+  private Long TriggerOriginID;
+  private Long pipelineID;
+  private String pipelineUUID;
+  private BuildStatus buildStatus;
+  private Integer executionAttempt = 0;
 }

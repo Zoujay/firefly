@@ -7,15 +7,14 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 
-
 @ToString
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 @Accessors(chain = true)
 public class PluginBaseDto {
-    private Long ID;
-    private Long pluginID;
-    private BuildStatus status;
-    private Long jobBuildID;
+  private Long ID;
+  private Long pluginID;
+  private BuildStatus status;
+  private Long jobBuildID;
 }

@@ -1,6 +1,5 @@
 package firefly.model.stage;
 
-
 import firefly.constant.BuildStatus;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -14,20 +13,20 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class StageBuild {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "pipeline_build_id")
-    private Long pipelineBuildID = 0L;
+  @Column(name = "pipeline_build_id")
+  private Long pipelineBuildID = 0L;
 
-    @Column(name = "stage_id")
-    private Long stageID;
+  @Column(name = "stage_id")
+  private Long stageID;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "stage_status")
-    private BuildStatus stageStatus;
+  @Enumerated(EnumType.STRING)
+  @Column(name = "stage_status")
+  private BuildStatus stageStatus;
 
-    @Column(name = "execution_attempt", nullable = false)
-    private Integer executionAttempt = 0;
+  @Column(name = "execution_attempt", nullable = false)
+  private Integer executionAttempt = 0;
 }

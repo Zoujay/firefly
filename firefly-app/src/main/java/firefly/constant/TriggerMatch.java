@@ -1,8 +1,6 @@
 package firefly.constant;
 
 public enum TriggerMatch {
-
-    ACCURATE,
-    PREFIX
-
+  ACCURATE,
+  PREFIX
 }

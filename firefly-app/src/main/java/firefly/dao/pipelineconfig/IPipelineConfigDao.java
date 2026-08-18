@@ -7,6 +7,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface IPipelineConfigDao extends JpaRepository<PipelineModel, Long> {
-    @Query("select p from PipelineModel p where p.pipelineUUID = ?1")
-    PipelineModel getPipelineConfigByPipelineUUID(String pipelineUUID);
+  @Query("select p from PipelineModel p where p.pipelineUUID = ?1")
+  PipelineModel getPipelineConfigByPipelineUUID(String pipelineUUID);
 }
