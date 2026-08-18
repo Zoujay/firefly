@@ -1,6 +1,7 @@
 package firefly.dao.jobconfig;
 
 import firefly.model.job.JobRelation;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -18,5 +19,4 @@ public interface IJobRelationDao extends JpaRepository<JobRelation, Long> {
 
     @Query("select j from JobRelation j where j.stageID = ?1 and j.nextJobID = 0")
     List<JobRelation> getAllTailJobRelationsByStageID(Long stageID);
-
 }

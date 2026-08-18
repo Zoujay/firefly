@@ -10,6 +10,7 @@ import firefly.github.model.GitHubConnectionStatus;
 import firefly.github.model.GitHubRepositorySubscriptionEntity;
 import firefly.github.model.GitHubSubscriptionStatus;
 import firefly.github.security.GitHubSecretCipher;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -30,13 +31,12 @@ public class GitHubConnectionDisconnectService {
     private final Clock clock;
 
     public GitHubConnectionDisconnectService(
-            GitHubConnectionRepository connectionRepository,
-            GitHubRepositorySubscriptionRepository subscriptionRepository,
-            GitHubTriggerConfigRepository triggerConfigRepository,
-            GitHubApiClient apiClient,
-            GitHubSecretCipher secretCipher,
-            Clock clock
-    ) {
+        GitHubConnectionRepository connectionRepository,
+        GitHubRepositorySubscriptionRepository subscriptionRepository,
+        GitHubTriggerConfigRepository triggerConfigRepository,
+        GitHubApiClient apiClient,
+        GitHubSecretCipher secretCipher,
+        Clock clock) {
         this.connectionRepository = connectionRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.triggerConfigRepository = triggerConfigRepository;
@@ -46,51 +46,55 @@ public class GitHubConnectionDisconnectService {
     }
 
     public void disconnect(String publicId) {
-        GitHubConnectionEntity connection = connectionRepository.findByPublicId(publicId)
-                .orElseThrow(() -> new GitHubIntegrationException(
-                        HttpStatus.NOT_FOUND,
-                        "GITHUB_CONNECTION_NOT_FOUND",
-                        "GitHub connection was not found"
-                ));
+        GitHubConnectionEntity connection =
+            connectionRepository
+                .findByPublicId(publicId)
+                .orElseThrow(
+                    () ->
+                        new GitHubIntegrationException(
+                            HttpStatus.NOT_FOUND,
+                            "GITHUB_CONNECTION_NOT_FOUND",
+                            "GitHub connection was not found"));
         connection.setStatus(GitHubConnectionStatus.DISCONNECTING).setUpdatedAt(now());
         connectionRepository.saveAndFlush(connection);
 
-        String token = secretCipher.decrypt(
+        String token =
+            secretCipher.decrypt(
                 connection.getAccessTokenCiphertext(),
                 connection.getTokenNonce(),
-                connection.getEncryptionKeyVersion()
-        );
+                connection.getEncryptionKeyVersion());
         List<String> failures = new ArrayList<>();
-        for (GitHubRepositorySubscriptionEntity subscription
-                : subscriptionRepository.findAllByConnectionId(connection.getId())) {
+        for (GitHubRepositorySubscriptionEntity subscription :
+            subscriptionRepository.findAllByConnectionId(connection.getId())) {
             disable(subscription);
             try {
                 if (subscription.getWebhookId() != null) {
                     apiClient.deleteWebhook(
-                            token,
-                            subscription.getOwner(),
-                            subscription.getRepositoryName(),
-                            subscription.getWebhookId()
-                    );
+                        token,
+                        subscription.getOwner(),
+                        subscription.getRepositoryName(),
+                        subscription.getWebhookId());
                 }
-                subscription.setConnectionId(null)
-                        .setStatus(GitHubSubscriptionStatus.DELETED)
-                        .setLastError("")
-                        .setUpdatedAt(now());
+                subscription
+                    .setConnectionId(null)
+                    .setStatus(GitHubSubscriptionStatus.DELETED)
+                    .setLastError("")
+                    .setUpdatedAt(now());
             } catch (RuntimeException exception) {
-                subscription.setStatus(GitHubSubscriptionStatus.ORPHANED)
-                        .setLastError("Remote GitHub webhook cleanup failed")
-                        .setUpdatedAt(now());
+                subscription
+                    .setStatus(GitHubSubscriptionStatus.ORPHANED)
+                    .setLastError("Remote GitHub webhook cleanup failed")
+                    .setUpdatedAt(now());
                 failures.add(subscription.getPublicId());
             }
             subscriptionRepository.save(subscription);
         }
         if (!failures.isEmpty()) {
             throw new GitHubIntegrationException(
-                    HttpStatus.BAD_GATEWAY,
-                    "GITHUB_DISCONNECT_INCOMPLETE",
-                    "Some GitHub webhooks could not be removed; the connection remains DISCONNECTING"
-            );
+                HttpStatus.BAD_GATEWAY,
+                "GITHUB_DISCONNECT_INCOMPLETE",
+                "Some GitHub webhooks could not be removed; the connection remains"
+                    + " DISCONNECTING");
         }
         connectionRepository.delete(connection);
     }
@@ -99,9 +103,11 @@ public class GitHubConnectionDisconnectService {
         subscription.setStatus(GitHubSubscriptionStatus.DELETING).setUpdatedAt(now());
         subscriptionRepository.saveAndFlush(subscription);
         var configs = triggerConfigRepository.findAllBySubscriptionId(subscription.getId());
-        configs.forEach(config -> config.setEnabled(false)
-                .setDisabledReason("CONNECTION_DISCONNECTED")
-                .setUpdatedAt(now()));
+        configs.forEach(
+            config ->
+                config.setEnabled(false)
+                    .setDisabledReason("CONNECTION_DISCONNECTED")
+                    .setUpdatedAt(now()));
         triggerConfigRepository.saveAll(configs);
     }
 

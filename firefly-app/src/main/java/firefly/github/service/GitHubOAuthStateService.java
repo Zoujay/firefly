@@ -8,6 +8,7 @@ import firefly.github.model.GitHubOAuthStateEntity;
 import firefly.github.oauth.GitHubOAuthClient;
 import firefly.github.oauth.PkceGenerator;
 import firefly.github.oauth.PkcePair;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,14 +35,13 @@ public class GitHubOAuthStateService {
     private final Clock clock;
 
     public GitHubOAuthStateService(
-            GitHubOAuthStateRepository stateRepository,
-            GitHubOAuthStateWriter stateWriter,
-            GitHubOAuthClient oauthClient,
-            GitHubProperties properties,
-            PkceGenerator pkceGenerator,
-            SecureRandom secureRandom,
-            Clock clock
-    ) {
+        GitHubOAuthStateRepository stateRepository,
+        GitHubOAuthStateWriter stateWriter,
+        GitHubOAuthClient oauthClient,
+        GitHubProperties properties,
+        PkceGenerator pkceGenerator,
+        SecureRandom secureRandom,
+        Clock clock) {
         this.stateRepository = stateRepository;
         this.stateWriter = stateWriter;
         this.oauthClient = oauthClient;
@@ -57,27 +57,26 @@ public class GitHubOAuthStateService {
         String browserSession = randomValue();
         PkcePair pkce = pkceGenerator.create();
         LocalDateTime now = now();
-        stateRepository.save(new GitHubOAuthStateEntity()
+        stateRepository.save(
+            new GitHubOAuthStateEntity()
                 .setState(state)
                 .setSessionHash(hash(browserSession))
                 .setCodeVerifier(pkce.verifier())
                 .setCreatedAt(now)
                 .setExpiresAt(now.plus(properties.getStateTtl())));
         return new GitHubAuthorizationStart(
-                oauthClient.createAuthorizationUri(state, pkce.challenge()),
-                browserSession,
-                properties.getStateTtl()
-        );
+            oauthClient.createAuthorizationUri(state, pkce.challenge()),
+            browserSession,
+            properties.getStateTtl());
     }
 
     public String consume(String state, String browserSession) {
-        GitHubOAuthStateEntity pending = stateWriter.take(state)
-                .orElseThrow(this::invalidState);
+        GitHubOAuthStateEntity pending = stateWriter.take(state).orElseThrow(this::invalidState);
         if (pending.getConsumedAt() != null
-                || pending.getExpiresAt().isBefore(now())
-                || !MessageDigest.isEqual(
-                pending.getSessionHash().getBytes(StandardCharsets.US_ASCII),
-                hash(browserSession).getBytes(StandardCharsets.US_ASCII))) {
+            || pending.getExpiresAt().isBefore(now())
+            || !MessageDigest.isEqual(
+            pending.getSessionHash().getBytes(StandardCharsets.US_ASCII),
+            hash(browserSession).getBytes(StandardCharsets.US_ASCII))) {
             throw invalidState();
         }
         return pending.getCodeVerifier();
@@ -94,10 +93,11 @@ public class GitHubOAuthStateService {
             return "";
         }
         try {
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+            return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(
                     MessageDigest.getInstance("SHA-256")
-                            .digest(value.getBytes(StandardCharsets.UTF_8))
-            );
+                        .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
@@ -109,9 +109,8 @@ public class GitHubOAuthStateService {
 
     private GitHubIntegrationException invalidState() {
         return new GitHubIntegrationException(
-                HttpStatus.BAD_REQUEST,
-                "GITHUB_OAUTH_STATE_INVALID",
-                "GitHub OAuth state is invalid or expired"
-        );
+            HttpStatus.BAD_REQUEST,
+            "GITHUB_OAUTH_STATE_INVALID",
+            "GitHub OAuth state is invalid or expired");
     }
 }

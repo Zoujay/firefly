@@ -1,6 +1,5 @@
 package firefly.bean.dto;
 
-
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -19,5 +18,4 @@ public class JobRelationDto {
     private Long nextJobID;
     private Long previousJobID;
     private Boolean isHeadJob;
-
 }

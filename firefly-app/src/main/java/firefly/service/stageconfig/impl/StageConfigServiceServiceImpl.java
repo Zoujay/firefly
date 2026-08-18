@@ -7,6 +7,7 @@ import firefly.bean.vo.response.StageConfigResponse;
 import firefly.dao.stageconfig.IStageConfigDao;
 import firefly.model.stage.StageModel;
 import firefly.service.stageconfig.IStageConfigService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,9 +23,9 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
     @Autowired
     private IStageConfigDao stageConfigDao;
 
-
     @Override
-    public StageConfigDto createStage(StageConfigRequest stageConfigRequest, Long pipelineID, Integer stageOrder) {
+    public StageConfigDto createStage(
+        StageConfigRequest stageConfigRequest, Long pipelineID, Integer stageOrder) {
         StageModel model = this.assembleStageModel(stageConfigRequest, pipelineID, stageOrder);
         stageConfigDao.save(model);
         return this.assembleStageConfigDto(model);
@@ -48,12 +49,11 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
     @Override
     public StageConfigDto assembleStageConfigDto(StageModel stageModel) {
         return new StageConfigDto(
-                stageModel.getId(),
-                stageModel.getPipeline_id(),
-                stageModel.getStageUUID(),
-                stageModel.getStageName(),
-                stageModel.getStageOrder()
-        );
+            stageModel.getId(),
+            stageModel.getPipeline_id(),
+            stageModel.getStageUUID(),
+            stageModel.getStageName(),
+            stageModel.getStageOrder());
     }
 
     @Override
@@ -67,7 +67,8 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
     }
 
     @Override
-    public StageConfigResponse assembleConfigResponse(StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs) {
+    public StageConfigResponse assembleConfigResponse(
+        StageConfigDto stageConfigDto, List<List<JobConfigResponse>> jobs) {
         StageConfigResponse stageConfigResponse = new StageConfigResponse();
         stageConfigResponse.setId(stageConfigDto.getId());
         stageConfigResponse.setPipelineID(stageConfigDto.getPipelineID());
@@ -78,8 +79,8 @@ public class StageConfigServiceServiceImpl implements IStageConfigService {
         return stageConfigResponse;
     }
 
-
-    public StageModel assembleStageModel(StageConfigRequest request, Long pipelineID, Integer stageOrder) {
+    public StageModel assembleStageModel(
+        StageConfigRequest request, Long pipelineID, Integer stageOrder) {
         StageModel model = new StageModel();
         model.setPipeline_id(pipelineID);
         model.setStageOrder(stageOrder);

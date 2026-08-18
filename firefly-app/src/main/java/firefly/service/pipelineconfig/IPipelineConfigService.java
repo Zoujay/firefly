@@ -9,6 +9,7 @@ import firefly.model.pipeline.PipelineModel;
 import java.util.List;
 
 public interface IPipelineConfigService {
+
     String createPipeline(PipelineConfigRequest pipelineConfigRequest);
 
     PipelineConfigResponse getPipelineConfigByUUID(String pipelineUUID);
@@ -17,7 +18,8 @@ public interface IPipelineConfigService {
 
     PipelineConfigDto assemblePipelineConfigDto(PipelineModel pipelineModel);
 
-    PipelineConfigResponse assemblePipelineConfigResponse(PipelineConfigDto pipelineConfigDto, List<StageConfigResponse> stageConfigResponses);
+    PipelineConfigResponse assemblePipelineConfigResponse(
+        PipelineConfigDto pipelineConfigDto, List<StageConfigResponse> stageConfigResponses);
 
     PipelineModel assemblePipelineModel(PipelineConfigRequest request, Long originID);
 }

@@ -1,6 +1,5 @@
 package firefly.bean.vo.response;
 
-
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -11,6 +10,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class PipelineConfigResponse {
+
     private Long id;
     private String uuid;
     private String name;
@@ -19,5 +19,4 @@ public class PipelineConfigResponse {
     private String TriggerOrigin;
     private String branchPattern;
     private List<StageConfigResponse> stageConfigs;
-
 }

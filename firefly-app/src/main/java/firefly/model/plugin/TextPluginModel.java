@@ -1,7 +1,7 @@
 package firefly.model.plugin;
 
-
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
@@ -14,6 +14,7 @@ import lombok.experimental.Accessors;
 @Table(name = "text_plugin_config")
 @Accessors(chain = true)
 public class TextPluginModel extends BasePluginModel {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -23,5 +24,4 @@ public class TextPluginModel extends BasePluginModel {
 
     @Column(name = "text")
     private String text;
-
 }

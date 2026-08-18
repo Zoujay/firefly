@@ -6,5 +6,6 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 @Data
 public class TextPluginConfigResponse extends AbstractPluginConfigResponse {
+
     private String text;
 }

@@ -1,7 +1,10 @@
 package firefly.service.jobconfig.impl;
 
+import static firefly.service.pluginparser.PluginServiceParser.PLUGIN_MAP;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.bean.dto.AbstractPluginDto;
 import firefly.bean.dto.JobConfigDto;
 import firefly.bean.vo.request.JobConfigRequest;
@@ -11,6 +14,7 @@ import firefly.dao.jobconfig.IJobConfigDao;
 import firefly.model.job.JobModel;
 import firefly.service.jobconfig.IJobConfigService;
 import firefly.service.pluginconfig.IPluginConfig;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,8 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-
-import static firefly.service.pluginparser.PluginServiceParser.PLUGIN_MAP;
 
 @Service
 @Transactional
@@ -30,7 +32,8 @@ public class JobConfigServiceServiceImpl implements IJobConfigService {
 
     @Transactional
     @Override
-    public JobConfigDto createJobConfig(JobConfigRequest jobConfigRequest, Long stageID, Long pluginID) {
+    public JobConfigDto createJobConfig(
+        JobConfigRequest jobConfigRequest, Long stageID, Long pluginID) {
         JobModel jobModel = this.assembleJobModel(jobConfigRequest, stageID, pluginID);
         jobConfigDao.save(jobModel);
         return this.assembleJobConfigDto(jobModel);
@@ -77,28 +80,25 @@ public class JobConfigServiceServiceImpl implements IJobConfigService {
         IPluginConfig pluginConfig = PLUGIN_MAP.get(pluginType);
         AbstractPluginDto dto = pluginConfig.getPlugin(jobModel.getPluginID());
         return new JobConfigDto(
-                jobModel.getId(),
-                jobModel.getStageID(),
-                jobModel.getJobUUID(),
-                jobModel.getJobName(),
-                PluginType.valueOf(jobModel.getPluginType()),
-                jobModel.getPluginID(),
-                dto
-        );
+            jobModel.getId(),
+            jobModel.getStageID(),
+            jobModel.getJobUUID(),
+            jobModel.getJobName(),
+            PluginType.valueOf(jobModel.getPluginType()),
+            jobModel.getPluginID(),
+            dto);
     }
-
 
     @Override
     public JobConfigResponse assembleJobConfigResponse(JobConfigDto jobConfigDto) {
         JsonNode node = new ObjectMapper().valueToTree(jobConfigDto.getPluginRaw());
         return new JobConfigResponse(
-                jobConfigDto.getId(),
-                jobConfigDto.getStageID(),
-                jobConfigDto.getUuid(),
-                jobConfigDto.getName(),
-                jobConfigDto.getPluginType().name(),
-                jobConfigDto.getPluginID(),
-                node
-        );
+            jobConfigDto.getId(),
+            jobConfigDto.getStageID(),
+            jobConfigDto.getUuid(),
+            jobConfigDto.getName(),
+            jobConfigDto.getPluginType().name(),
+            jobConfigDto.getPluginID(),
+            node);
     }
 }

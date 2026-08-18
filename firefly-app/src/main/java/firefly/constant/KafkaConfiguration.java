@@ -8,5 +8,4 @@ public class KafkaConfiguration {
     public static final String PLUGIN_TOPIC = "plugin_message";
     public static final String GITHUB_WEBHOOK_TOPIC = "github_webhook_message";
     public static final String PIPELINE_GROUP_ID = "firefly";
-
 }

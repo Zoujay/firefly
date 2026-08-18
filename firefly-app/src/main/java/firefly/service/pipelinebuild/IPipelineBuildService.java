@@ -9,10 +9,7 @@ import firefly.constant.BuildStatus;
 public interface IPipelineBuildService {
 
     Boolean updatePipelineBuildStatus(
-            Long pipelineBuildID,
-            BuildStatus status,
-            Integer executionAttempt
-    );
+        Long pipelineBuildID, BuildStatus status, Integer executionAttempt);
 
     Long savePipelineBuild(PipelineBuildDto pipelineBuildDto);
 
@@ -27,6 +24,4 @@ public interface IPipelineBuildService {
     Long buildPipeline(PipelineBuildDto pipelineBuildDto);
 
     BaseMessage buildMessage(PipelineBuildDto pipelineBuildDto, Long pipelineBuildID);
-
-
 }

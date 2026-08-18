@@ -1,5 +1,7 @@
 package firefly.service.pluginbuild.impl;
 
+import static firefly.constant.KafkaConfiguration.PLUGIN_TOPIC;
+
 import firefly.bean.dto.JobBuildContext;
 import firefly.bean.dto.message.TriggerPluginMessage;
 import firefly.constant.BuildStatus;
@@ -9,12 +11,12 @@ import firefly.model.plugin.TextPluginBuild;
 import firefly.service.messagecenter.BusinessMessageUUID;
 import firefly.service.outbox.OutboxService;
 import firefly.service.pluginbuild.IPluginBuild;
+
 import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import static firefly.constant.KafkaConfiguration.PLUGIN_TOPIC;
 
 @Slf4j
 @Service
@@ -42,7 +44,7 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         Long jobBuildID = textPluginBuildDao.getJobBuildIDByPluginBuildID(pluginBuildID);
         if (jobBuildID == null || jobBuildID <= 0L) {
             throw new IllegalStateException(
-                    "Job build not found for pluginBuildID=" + pluginBuildID);
+                "Job build not found for pluginBuildID=" + pluginBuildID);
         }
         return jobBuildID;
     }
@@ -64,17 +66,18 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         Integer result = textPluginBuildDao.updatePluginBuildStatus(id, status, executionAttempt);
         if (result == null || result != 1) {
             throw new IllegalStateException(
-                    "Failed to start plugin build: pluginBuildID="
-                            + id + ", executionAttempt=" + executionAttempt);
+                "Failed to start plugin build: pluginBuildID="
+                    + id
+                    + ", executionAttempt="
+                    + executionAttempt);
         }
         // execute
         log.info(
-                "Executing mock text plugin build: pluginBuildID={}, executionAttempt={}",
-                id,
-                executionAttempt
-        );
+            "Executing mock text plugin build: pluginBuildID={}, executionAttempt={}",
+            id,
+            executionAttempt);
         TriggerPluginMessage triggerPluginMessage =
-                this.triggerPluginBuild(id, BuildStatus.SUCCESS, executionAttempt);
+            this.triggerPluginBuild(id, BuildStatus.SUCCESS, executionAttempt);
         outboxService.enqueue(PLUGIN_TOPIC, triggerPluginMessage);
         return true;
     }
@@ -87,42 +90,36 @@ public class TextPluginBuildServiceImpl implements IPluginBuild {
         }
         // execute
         log.warn(
-                "Failed to update text plugin build status: pluginBuildID={}, status={}, executionAttempt={}",
-                id,
-                status,
-                executionAttempt
-        );
+            "Failed to update text plugin build status: pluginBuildID={}, status={},"
+                + " executionAttempt={}",
+            id,
+            status,
+            executionAttempt);
         return false;
     }
 
     @Override
     public TriggerPluginMessage triggerPluginBuild(
-            Long pluginBuildID,
-            BuildStatus status,
-            Integer executionAttempt
-    ) {
+        Long pluginBuildID, BuildStatus status, Integer executionAttempt) {
         TriggerPluginMessage triggerPluginMessage = new TriggerPluginMessage();
-        triggerPluginMessage.setPluginType(PluginType.TEXT)
-                .setMessageUUID(BusinessMessageUUID.plugin(
-                        PluginType.TEXT,
-                        pluginBuildID,
-                        executionAttempt,
-                        status))
-                .setPluginBuildID(pluginBuildID)
-                .setExecutionAttempt(executionAttempt)
-                .setStatus(status);
+        triggerPluginMessage
+            .setPluginType(PluginType.TEXT)
+            .setMessageUUID(
+                BusinessMessageUUID.plugin(
+                    PluginType.TEXT, pluginBuildID, executionAttempt, status))
+            .setPluginBuildID(pluginBuildID)
+            .setExecutionAttempt(executionAttempt)
+            .setStatus(status);
         return triggerPluginMessage;
     }
 
-
     private TextPluginBuild assembleTextPluginBuild(JobBuildContext jobBuildContext) {
         TextPluginBuild pluginBuild = new TextPluginBuild();
-        pluginBuild.setTextPluginStatus(jobBuildContext.getStatus())
-                .setPluginID(jobBuildContext.getPluginID())
-                .setExecutionAttempt(jobBuildContext.getExecutionAttempt())
-                .setJobBuildID(jobBuildContext.getJobBuildID());
+        pluginBuild
+            .setTextPluginStatus(jobBuildContext.getStatus())
+            .setPluginID(jobBuildContext.getPluginID())
+            .setExecutionAttempt(jobBuildContext.getExecutionAttempt())
+            .setJobBuildID(jobBuildContext.getJobBuildID());
         return pluginBuild;
     }
-
-
 }

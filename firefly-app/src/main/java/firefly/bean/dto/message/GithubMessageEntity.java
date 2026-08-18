@@ -14,6 +14,7 @@ import java.time.Instant;
 @AllArgsConstructor
 @Accessors(chain = true)
 public class GithubMessageEntity extends BaseMessage {
+
     private String deliveryId;
     private String eventType;
     private String action;

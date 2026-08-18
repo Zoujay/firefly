@@ -1,6 +1,9 @@
 package firefly.model.outbox;
 
+import static firefly.constant.PersistenceDefaults.UNSET_TIME;
+
 import firefly.constant.OutboxStatus;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -12,36 +15,32 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+
 import lombok.Getter;
+
 import org.apache.commons.lang3.StringUtils;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
-import static firefly.constant.PersistenceDefaults.UNSET_TIME;
-
 /**
  * Durable record of a Kafka message that Firefly intends to publish.
  *
- * <p>Outbox solves the gap between changing MySQL state and sending Kafka:
- * the business changes and this row are committed in one database
- * transaction. Kafka publication happens only after that commit. A crash or
- * send failure therefore leaves an explicit PENDING/PUBLISHING/FAILED row for
- * manual recovery instead of silently losing the downstream event.</p>
+ * <p>Outbox solves the gap between changing MySQL state and sending Kafka: the business changes
+ * and this row are committed in one database transaction. Kafka publication happens only after that
+ * commit. A crash or send failure therefore leaves an explicit PENDING/PUBLISHING/FAILED row for
+ * manual recovery instead of silently losing the downstream event.
  */
 @Getter
 @Entity
 @Table(
-        name = "outbox_event",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uidx_outbox_message_uuid",
-                columnNames = "message_uuid"
-        ),
-        indexes = @Index(
-                name = "idx_outbox_publish_status",
-                columnList = "publish_status,created_at,id"
-        )
-)
+    name = "outbox_event",
+    uniqueConstraints =
+    @UniqueConstraint(name = "uidx_outbox_message_uuid", columnNames = "message_uuid"),
+    indexes =
+    @Index(
+        name = "idx_outbox_publish_status",
+        columnList = "publish_status,created_at,id"))
 public class OutboxEvent {
 
     @Id
@@ -50,8 +49,8 @@ public class OutboxEvent {
     private Long id;
 
     /**
-     * Stable business idempotency key. The numeric ID is only the database
-     * identity; duplicate logical events are still rejected by this UUID.
+     * Stable business idempotency key. The numeric ID is only the database identity; duplicate
+     * logical events are still rejected by this UUID.
      */
     @Column(name = "message_uuid", nullable = false, updatable = false, length = 36)
     private String messageUUID = StringUtils.EMPTY;

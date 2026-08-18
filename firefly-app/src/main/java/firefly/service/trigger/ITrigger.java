@@ -10,5 +10,4 @@ public interface ITrigger<M extends BaseMessage> {
     Class<M> getMessageType();
 
     void dispatch(BaseMessage message);
-
 }

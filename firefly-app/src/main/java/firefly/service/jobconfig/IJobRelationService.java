@@ -20,5 +20,4 @@ public interface IJobRelationService {
     void saveJobRelation(JobRelationDto jobRelationDto);
 
     JobRelation assembleJobRelation(JobRelationDto jobRelationDto);
-
 }

@@ -1,16 +1,17 @@
 package firefly.service.stageconfig;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import firefly.bean.dto.StageConfigDto;
 import firefly.dao.stageconfig.IStageConfigDao;
 import firefly.model.stage.StageModel;
 import firefly.service.stageconfig.impl.StageConfigServiceServiceImpl;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @ExtendWith(MockitoExtension.class)
 class StageConfigServiceServiceImplTests {
@@ -23,7 +24,8 @@ class StageConfigServiceServiceImplTests {
 
     @Test
     void includesStageOrderWhenMappingEntityToDto() {
-        StageModel stage = new StageModel()
+        StageModel stage =
+            new StageModel()
                 .setId(10L)
                 .setPipeline_id(20L)
                 .setStageUUID("stage-uuid")

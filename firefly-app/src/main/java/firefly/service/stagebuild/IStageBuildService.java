@@ -11,27 +11,20 @@ public interface IStageBuildService {
 
     StageBuildDto getStageBuildByID(Long id);
 
-    StageBuildDto lockStageBuild(
-            Long stageBuildID,
-            Integer executionAttempt
-    );
+    StageBuildDto lockStageBuild(Long stageBuildID, Integer executionAttempt);
 
     StageBuildDto getFirstStageToRun(Long pipelineBuildID);
 
     List<StageBuildDto> getStageBuildsByPipelineBuildID(Long pipelineBuildID);
 
-    Boolean updateStageBuildStatusByID(
-            BuildStatus status,
-            Long id,
-            Integer executionAttempt
-    );
+    Boolean updateStageBuildStatusByID(BuildStatus status, Long id, Integer executionAttempt);
 
     Boolean transitionStageBuildStatus(
-            Long stageBuildID,
-            BuildStatus expectedStatus,
-            BuildStatus targetStatus,
-            Integer executionAttempt);
+        Long stageBuildID,
+        BuildStatus expectedStatus,
+        BuildStatus targetStatus,
+        Integer executionAttempt);
 
-    StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(Long stageConfigID, Long pipelineBuildID);
-
+    StageBuildDto getStageBuildByStageConfigIDAndPipelineBuildID(
+        Long stageConfigID, Long pipelineBuildID);
 }

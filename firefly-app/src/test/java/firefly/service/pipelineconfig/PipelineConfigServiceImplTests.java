@@ -1,15 +1,16 @@
 package firefly.service.pipelineconfig;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import firefly.bean.dto.PipelineConfigDto;
 import firefly.constant.TriggerMatch;
 import firefly.constant.TriggerModel;
 import firefly.constant.TriggerOrigin;
 import firefly.model.pipeline.PipelineModel;
 import firefly.service.pipelineconfig.impl.PipelineConfigServiceImpl;
-import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
 
 class PipelineConfigServiceImplTests {
 
@@ -17,7 +18,8 @@ class PipelineConfigServiceImplTests {
 
     @Test
     void assemblePipelineConfigDtoKeepsNameAndTriggerOriginInTheirOwnFields() {
-        PipelineModel pipelineModel = new PipelineModel()
+        PipelineModel pipelineModel =
+            new PipelineModel()
                 .setId(1L)
                 .setPipelineUUID("p".repeat(64))
                 .setPipelineName("test-pipeline")
@@ -28,8 +30,7 @@ class PipelineConfigServiceImplTests {
         PipelineConfigDto result = pipelineConfigService.assemblePipelineConfigDto(pipelineModel);
 
         assertAll(
-                () -> assertEquals("test-pipeline", result.getName()),
-                () -> assertEquals("VOLCANO", result.getTriggerOrigin())
-        );
+            () -> assertEquals("test-pipeline", result.getName()),
+            () -> assertEquals("VOLCANO", result.getTriggerOrigin()));
     }
 }

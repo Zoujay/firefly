@@ -1,6 +1,7 @@
 package firefly.service.triggerorigin;
 
 import com.fasterxml.jackson.databind.JsonNode;
+
 import firefly.bean.dto.BaseTriggerOriginDto;
 import firefly.bean.dto.PipelineBuildDto;
 import firefly.bean.dto.message.BaseMessage;

@@ -1,19 +1,20 @@
 package firefly.service.trigger;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import firefly.bean.dto.message.GithubMessageEntity;
 import firefly.bean.dto.message.VolcanoMessageEntity;
 import firefly.constant.TriggerOrigin;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class TriggerCenterTests {
@@ -26,13 +27,9 @@ class TriggerCenterTests {
 
     @Test
     void dispatchesToTheTriggerRegisteredForTheMessageOrigin() {
-        when(volcanoTrigger.getTriggerOrigin())
-                .thenReturn(TriggerOrigin.VOLCANO);
-        when(githubTrigger.getTriggerOrigin())
-                .thenReturn(TriggerOrigin.GITHUB);
-        TriggerCenter triggerCenter = new TriggerCenter(
-                List.of(volcanoTrigger, githubTrigger)
-        );
+        when(volcanoTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.VOLCANO);
+        when(githubTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.GITHUB);
+        TriggerCenter triggerCenter = new TriggerCenter(List.of(volcanoTrigger, githubTrigger));
         VolcanoMessageEntity message = new VolcanoMessageEntity();
         message.setTriggerOrigin(TriggerOrigin.VOLCANO);
 
@@ -44,34 +41,22 @@ class TriggerCenterTests {
 
     @Test
     void rejectsAnUnsupportedTriggerOrigin() {
-        when(volcanoTrigger.getTriggerOrigin())
-                .thenReturn(TriggerOrigin.VOLCANO);
-        TriggerCenter triggerCenter = new TriggerCenter(
-                List.of(volcanoTrigger)
-        );
+        when(volcanoTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.VOLCANO);
+        TriggerCenter triggerCenter = new TriggerCenter(List.of(volcanoTrigger));
         GithubMessageEntity message = new GithubMessageEntity();
         message.setTriggerOrigin(TriggerOrigin.GITHUB);
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> triggerCenter.dispatch(message)
-        );
+        assertThrows(IllegalStateException.class, () -> triggerCenter.dispatch(message));
     }
 
     @Test
     void rejectsDuplicateTriggerImplementations() {
-        when(volcanoTrigger.getTriggerOrigin())
-                .thenReturn(TriggerOrigin.VOLCANO);
-        when(githubTrigger.getTriggerOrigin())
-                .thenReturn(TriggerOrigin.VOLCANO);
+        when(volcanoTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.VOLCANO);
+        when(githubTrigger.getTriggerOrigin()).thenReturn(TriggerOrigin.VOLCANO);
 
         assertThrows(
-                IllegalStateException.class,
-                () -> new TriggerCenter(List.of(
-                        volcanoTrigger,
-                        githubTrigger
-                ))
-        );
+            IllegalStateException.class,
+            () -> new TriggerCenter(List.of(volcanoTrigger, githubTrigger)));
     }
 
     @Test
@@ -79,8 +64,7 @@ class TriggerCenterTests {
         TriggerCenter triggerCenter = new TriggerCenter(List.of());
 
         assertThrows(
-                IllegalArgumentException.class,
-                () -> triggerCenter.dispatch(new VolcanoMessageEntity())
-        );
+            IllegalArgumentException.class,
+            () -> triggerCenter.dispatch(new VolcanoMessageEntity()));
     }
 }

@@ -2,6 +2,7 @@ package firefly.bean.dto;
 
 import firefly.constant.BuildStatus;
 import firefly.constant.PluginType;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -19,5 +20,4 @@ public class JobBuildContext {
     private PluginType pluginType;
     private BuildStatus status;
     private Integer executionAttempt = 0;
-
 }

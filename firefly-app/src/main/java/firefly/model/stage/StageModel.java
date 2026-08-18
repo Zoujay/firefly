@@ -1,10 +1,10 @@
 package firefly.model.stage;
 
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
-
 
 @Data
 @NoArgsConstructor
@@ -28,5 +28,4 @@ public class StageModel {
 
     @Column(name = "stage_name")
     private String stageName;
-
 }

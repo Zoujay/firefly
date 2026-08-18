@@ -4,7 +4,9 @@ import firefly.github.config.GitHubProcessingProperties;
 import firefly.github.dao.GitHubWebhookDeliveryRepository;
 import firefly.github.model.GitHubDeliveryStatus;
 import firefly.github.model.GitHubWebhookDeliveryEntity;
+
 import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,10 +23,9 @@ public class GitHubDeliveryStateService {
     private final Clock clock;
 
     public GitHubDeliveryStateService(
-            GitHubWebhookDeliveryRepository deliveryRepository,
-            GitHubProcessingProperties processingProperties,
-            Clock clock
-    ) {
+        GitHubWebhookDeliveryRepository deliveryRepository,
+        GitHubProcessingProperties processingProperties,
+        Clock clock) {
         this.deliveryRepository = deliveryRepository;
         this.processingProperties = processingProperties;
         this.clock = clock;
@@ -33,72 +34,75 @@ public class GitHubDeliveryStateService {
     @Transactional
     public boolean claim(String deliveryId, String processorId) {
         return deliveryRepository.claim(
-                deliveryId,
-                processorId,
-                now(),
-                GitHubDeliveryStatus.PROCESSING,
-                GitHubDeliveryStatus.RECEIVED,
-                GitHubDeliveryStatus.RETRYABLE,
-                processingProperties.getMaxAttempts()
-        ) == 1;
+            deliveryId,
+            processorId,
+            now(),
+            GitHubDeliveryStatus.PROCESSING,
+            GitHubDeliveryStatus.RECEIVED,
+            GitHubDeliveryStatus.RETRYABLE,
+            processingProperties.getMaxAttempts())
+            == 1;
     }
 
     @Transactional
     public boolean finish(
-            String deliveryId,
-            String processorId,
-            GitHubDeliveryStatus status,
-            String error
-    ) {
-        GitHubWebhookDeliveryEntity delivery = deliveryRepository.findByDeliveryId(deliveryId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "GitHub delivery was not found: " + deliveryId
-                ));
-        GitHubDeliveryStatus finalStatus = status == GitHubDeliveryStatus.RETRYABLE
-                && delivery.getProcessingAttempt() >= processingProperties.getMaxAttempts()
+        String deliveryId, String processorId, GitHubDeliveryStatus status, String error) {
+        GitHubWebhookDeliveryEntity delivery =
+            deliveryRepository
+                .findByDeliveryId(deliveryId)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "GitHub delivery was not found: " + deliveryId));
+        GitHubDeliveryStatus finalStatus =
+            status == GitHubDeliveryStatus.RETRYABLE
+                && delivery.getProcessingAttempt()
+                >= processingProperties.getMaxAttempts()
                 ? GitHubDeliveryStatus.DEAD
                 : status;
         LocalDateTime finishedAt = now();
-        LocalDateTime nextRetryAt = finalStatus == GitHubDeliveryStatus.RETRYABLE
+        LocalDateTime nextRetryAt =
+            finalStatus == GitHubDeliveryStatus.RETRYABLE
                 ? finishedAt.plus(processingProperties.getRetryDelay())
                 : null;
-        int updated = deliveryRepository.finishOwned(
+        int updated =
+            deliveryRepository.finishOwned(
                 deliveryId,
                 processorId,
                 GitHubDeliveryStatus.PROCESSING,
                 finalStatus,
                 error == null ? "" : truncate(error),
                 finishedAt,
-                nextRetryAt
-        );
+                nextRetryAt);
         if (updated == 0) {
             log.warn(
-                    "Ignored stale GitHub delivery completion for delivery {} by processor {}",
-                    deliveryId,
-                    processorId
-            );
+                "Ignored stale GitHub delivery completion for delivery {} by processor {}",
+                deliveryId,
+                processorId);
         }
         return updated == 1;
     }
 
     @Transactional
     public void requestRetry(String deliveryId) {
-        GitHubWebhookDeliveryEntity delivery = deliveryRepository.findByDeliveryId(deliveryId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "GitHub delivery was not found: " + deliveryId
-                ));
+        GitHubWebhookDeliveryEntity delivery =
+            deliveryRepository
+                .findByDeliveryId(deliveryId)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "GitHub delivery was not found: " + deliveryId));
         if (delivery.getStatus() != GitHubDeliveryStatus.RETRYABLE
-                && delivery.getStatus() != GitHubDeliveryStatus.DEAD) {
+            && delivery.getStatus() != GitHubDeliveryStatus.DEAD) {
             throw new IllegalStateException(
-                    "GitHub delivery is not retryable: " + delivery.getStatus()
-            );
+                "GitHub delivery is not retryable: " + delivery.getStatus());
         }
         delivery.setStatus(GitHubDeliveryStatus.RETRYABLE)
-                .setProcessingAttempt(0)
-                .setProcessorId("")
-                .setProcessingStartedAt(null)
-                .setNextRetryAt(now())
-                .setLastError("");
+            .setProcessingAttempt(0)
+            .setProcessorId("")
+            .setProcessingStartedAt(null)
+            .setNextRetryAt(now())
+            .setLastError("");
         deliveryRepository.save(delivery);
     }
 
@@ -108,21 +112,19 @@ public class GitHubDeliveryStateService {
         LocalDateTime expiredBefore = current.minus(processingProperties.getLeaseTimeout());
         String error = "GitHub delivery processing lease expired";
         deliveryRepository.expireDead(
-                expiredBefore,
-                current,
-                error,
-                GitHubDeliveryStatus.PROCESSING,
-                GitHubDeliveryStatus.DEAD,
-                processingProperties.getMaxAttempts()
-        );
+            expiredBefore,
+            current,
+            error,
+            GitHubDeliveryStatus.PROCESSING,
+            GitHubDeliveryStatus.DEAD,
+            processingProperties.getMaxAttempts());
         deliveryRepository.recoverExpired(
-                expiredBefore,
-                current.plus(processingProperties.getRetryDelay()),
-                error,
-                GitHubDeliveryStatus.PROCESSING,
-                GitHubDeliveryStatus.RETRYABLE,
-                processingProperties.getMaxAttempts()
-        );
+            expiredBefore,
+            current.plus(processingProperties.getRetryDelay()),
+            error,
+            GitHubDeliveryStatus.PROCESSING,
+            GitHubDeliveryStatus.RETRYABLE,
+            processingProperties.getMaxAttempts());
     }
 
     private String truncate(String value) {

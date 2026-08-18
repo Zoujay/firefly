@@ -1,8 +1,9 @@
 package firefly.model.job;
 
-
 import firefly.constant.BuildStatus;
+
 import jakarta.persistence.*;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -32,5 +33,4 @@ public class JobBuild {
 
     @Column(name = "execution_attempt", nullable = false)
     private Integer executionAttempt = 0;
-
 }

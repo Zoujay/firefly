@@ -1,6 +1,7 @@
 package firefly.service.triggerorigin;
 
 import firefly.constant.TriggerOrigin;
+
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -11,7 +12,6 @@ import java.util.Map;
 
 @Component
 public class OriginCenter implements InitializingBean {
-
 
     @Autowired
     private List<ITriggerOrigin> triggerOrigins;

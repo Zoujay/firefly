@@ -3,12 +3,14 @@ package firefly.service.messagecenter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.dao.message.IJobMessageDao;
 import firefly.dao.message.IPipelineMessageDao;
 import firefly.dao.message.IPluginMessageDao;
 import firefly.dao.message.IStageMessageDao;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
+
 import org.apache.commons.lang3.StringUtils;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,7 +40,8 @@ public class KafkaMessageStore {
     private IPluginMessageDao pluginMessageDao;
 
     @Transactional
-    public KafkaMessageSaveResult savePipelineMessages(List<ConsumerRecord<String, String>> messages) {
+    public KafkaMessageSaveResult savePipelineMessages(
+        List<ConsumerRecord<String, String>> messages) {
         return saveMessages(messages, pipelineMessageDao::insertIfAbsent);
     }
 
@@ -53,14 +56,13 @@ public class KafkaMessageStore {
     }
 
     @Transactional
-    public KafkaMessageSaveResult savePluginMessages(List<ConsumerRecord<String, String>> messages) {
+    public KafkaMessageSaveResult savePluginMessages(
+        List<ConsumerRecord<String, String>> messages) {
         return saveMessages(messages, pluginMessageDao::insertIfAbsent);
     }
 
     private KafkaMessageSaveResult saveMessages(
-            List<ConsumerRecord<String, String>> messages,
-            MessageInserter inserter
-    ) {
+        List<ConsumerRecord<String, String>> messages, MessageInserter inserter) {
         if (messages.isEmpty()) {
             return new KafkaMessageSaveResult(List.of(), 0);
         }
@@ -74,23 +76,20 @@ public class KafkaMessageStore {
         List<ConsumerRecord<String, String>> newMessages = new ArrayList<>();
         for (Map.Entry<String, ConsumerRecord<String, String>> entry : uniqueMessages.entrySet()) {
             ConsumerRecord<String, String> message = entry.getValue();
-            int inserted = inserter.insertIfAbsent(
+            int inserted =
+                inserter.insertIfAbsent(
                     entry.getKey(),
                     message.topic(),
                     message.partition(),
                     message.offset(),
                     message.key() == null ? StringUtils.EMPTY : message.key(),
-                    message.value()
-            );
+                    message.value());
             if (inserted == 1) {
                 newMessages.add(message);
             }
         }
 
-        return new KafkaMessageSaveResult(
-                newMessages,
-                messages.size() - newMessages.size()
-        );
+        return new KafkaMessageSaveResult(newMessages, messages.size() - newMessages.size());
     }
 
     String extractMessageUUID(ConsumerRecord<String, String> message) {
@@ -103,24 +102,14 @@ public class KafkaMessageStore {
         try {
             root = objectMapper.readTree(payload);
         } catch (JsonProcessingException exception) {
-            throw invalidMessage(
-                    message,
-                    "payload is not valid JSON",
-                    exception
-            );
+            throw invalidMessage(message, "payload is not valid JSON", exception);
         }
         if (root == null || !root.isObject()) {
-            throw invalidMessage(
-                    message,
-                    "payload is not a JSON object",
-                    null
-            );
+            throw invalidMessage(message, "payload is not a JSON object", null);
         }
 
         JsonNode messageUUID = root.get("messageUUID");
-        if (messageUUID == null
-                || messageUUID.isNull()
-                || !messageUUID.isTextual()) {
+        if (messageUUID == null || messageUUID.isNull() || !messageUUID.isTextual()) {
             throw invalidMessage(message, "messageUUID is missing", null);
         }
 
@@ -129,21 +118,21 @@ public class KafkaMessageStore {
             UUID.fromString(uuid);
             return uuid;
         } catch (IllegalArgumentException exception) {
-            throw invalidMessage(
-                    message,
-                    "messageUUID is not a valid UUID",
-                    exception
-            );
+            throw invalidMessage(message, "messageUUID is not a valid UUID", exception);
         }
     }
 
     private IllegalArgumentException invalidMessage(
-            ConsumerRecord<String, String> message,
-            String reason,
-            Exception cause
-    ) {
-        String description = "Invalid Kafka business message at "
-                + message.topic() + "-" + message.partition() + "@" + message.offset() + ": " + reason;
+        ConsumerRecord<String, String> message, String reason, Exception cause) {
+        String description =
+            "Invalid Kafka business message at "
+                + message.topic()
+                + "-"
+                + message.partition()
+                + "@"
+                + message.offset()
+                + ": "
+                + reason;
         return new IllegalArgumentException(description, cause);
     }
 
@@ -151,12 +140,11 @@ public class KafkaMessageStore {
     private interface MessageInserter {
 
         int insertIfAbsent(
-                String messageUUID,
-                String topic,
-                Integer kafkaPartition,
-                Long kafkaOffset,
-                String messageKey,
-                String payload
-        );
+            String messageUUID,
+            String topic,
+            Integer kafkaPartition,
+            Long kafkaOffset,
+            String messageKey,
+            String payload);
     }
 }

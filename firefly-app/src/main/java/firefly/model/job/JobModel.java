@@ -1,11 +1,11 @@
 package firefly.model.job;
 
 import jakarta.persistence.*;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
-
 
 @Data
 @NoArgsConstructor
@@ -28,7 +28,6 @@ public class JobModel {
     @Column(name = "stage_id")
     private Long stageID;
 
-
     @Column(name = "plugin_type")
     private String pluginType;
 
@@ -37,7 +36,4 @@ public class JobModel {
 
     @Column(name = "plugin_raw")
     private String pluginRaw;
-
 }
-
-

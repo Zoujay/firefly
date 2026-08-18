@@ -1,8 +1,8 @@
 package firefly.bean.dto.message;
 
-
 import firefly.constant.BuildStatus;
 import firefly.constant.PluginType;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;

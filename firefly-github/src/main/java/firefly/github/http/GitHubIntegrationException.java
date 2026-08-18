@@ -14,11 +14,7 @@ public class GitHubIntegrationException extends RuntimeException {
     }
 
     public GitHubIntegrationException(
-            HttpStatus status,
-            String code,
-            String message,
-            Throwable cause
-    ) {
+        HttpStatus status, String code, String message, Throwable cause) {
         super(message, cause);
         this.status = status;
         this.code = code;

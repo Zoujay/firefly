@@ -3,10 +3,10 @@ package firefly.model.trigger;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
-
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -23,5 +23,4 @@ public class VolcanoTriggerEntity extends BaseTriggerEntity {
 
     @Column(name = "sk")
     private String sk;
-
 }

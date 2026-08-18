@@ -2,12 +2,14 @@ package firefly.service.pluginconfig.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.bean.dto.AbstractPluginDto;
 import firefly.bean.dto.TextPluginConfigDto;
 import firefly.constant.PluginType;
 import firefly.dao.pluginconfig.ITextPluginConfigDao;
 import firefly.model.plugin.TextPluginModel;
 import firefly.service.pluginconfig.IPluginConfig;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +19,6 @@ import java.util.Optional;
 @Service
 @Transactional
 public class TextPluginConfigImpl implements IPluginConfig {
-
 
     @Autowired
     private ITextPluginConfigDao textPluginConfigDao;
@@ -30,13 +31,9 @@ public class TextPluginConfigImpl implements IPluginConfig {
         return PluginType.TEXT;
     }
 
-
     public TextPluginConfigDto parseJobConfigRequest(JsonNode pluginRaw, Long jobConfigID) {
         TextPluginConfigDto pluginConfigDto =
-                objectMapper.convertValue(
-                        pluginRaw,
-                        TextPluginConfigDto.class
-                );
+            objectMapper.convertValue(pluginRaw, TextPluginConfigDto.class);
         pluginConfigDto.setJobConfigID(jobConfigID);
         return pluginConfigDto;
     }
@@ -60,7 +57,6 @@ public class TextPluginConfigImpl implements IPluginConfig {
     public AbstractPluginDto getPlugin(Long id) {
         return getTextPluginConfigDtoById(id);
     }
-
 
     public TextPluginConfigDto getTextPluginConfigDtoById(Long id) {
         Optional<TextPluginModel> textPluginModel = textPluginConfigDao.findById(id);

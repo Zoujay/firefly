@@ -1,8 +1,9 @@
 package firefly.model.stage;
 
-
 import firefly.constant.BuildStatus;
+
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;

@@ -1,14 +1,15 @@
 package firefly.github.oauth;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import firefly.github.config.GitHubProperties;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
 import java.net.URI;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubOAuthClientTests {
 

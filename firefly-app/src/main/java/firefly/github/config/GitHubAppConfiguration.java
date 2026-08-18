@@ -10,10 +10,7 @@ import java.time.Clock;
 
 @Configuration
 @EnableScheduling
-@EnableConfigurationProperties({
-        GitHubStorageProperties.class,
-        GitHubProcessingProperties.class
-})
+@EnableConfigurationProperties({GitHubStorageProperties.class, GitHubProcessingProperties.class})
 public class GitHubAppConfiguration {
 
     @Bean

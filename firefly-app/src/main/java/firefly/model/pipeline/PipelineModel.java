@@ -1,14 +1,14 @@
 package firefly.model.pipeline;
 
-
 import firefly.constant.TriggerMatch;
 import firefly.constant.TriggerModel;
 import firefly.constant.TriggerOrigin;
+
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
-
 
 @Data
 @NoArgsConstructor
@@ -31,7 +31,6 @@ public class PipelineModel {
     @Column(name = "trigger_mode")
     private TriggerModel triggerMode;
 
-
     @Enumerated(EnumType.STRING)
     @Column(name = "trigger_match")
     private TriggerMatch triggerMatch;
@@ -45,5 +44,4 @@ public class PipelineModel {
 
     @Column(name = "branch_pattern")
     private String branchPattern;
-
 }

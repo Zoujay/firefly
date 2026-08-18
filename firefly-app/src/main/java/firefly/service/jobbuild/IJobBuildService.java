@@ -1,21 +1,17 @@
 package firefly.service.jobbuild;
 
-
 import firefly.bean.dto.JobBuildDto;
 import firefly.constant.BuildStatus;
 
 import java.util.List;
 
 public interface IJobBuildService {
+
     Long saveJobBuild(JobBuildDto jobBuild);
 
     JobBuildDto getJobBuildByID(Long jobBuildID);
 
-    Boolean updateJobBuildStatus(
-            Long jobBuildID,
-            BuildStatus status,
-            Integer executionAttempt
-    );
+    Boolean updateJobBuildStatus(Long jobBuildID, BuildStatus status, Integer executionAttempt);
 
     JobBuildDto getJobBuildByJobConfigIDAndStageBuildID(Long jobConfigID, Long stageBuildID);
 

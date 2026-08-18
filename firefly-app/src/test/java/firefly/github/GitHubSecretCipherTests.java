@@ -1,15 +1,16 @@
 package firefly.github;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+
 import firefly.github.config.GitHubStorageProperties;
 import firefly.github.security.EncryptedSecret;
 import firefly.github.security.GitHubSecretCipher;
+
 import org.junit.jupiter.api.Test;
 
 import java.security.SecureRandom;
 import java.util.Base64;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class GitHubSecretCipherTests {
 
@@ -25,8 +26,7 @@ class GitHubSecretCipherTests {
 
         assertNotEquals(first.ciphertext(), second.ciphertext());
         assertEquals(
-                "github-token",
-                cipher.decrypt(first.ciphertext(), first.nonce(), first.keyVersion())
-        );
+            "github-token",
+            cipher.decrypt(first.ciphertext(), first.nonce(), first.keyVersion()));
     }
 }

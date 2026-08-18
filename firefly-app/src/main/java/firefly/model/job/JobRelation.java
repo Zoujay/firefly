@@ -1,7 +1,7 @@
 package firefly.model.job;
 
-
 import jakarta.persistence.*;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;

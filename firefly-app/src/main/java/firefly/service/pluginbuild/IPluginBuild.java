@@ -20,8 +20,5 @@ public interface IPluginBuild {
     Boolean updatePluginBuild(Long id, BuildStatus status, Integer executionAttempt);
 
     TriggerPluginMessage triggerPluginBuild(
-            Long pluginBuildID,
-            BuildStatus status,
-            Integer executionAttempt
-    );
+        Long pluginBuildID, BuildStatus status, Integer executionAttempt);
 }

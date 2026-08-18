@@ -4,7 +4,9 @@ import firefly.github.api.GitHubRepository;
 import firefly.github.dto.GitHubSubscriptionRequest;
 import firefly.github.dto.GitHubSubscriptionResponse;
 import firefly.github.service.GitHubSubscriptionService;
+
 import jakarta.validation.Valid;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,11 +36,10 @@ public class GitHubSubscriptionController {
 
     @PutMapping("/connections/{connectionId}/repositories/{owner}/{repository}/subscription")
     public GitHubSubscriptionResponse upsert(
-            @PathVariable String connectionId,
-            @PathVariable String owner,
-            @PathVariable String repository,
-            @Valid @RequestBody GitHubSubscriptionRequest request
-    ) {
+        @PathVariable String connectionId,
+        @PathVariable String owner,
+        @PathVariable String repository,
+        @Valid @RequestBody GitHubSubscriptionRequest request) {
         return subscriptionService.upsert(connectionId, owner, repository, request);
     }
 

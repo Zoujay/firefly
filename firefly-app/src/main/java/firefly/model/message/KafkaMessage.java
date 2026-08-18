@@ -1,6 +1,9 @@
 package firefly.model.message;
 
+import static firefly.constant.PersistenceDefaults.UNSET_TIME;
+
 import firefly.constant.MessageProcessingStatus;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -9,24 +12,23 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.MappedSuperclass;
+
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+
 import org.apache.commons.lang3.StringUtils;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-import static firefly.constant.PersistenceDefaults.UNSET_TIME;
-
 /**
  * Common Inbox record for a Kafka message received by Firefly.
  *
- * <p>The four concrete Inbox tables persist the original Kafka record before
- * its offset is acknowledged. Besides deduplicating by business UUID, the
- * Inbox records whether business processing is archived, in progress,
- * successful, or waiting for manual recovery after a failure.</p>
+ * <p>The four concrete Inbox tables persist the original Kafka record before its offset is
+ * acknowledged. Besides deduplicating by business UUID, the Inbox records whether business
+ * processing is archived, in progress, successful, or waiting for manual recovery after a failure.
  */
 @Getter
 @MappedSuperclass
@@ -62,8 +64,7 @@ public abstract class KafkaMessage {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "processing_status", nullable = false, length = 32)
-    private MessageProcessingStatus processingStatus =
-            MessageProcessingStatus.ARCHIVED;
+    private MessageProcessingStatus processingStatus = MessageProcessingStatus.ARCHIVED;
 
     @Column(name = "processing_attempt", nullable = false)
     private Integer processingAttempt = 0;
@@ -81,13 +82,12 @@ public abstract class KafkaMessage {
     private String lastError = StringUtils.EMPTY;
 
     protected KafkaMessage(
-            String messageUUID,
-            String topic,
-            Integer kafkaPartition,
-            Long kafkaOffset,
-            String messageKey,
-            String payload
-    ) {
+        String messageUUID,
+        String topic,
+        Integer kafkaPartition,
+        Long kafkaOffset,
+        String messageKey,
+        String payload) {
         this.messageUUID = messageUUID;
         this.topic = topic;
         this.kafkaPartition = kafkaPartition;

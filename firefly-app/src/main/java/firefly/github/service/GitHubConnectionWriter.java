@@ -8,6 +8,7 @@ import firefly.github.model.GitHubConnectionStatus;
 import firefly.github.oauth.GitHubOAuthResult;
 import firefly.github.security.EncryptedSecret;
 import firefly.github.security.GitHubSecretCipher;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +29,9 @@ public class GitHubConnectionWriter {
     private final Clock clock;
 
     public GitHubConnectionWriter(
-            GitHubConnectionRepository connectionRepository,
-            GitHubSecretCipher secretCipher,
-            Clock clock
-    ) {
+        GitHubConnectionRepository connectionRepository,
+        GitHubSecretCipher secretCipher,
+        Clock clock) {
         this.connectionRepository = connectionRepository;
         this.secretCipher = secretCipher;
         this.clock = clock;
@@ -39,54 +39,56 @@ public class GitHubConnectionWriter {
 
     @Transactional
     public GitHubConnectionResponse save(GitHubOAuthResult result) {
-        GitHubConnectionEntity connection = connectionRepository
+        GitHubConnectionEntity connection =
+            connectionRepository
                 .findBySingletonKey(SINGLETON_KEY)
                 .orElseGet(GitHubConnectionEntity::new);
         if (connection.getId() != null
-                && !connection.getGithubUserId().equals(result.user().id())) {
+            && !connection.getGithubUserId().equals(result.user().id())) {
             throw new GitHubIntegrationException(
-                    HttpStatus.CONFLICT,
-                    "GITHUB_CONNECTION_ALREADY_EXISTS",
-                    "A different GitHub user is already connected"
-            );
+                HttpStatus.CONFLICT,
+                "GITHUB_CONNECTION_ALREADY_EXISTS",
+                "A different GitHub user is already connected");
         }
 
         LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         EncryptedSecret encrypted = secretCipher.encrypt(result.token().accessToken());
         if (connection.getId() == null) {
-            connection.setPublicId(UUID.randomUUID().toString())
-                    .setSingletonKey(SINGLETON_KEY)
-                    .setCreatedAt(now);
+            connection
+                .setPublicId(UUID.randomUUID().toString())
+                .setSingletonKey(SINGLETON_KEY)
+                .setCreatedAt(now);
         }
-        GitHubConnectionStatus nextStatus = connection.getStatus()
-                == GitHubConnectionStatus.DISCONNECTING
+        GitHubConnectionStatus nextStatus =
+            connection.getStatus() == GitHubConnectionStatus.DISCONNECTING
                 ? GitHubConnectionStatus.DISCONNECTING
                 : GitHubConnectionStatus.ACTIVE;
-        connection.setGithubUserId(result.user().id())
-                .setGithubLogin(result.user().login())
-                .setAccessTokenCiphertext(encrypted.ciphertext())
-                .setTokenNonce(encrypted.nonce())
-                .setEncryptionKeyVersion(encrypted.keyVersion())
-                .setScopes(result.token().scope() == null ? "" : result.token().scope())
-                .setStatus(nextStatus)
-                .setLastValidatedAt(now)
-                .setUpdatedAt(now);
+        connection
+            .setGithubUserId(result.user().id())
+            .setGithubLogin(result.user().login())
+            .setAccessTokenCiphertext(encrypted.ciphertext())
+            .setTokenNonce(encrypted.nonce())
+            .setEncryptionKeyVersion(encrypted.keyVersion())
+            .setScopes(result.token().scope() == null ? "" : result.token().scope())
+            .setStatus(nextStatus)
+            .setLastValidatedAt(now)
+            .setUpdatedAt(now);
         return response(connectionRepository.saveAndFlush(connection));
     }
 
     public GitHubConnectionResponse response(GitHubConnectionEntity connection) {
-        List<String> scopes = connection.getScopes() == null || connection.getScopes().isBlank()
+        List<String> scopes =
+            connection.getScopes() == null || connection.getScopes().isBlank()
                 ? List.of()
                 : Arrays.stream(connection.getScopes().split(","))
-                .map(String::trim)
-                .filter(scope -> !scope.isBlank())
-                .toList();
+                    .map(String::trim)
+                    .filter(scope -> !scope.isBlank())
+                    .toList();
         return new GitHubConnectionResponse(
-                connection.getPublicId(),
-                connection.getGithubUserId(),
-                connection.getGithubLogin(),
-                connection.getStatus(),
-                scopes
-        );
+            connection.getPublicId(),
+            connection.getGithubUserId(),
+            connection.getGithubLogin(),
+            connection.getStatus(),
+            scopes);
     }
 }

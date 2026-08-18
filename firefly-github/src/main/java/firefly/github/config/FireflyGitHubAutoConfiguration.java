@@ -1,11 +1,13 @@
 package firefly.github.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.github.api.GitHubApiClient;
 import firefly.github.oauth.GitHubOAuthClient;
 import firefly.github.oauth.PkceGenerator;
 import firefly.github.webhook.GitHubWebhookEventParser;
 import firefly.github.webhook.GitHubWebhookSignatureVerifier;
+
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -27,18 +29,14 @@ public class FireflyGitHubAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public GitHubOAuthClient gitHubOAuthClient(
-            GitHubProperties properties,
-            RestClient.Builder restClientBuilder
-    ) {
+        GitHubProperties properties, RestClient.Builder restClientBuilder) {
         return new GitHubOAuthClient(properties, restClientBuilder);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public GitHubApiClient gitHubApiClient(
-            GitHubProperties properties,
-            RestClient.Builder restClientBuilder
-    ) {
+        GitHubProperties properties, RestClient.Builder restClientBuilder) {
         return new GitHubApiClient(properties, restClientBuilder);
     }
 

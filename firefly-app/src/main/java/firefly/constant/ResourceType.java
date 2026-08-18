@@ -7,6 +7,4 @@ public enum ResourceType {
 
     private ResourceType(String value) {
     }
-
-
 }

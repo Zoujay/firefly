@@ -2,6 +2,7 @@ package firefly.service.triggerorigin.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.bean.dto.BaseTriggerOriginDto;
 import firefly.bean.dto.PipelineBuildDto;
 import firefly.bean.dto.VolcanoTriggerDto;
@@ -11,12 +12,12 @@ import firefly.constant.TriggerOrigin;
 import firefly.dao.trigger.IVolcanoDao;
 import firefly.model.origin.VolcanoEngine;
 import firefly.service.triggerorigin.ITriggerOrigin;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
-
 
 @Service
 @Transactional
@@ -44,28 +45,32 @@ public class VolcanoTriggerOriginServiceImpl implements ITriggerOrigin {
             return null;
         }
         VolcanoEngine volcanoConfig = ve.get();
-        volcanoMessageEntity.setAk(volcanoConfig.getAk())
-                .setSk(volcanoConfig.getSk())
-                .setTriggerOrigin(TriggerOrigin.VOLCANO)
-                .setPipelineBuildID(pipelineBuildID)
-                .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt())
-                .setPipelineID(pipelineID);
+        volcanoMessageEntity
+            .setAk(volcanoConfig.getAk())
+            .setSk(volcanoConfig.getSk())
+            .setTriggerOrigin(TriggerOrigin.VOLCANO)
+            .setPipelineBuildID(pipelineBuildID)
+            .setExecutionAttempt(pipelineBuildDto.getExecutionAttempt())
+            .setPipelineID(pipelineID);
         return volcanoMessageEntity;
     }
 
     @Override
     public Long saveTriggerOrigin(JsonNode triggerOrigin, Long pipelineID) {
-        VolcanoTriggerDto volcanoTriggerDto = (VolcanoTriggerDto) this.parseTriggerOrigin(triggerOrigin);
+        VolcanoTriggerDto volcanoTriggerDto =
+            (VolcanoTriggerDto) this.parseTriggerOrigin(triggerOrigin);
         VolcanoEngine volcanoEngine = this.assembleVolcanoEngine(volcanoTriggerDto, pipelineID);
         volcanoDao.save(volcanoEngine);
         return volcanoEngine.getId();
     }
 
-    private VolcanoEngine assembleVolcanoEngine(VolcanoTriggerDto volcanoTriggerDto, Long pipelineID) {
+    private VolcanoEngine assembleVolcanoEngine(
+        VolcanoTriggerDto volcanoTriggerDto, Long pipelineID) {
         VolcanoEngine volcanoEngine = new VolcanoEngine();
-        volcanoEngine.setAk(volcanoTriggerDto.getAk())
-                .setSk(volcanoTriggerDto.getSk())
-                .setPipelineID(pipelineID);
+        volcanoEngine
+            .setAk(volcanoTriggerDto.getAk())
+            .setSk(volcanoTriggerDto.getSk())
+            .setPipelineID(pipelineID);
         return volcanoEngine;
     }
 }

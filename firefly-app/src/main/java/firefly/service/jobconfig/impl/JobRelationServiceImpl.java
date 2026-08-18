@@ -1,10 +1,10 @@
 package firefly.service.jobconfig.impl;
 
-
 import firefly.bean.dto.JobRelationDto;
 import firefly.dao.jobconfig.IJobRelationDao;
 import firefly.model.job.JobRelation;
 import firefly.service.jobconfig.IJobRelationService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -69,7 +69,8 @@ public class JobRelationServiceImpl implements IJobRelationService {
 
     @Override
     public List<JobRelationDto> getAllHeadJobRelationByStageID(Long stageID) {
-        List<JobRelation> jobRelations = jobRelationDao.getAllHeadJobRelationsByStageID(stageID, true);
+        List<JobRelation> jobRelations =
+            jobRelationDao.getAllHeadJobRelationsByStageID(stageID, true);
         List<JobRelationDto> result = new ArrayList<>();
         for (JobRelation jobRelation : jobRelations) {
             JobRelationDto dto = assembleJobRelationDto(jobRelation);
@@ -105,28 +106,28 @@ public class JobRelationServiceImpl implements IJobRelationService {
         jobRelationDao.save(jobRelation);
     }
 
-
     private JobRelationDto assembleJobRelationDto(JobRelation jobRelation) {
         JobRelationDto jobRelationDto = new JobRelationDto();
-        jobRelationDto.setJobID(jobRelation.getJobID())
-                .setPreviousJobID(jobRelation.getPreviousJobID())
-                .setNextJobID(jobRelation.getNextJobID())
-                .setPipelineID(jobRelation.getPipelineID())
-                .setStageID(jobRelation.getStageID())
-                .setIsHeadJob(jobRelation.isHeadJob())
-                .setId(jobRelation.getId());
+        jobRelationDto
+            .setJobID(jobRelation.getJobID())
+            .setPreviousJobID(jobRelation.getPreviousJobID())
+            .setNextJobID(jobRelation.getNextJobID())
+            .setPipelineID(jobRelation.getPipelineID())
+            .setStageID(jobRelation.getStageID())
+            .setIsHeadJob(jobRelation.isHeadJob())
+            .setId(jobRelation.getId());
         return jobRelationDto;
     }
 
     public JobRelation assembleJobRelation(JobRelationDto jobRelationDto) {
         JobRelation jobRelation = new JobRelation();
-        jobRelation.setJobID(jobRelationDto.getJobID())
-                .setPreviousJobID(jobRelationDto.getPreviousJobID())
-                .setNextJobID(jobRelationDto.getNextJobID())
-                .setPipelineID(jobRelationDto.getPipelineID())
-                .setStageID(jobRelationDto.getStageID())
-                .setHeadJob(jobRelationDto.getIsHeadJob());
+        jobRelation
+            .setJobID(jobRelationDto.getJobID())
+            .setPreviousJobID(jobRelationDto.getPreviousJobID())
+            .setNextJobID(jobRelationDto.getNextJobID())
+            .setPipelineID(jobRelationDto.getPipelineID())
+            .setStageID(jobRelationDto.getStageID())
+            .setHeadJob(jobRelationDto.getIsHeadJob());
         return jobRelation;
     }
-
 }

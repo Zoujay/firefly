@@ -7,6 +7,7 @@ import firefly.github.model.GitHubTriggerConfigEntity;
 import firefly.github.webhook.GitHubWebhookEvent;
 import firefly.model.pipeline.PipelineModel;
 import firefly.service.triggerorigin.impl.GithubTriggerOriginServiceImpl;
+
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -21,14 +22,11 @@ public class GitHubTriggerMatcher {
     }
 
     public boolean matches(
-            GitHubWebhookEvent event,
-            GitHubTriggerConfigEntity config,
-            PipelineModel pipeline
-    ) {
+        GitHubWebhookEvent event, GitHubTriggerConfigEntity config, PipelineModel pipeline) {
         if (pipeline.getTriggerOrigin() != TriggerOrigin.GITHUB
-                || pipeline.getTriggerMode() != TriggerModel.AUTOMATIC
-                || !Boolean.TRUE.equals(config.getEnabled())
-                || !config.getPipelineId().equals(pipeline.getId())) {
+            || pipeline.getTriggerMode() != TriggerModel.AUTOMATIC
+            || !Boolean.TRUE.equals(config.getEnabled())
+            || !config.getPipelineId().equals(pipeline.getId())) {
             return false;
         }
         List<String> events = triggerConfigService.read(config.getEvents());
@@ -36,8 +34,8 @@ public class GitHubTriggerMatcher {
             return false;
         }
         if ("push".equals(event.eventType())
-                && event.deleted()
-                && Boolean.TRUE.equals(config.getIgnoreDeletePush())) {
+            && event.deleted()
+            && Boolean.TRUE.equals(config.getIgnoreDeletePush())) {
             return false;
         }
         if ("pull_request".equals(event.eventType())) {
@@ -47,8 +45,8 @@ public class GitHubTriggerMatcher {
             }
         }
         if (event.matchBranch() == null
-                || pipeline.getBranchPattern() == null
-                || pipeline.getBranchPattern().isBlank()) {
+            || pipeline.getBranchPattern() == null
+            || pipeline.getBranchPattern().isBlank()) {
             return false;
         }
         if (pipeline.getTriggerMatch() == TriggerMatch.ACCURATE) {

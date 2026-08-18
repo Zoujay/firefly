@@ -5,6 +5,7 @@ import firefly.constant.BuildStatus;
 import firefly.constant.KafkaConfiguration;
 import firefly.service.messagecenter.BusinessMessageUUID;
 import firefly.service.outbox.OutboxService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -26,13 +27,13 @@ public class PipelineRetryMessagePublisher {
     public void publish(PipelineRetryPreparedEvent event) {
         TriggerStageMessage message = new TriggerStageMessage();
         message.setStageBuildID(event.stageBuildID())
-                .setBuildStatus(BuildStatus.RUNNING)
-                .setExecutionAttempt(event.executionAttempt())
-                .setMessageUUID(BusinessMessageUUID.stage(
-                        event.stageBuildID(),
-                        event.executionAttempt(),
-                        BuildStatus.RUNNING
-                ));
+            .setBuildStatus(BuildStatus.RUNNING)
+            .setExecutionAttempt(event.executionAttempt())
+            .setMessageUUID(
+                BusinessMessageUUID.stage(
+                    event.stageBuildID(),
+                    event.executionAttempt(),
+                    BuildStatus.RUNNING));
         outboxService.enqueue(KafkaConfiguration.STAGE_TOPIC, message);
     }
 }

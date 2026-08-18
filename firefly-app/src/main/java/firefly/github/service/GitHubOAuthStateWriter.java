@@ -2,6 +2,7 @@ package firefly.github.service;
 
 import firefly.github.dao.GitHubOAuthStateRepository;
 import firefly.github.model.GitHubOAuthStateEntity;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,7 +25,7 @@ public class GitHubOAuthStateWriter {
             return Optional.empty();
         }
         return stateRepository.consumePending(pending.get().getId()) == 1
-                ? pending
-                : Optional.empty();
+            ? pending
+            : Optional.empty();
     }
 }

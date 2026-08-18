@@ -5,6 +5,7 @@ import firefly.github.dao.GitHubConnectionRepository;
 import firefly.github.dto.GitHubConnectionResponse;
 import firefly.github.oauth.GitHubOAuthClient;
 import firefly.github.oauth.GitHubOAuthResult;
+
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -22,12 +23,11 @@ public class GitHubConnectionService {
     private final GitHubProperties properties;
 
     public GitHubConnectionService(
-            GitHubOAuthStateService stateService,
-            GitHubOAuthClient oauthClient,
-            GitHubConnectionWriter connectionWriter,
-            GitHubConnectionRepository connectionRepository,
-            GitHubProperties properties
-    ) {
+        GitHubOAuthStateService stateService,
+        GitHubOAuthClient oauthClient,
+        GitHubConnectionWriter connectionWriter,
+        GitHubConnectionRepository connectionRepository,
+        GitHubProperties properties) {
         this.stateService = stateService;
         this.oauthClient = oauthClient;
         this.connectionWriter = connectionWriter;
@@ -35,11 +35,7 @@ public class GitHubConnectionService {
         this.properties = properties;
     }
 
-    public GitHubConnectionResponse complete(
-            String code,
-            String state,
-            String browserSession
-    ) {
+    public GitHubConnectionResponse complete(String code, String state, String browserSession) {
         String verifier = stateService.consume(state, browserSession);
         GitHubOAuthResult result = oauthClient.exchange(code, verifier);
         validateScopes(result);
@@ -51,27 +47,24 @@ public class GitHubConnectionService {
     }
 
     public List<GitHubConnectionResponse> list() {
-        return connectionRepository.findAll().stream()
-                .map(connectionWriter::response)
-                .toList();
+        return connectionRepository.findAll().stream().map(connectionWriter::response).toList();
     }
 
     private void validateScopes(GitHubOAuthResult result) {
-        Set<String> actual = result.token().scope() == null
+        Set<String> actual =
+            result.token().scope() == null
                 ? Set.of()
                 : List.of(result.token().scope().split(",")).stream()
-                .map(String::trim)
-                .filter(scope -> !scope.isBlank())
-                .collect(Collectors.toSet());
-        List<String> missing = properties.getScopes().stream()
-                .filter(scope -> !actual.contains(scope))
-                .toList();
+                    .map(String::trim)
+                    .filter(scope -> !scope.isBlank())
+                    .collect(Collectors.toSet());
+        List<String> missing =
+            properties.getScopes().stream().filter(scope -> !actual.contains(scope)).toList();
         if (!missing.isEmpty()) {
             throw new firefly.github.http.GitHubIntegrationException(
-                    org.springframework.http.HttpStatus.FORBIDDEN,
-                    "GITHUB_OAUTH_SCOPE_INSUFFICIENT",
-                    "GitHub authorization did not grant all required scopes"
-            );
+                org.springframework.http.HttpStatus.FORBIDDEN,
+                "GITHUB_OAUTH_SCOPE_INSUFFICIENT",
+                "GitHub authorization did not grant all required scopes");
         }
     }
 }

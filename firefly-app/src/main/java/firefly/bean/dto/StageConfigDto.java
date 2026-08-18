@@ -1,6 +1,5 @@
 package firefly.bean.dto;
 
-
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -17,5 +16,4 @@ public class StageConfigDto {
     private String uuid;
     private String name;
     private Integer stageOrder;
-
 }

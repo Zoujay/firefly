@@ -9,6 +9,7 @@ import firefly.github.model.GitHubWebhookDeliveryEntity;
 import firefly.github.webhook.GitHubWebhookEvent;
 import firefly.github.webhook.GitHubWebhookEventParser;
 import firefly.model.pipeline.PipelineModel;
+
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -32,14 +33,13 @@ public class GitHubWebhookProcessingService {
     private final GitHubDeliveryStateService stateService;
 
     public GitHubWebhookProcessingService(
-            GitHubWebhookDeliveryRepository deliveryRepository,
-            GitHubTriggerConfigRepository triggerConfigRepository,
-            IPipelineConfigDao pipelineConfigDao,
-            GitHubWebhookEventParser eventParser,
-            GitHubTriggerMatcher triggerMatcher,
-            GitHubPipelineInvocationService invocationService,
-            GitHubDeliveryStateService stateService
-    ) {
+        GitHubWebhookDeliveryRepository deliveryRepository,
+        GitHubTriggerConfigRepository triggerConfigRepository,
+        IPipelineConfigDao pipelineConfigDao,
+        GitHubWebhookEventParser eventParser,
+        GitHubTriggerMatcher triggerMatcher,
+        GitHubPipelineInvocationService invocationService,
+        GitHubDeliveryStateService stateService) {
         this.deliveryRepository = deliveryRepository;
         this.triggerConfigRepository = triggerConfigRepository;
         this.pipelineConfigDao = pipelineConfigDao;
@@ -55,23 +55,30 @@ public class GitHubWebhookProcessingService {
             return;
         }
         try {
-            GitHubWebhookDeliveryEntity delivery = deliveryRepository
+            GitHubWebhookDeliveryEntity delivery =
+                deliveryRepository
                     .findByDeliveryId(deliveryId)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "GitHub delivery was not found: " + deliveryId
-                    ));
-            GitHubWebhookEvent event = eventParser.parse(
-                    delivery.getDeliveryId(),
-                    delivery.getEventType(),
-                    delivery.getPayload().getBytes(StandardCharsets.UTF_8)
-            ).withReceivedAt(delivery.getReceivedAt().toInstant(ZoneOffset.UTC));
-            List<GitHubTriggerConfigEntity> configs = triggerConfigRepository
-                    .findAllBySubscriptionIdAndEnabledTrue(delivery.getSubscriptionId());
+                    .orElseThrow(
+                        () ->
+                            new IllegalStateException(
+                                "GitHub delivery was not found: "
+                                    + deliveryId));
+            GitHubWebhookEvent event =
+                eventParser
+                    .parse(
+                        delivery.getDeliveryId(),
+                        delivery.getEventType(),
+                        delivery.getPayload().getBytes(StandardCharsets.UTF_8))
+                    .withReceivedAt(delivery.getReceivedAt().toInstant(ZoneOffset.UTC));
+            List<GitHubTriggerConfigEntity> configs =
+                triggerConfigRepository.findAllBySubscriptionIdAndEnabledTrue(
+                    delivery.getSubscriptionId());
             Set<Long> pipelineIds = new LinkedHashSet<>();
             configs.forEach(config -> pipelineIds.add(config.getPipelineId()));
             Map<Long, PipelineModel> pipelines = new HashMap<>();
-            pipelineConfigDao.findAllById(pipelineIds)
-                    .forEach(pipeline -> pipelines.put(pipeline.getId(), pipeline));
+            pipelineConfigDao
+                .findAllById(pipelineIds)
+                .forEach(pipeline -> pipelines.put(pipeline.getId(), pipeline));
 
             int matches = 0;
             for (GitHubTriggerConfigEntity config : configs) {
@@ -83,18 +90,16 @@ public class GitHubWebhookProcessingService {
                 matches++;
             }
             stateService.finish(
-                    deliveryId,
-                    processorId,
-                    matches == 0 ? GitHubDeliveryStatus.IGNORED : GitHubDeliveryStatus.SUCCESS,
-                    ""
-            );
+                deliveryId,
+                processorId,
+                matches == 0 ? GitHubDeliveryStatus.IGNORED : GitHubDeliveryStatus.SUCCESS,
+                "");
         } catch (Exception exception) {
             stateService.finish(
-                    deliveryId,
-                    processorId,
-                    GitHubDeliveryStatus.RETRYABLE,
-                    exception.getMessage()
-            );
+                deliveryId,
+                processorId,
+                GitHubDeliveryStatus.RETRYABLE,
+                exception.getMessage());
             throw exception;
         }
     }

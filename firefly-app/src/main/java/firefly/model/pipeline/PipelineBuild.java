@@ -1,11 +1,12 @@
 package firefly.model.pipeline;
 
 import firefly.constant.BuildStatus;
+
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
-
 
 @Data
 @NoArgsConstructor
@@ -18,7 +19,6 @@ public class PipelineBuild {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-
     @Column(name = "pipeline_id")
     private Long pipelineID;
 
@@ -28,5 +28,4 @@ public class PipelineBuild {
 
     @Column(name = "execution_attempt", nullable = false)
     private Integer executionAttempt = 0;
-
 }

@@ -1,7 +1,7 @@
 package firefly.model.origin;
 
-
 import jakarta.persistence.*;
+
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
@@ -25,5 +25,4 @@ public class VolcanoEngine {
 
     @Column(name = "sk")
     private String sk;
-
 }

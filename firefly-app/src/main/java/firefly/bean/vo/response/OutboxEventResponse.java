@@ -2,6 +2,7 @@ package firefly.bean.vo.response;
 
 import firefly.constant.OutboxStatus;
 import firefly.model.outbox.OutboxEvent;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
@@ -39,19 +40,18 @@ public class OutboxEventResponse {
 
     public static OutboxEventResponse from(OutboxEvent event) {
         return new OutboxEventResponse(
-                event.getId(),
-                event.getMessageUUID(),
-                event.getTopic(),
-                event.getMessageKey(),
-                event.getMessageType(),
-                event.getPayload(),
-                event.getPublishStatus(),
-                event.getPublishAttempt(),
-                event.getPublisherID(),
-                event.getPublishingStartedAt(),
-                event.getPublishingFinishedAt(),
-                event.getLastError(),
-                event.getCreatedAt()
-        );
+            event.getId(),
+            event.getMessageUUID(),
+            event.getTopic(),
+            event.getMessageKey(),
+            event.getMessageType(),
+            event.getPayload(),
+            event.getPublishStatus(),
+            event.getPublishAttempt(),
+            event.getPublisherID(),
+            event.getPublishingStartedAt(),
+            event.getPublishingFinishedAt(),
+            event.getLastError(),
+            event.getCreatedAt());
     }
 }

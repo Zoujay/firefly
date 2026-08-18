@@ -8,6 +8,7 @@ import firefly.github.model.GitHubSubscriptionStatus;
 import firefly.github.webhook.GitHubWebhookEvent;
 import firefly.github.webhook.GitHubWebhookEventParser;
 import firefly.github.webhook.GitHubWebhookSignatureVerifier;
+
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -25,12 +26,11 @@ public class GitHubWebhookIngressService {
     private final GitHubWebhookDeliveryWriter deliveryWriter;
 
     public GitHubWebhookIngressService(
-            GitHubRepositorySubscriptionRepository subscriptionRepository,
-            GitHubSubscriptionService subscriptionService,
-            GitHubWebhookSignatureVerifier signatureVerifier,
-            GitHubWebhookEventParser eventParser,
-            GitHubWebhookDeliveryWriter deliveryWriter
-    ) {
+        GitHubRepositorySubscriptionRepository subscriptionRepository,
+        GitHubSubscriptionService subscriptionService,
+        GitHubWebhookSignatureVerifier signatureVerifier,
+        GitHubWebhookEventParser eventParser,
+        GitHubWebhookDeliveryWriter deliveryWriter) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionService = subscriptionService;
         this.signatureVerifier = signatureVerifier;
@@ -39,59 +39,45 @@ public class GitHubWebhookIngressService {
     }
 
     public GitHubWebhookResponse receive(
-            String deliveryId,
-            String eventType,
-            Long hookId,
-            String targetType,
-            Long targetId,
-            String signature,
-            byte[] rawPayload
-    ) {
+        String deliveryId,
+        String eventType,
+        Long hookId,
+        String targetType,
+        Long targetId,
+        String signature,
+        byte[] rawPayload) {
         if (!"repository".equalsIgnoreCase(targetType)) {
             throw forbidden();
         }
-        GitHubRepositorySubscriptionEntity subscription = locate(
-                eventType,
-                hookId,
-                targetId
-        );
+        GitHubRepositorySubscriptionEntity subscription = locate(eventType, hookId, targetId);
         signatureVerifier.verify(
-                rawPayload,
-                signature,
-                subscriptionService.webhookSecret(subscription)
-        );
+            rawPayload, signature, subscriptionService.webhookSecret(subscription));
         GitHubWebhookEvent event = eventParser.parse(deliveryId, eventType, rawPayload);
         if (event.repositoryId() == null
-                || !event.repositoryId().equals(targetId)
-                || !event.repositoryId().equals(subscription.getGithubRepositoryId())) {
+            || !event.repositoryId().equals(targetId)
+            || !event.repositoryId().equals(subscription.getGithubRepositoryId())) {
             throw forbidden();
         }
         if (!event.ping() && subscription.getStatus() != GitHubSubscriptionStatus.ACTIVE) {
             throw forbidden();
         }
         try {
-            GitHubDeliveryWriteResult result = deliveryWriter.persist(
+            GitHubDeliveryWriteResult result =
+                deliveryWriter.persist(
                     subscription,
                     event,
                     new String(rawPayload, StandardCharsets.UTF_8),
-                    hookId
-            );
+                    hookId);
             if (result.rejected()) {
                 throw forbidden();
             }
             return new GitHubWebhookResponse(
-                    result.created() ? "ACCEPTED" : "DUPLICATE",
-                    deliveryId,
-                    eventType
-            );
+                result.created() ? "ACCEPTED" : "DUPLICATE", deliveryId, eventType);
         } catch (DataIntegrityViolationException exception) {
             if (event.ping()) {
                 try {
                     if (deliveryWriter.persistRejectedBindingConflict(
-                            subscription,
-                            event,
-                            new String(rawPayload, StandardCharsets.UTF_8)
-                    )) {
+                        subscription, event, new String(rawPayload, StandardCharsets.UTF_8))) {
                         throw forbidden();
                     }
                 } catch (DataIntegrityViolationException duplicate) {
@@ -103,24 +89,18 @@ public class GitHubWebhookIngressService {
     }
 
     private GitHubRepositorySubscriptionEntity locate(
-            String eventType,
-            Long hookId,
-            Long targetId
-    ) {
-        GitHubRepositorySubscriptionEntity byHook = subscriptionRepository
-                .findByWebhookId(hookId)
-                .orElse(null);
+        String eventType, Long hookId, Long targetId) {
+        GitHubRepositorySubscriptionEntity byHook =
+            subscriptionRepository.findByWebhookId(hookId).orElse(null);
         if (byHook != null) {
             return byHook;
         }
         if (!"ping".equals(eventType)) {
             throw forbidden();
         }
-        List<GitHubRepositorySubscriptionEntity> candidates = subscriptionRepository
-                .findAllByGithubRepositoryIdAndWebhookIdIsNullAndStatus(
-                        targetId,
-                        GitHubSubscriptionStatus.PROVISIONING
-                );
+        List<GitHubRepositorySubscriptionEntity> candidates =
+            subscriptionRepository.findAllByGithubRepositoryIdAndWebhookIdIsNullAndStatus(
+                targetId, GitHubSubscriptionStatus.PROVISIONING);
         if (candidates.size() != 1) {
             throw forbidden();
         }
@@ -129,9 +109,8 @@ public class GitHubWebhookIngressService {
 
     private GitHubIntegrationException forbidden() {
         return new GitHubIntegrationException(
-                HttpStatus.FORBIDDEN,
-                "GITHUB_WEBHOOK_SIGNATURE_INVALID",
-                "GitHub webhook authentication failed"
-        );
+            HttpStatus.FORBIDDEN,
+            "GITHUB_WEBHOOK_SIGNATURE_INVALID",
+            "GitHub webhook authentication failed");
     }
 }

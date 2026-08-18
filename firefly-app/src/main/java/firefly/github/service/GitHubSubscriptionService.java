@@ -3,6 +3,7 @@ package firefly.github.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import firefly.github.api.GitHubApiClient;
 import firefly.github.api.GitHubRepository;
 import firefly.github.api.GitHubWebhook;
@@ -19,6 +20,7 @@ import firefly.github.model.GitHubRepositorySubscriptionEntity;
 import firefly.github.model.GitHubSubscriptionStatus;
 import firefly.github.security.EncryptedSecret;
 import firefly.github.security.GitHubSecretCipher;
+
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -49,16 +51,15 @@ public class GitHubSubscriptionService {
     private final Clock clock;
 
     public GitHubSubscriptionService(
-            GitHubConnectionRepository connectionRepository,
-            GitHubRepositorySubscriptionRepository subscriptionRepository,
-            GitHubApiClient apiClient,
-            GitHubProperties properties,
-            GitHubSecretCipher secretCipher,
-            GitHubSubscriptionDeletionStateService deletionStateService,
-            ObjectMapper objectMapper,
-            SecureRandom secureRandom,
-            Clock clock
-    ) {
+        GitHubConnectionRepository connectionRepository,
+        GitHubRepositorySubscriptionRepository subscriptionRepository,
+        GitHubApiClient apiClient,
+        GitHubProperties properties,
+        GitHubSecretCipher secretCipher,
+        GitHubSubscriptionDeletionStateService deletionStateService,
+        ObjectMapper objectMapper,
+        SecureRandom secureRandom,
+        Clock clock) {
         this.connectionRepository = connectionRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.apiClient = apiClient;
@@ -76,21 +77,16 @@ public class GitHubSubscriptionService {
     }
 
     public GitHubSubscriptionResponse upsert(
-            String connectionPublicId,
-            String owner,
-            String repositoryName,
-            GitHubSubscriptionRequest request
-    ) {
+        String connectionPublicId,
+        String owner,
+        String repositoryName,
+        GitHubSubscriptionRequest request) {
         GitHubConnectionEntity connection = activeConnection(connectionPublicId);
-        GitHubRepository repository = apiClient.getRepository(
-                token(connection),
-                owner,
-                repositoryName
-        );
+        GitHubRepository repository =
+            apiClient.getRepository(token(connection), owner, repositoryName);
         List<String> events = normalizeEvents(request.events());
-        GitHubRepositorySubscriptionEntity existing = subscriptionRepository
-                .findByGithubRepositoryId(repository.id())
-                .orElse(null);
+        GitHubRepositorySubscriptionEntity existing =
+            subscriptionRepository.findByGithubRepositoryId(repository.id()).orElse(null);
         if (existing != null) {
             if (existing.getRegistrationMode() != request.registrationMode()) {
                 throw conflict("Subscription registration mode already exists for this repository");
@@ -109,7 +105,8 @@ public class GitHubSubscriptionService {
         String webhookSecret = randomSecret();
         EncryptedSecret encrypted = secretCipher.encrypt(webhookSecret);
         LocalDateTime now = now();
-        GitHubRepositorySubscriptionEntity subscription = new GitHubRepositorySubscriptionEntity()
+        GitHubRepositorySubscriptionEntity subscription =
+            new GitHubRepositorySubscriptionEntity()
                 .setPublicId(UUID.randomUUID().toString())
                 .setConnectionId(connection.getId())
                 .setGithubRepositoryId(repository.id())
@@ -142,71 +139,70 @@ public class GitHubSubscriptionService {
     }
 
     private GitHubSubscriptionResponse provisionAuto(
-            GitHubConnectionEntity connection,
-            GitHubRepositorySubscriptionEntity subscription,
-            String webhookSecret,
-            boolean allowReconcile
-    ) {
+        GitHubConnectionEntity connection,
+        GitHubRepositorySubscriptionEntity subscription,
+        String webhookSecret,
+        boolean allowReconcile) {
         if (properties.getWebhookCallbackUrl() == null) {
-            subscription.setStatus(GitHubSubscriptionStatus.ERROR)
-                    .setLastError("Webhook callback URL is not configured")
-                    .setUpdatedAt(now());
+            subscription
+                .setStatus(GitHubSubscriptionStatus.ERROR)
+                .setLastError("Webhook callback URL is not configured")
+                .setUpdatedAt(now());
             subscriptionRepository.save(subscription);
             throw new GitHubIntegrationException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "GITHUB_WEBHOOK_NOT_CONFIGURED",
-                    "GitHub webhook callback URL is not configured"
-            );
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "GITHUB_WEBHOOK_NOT_CONFIGURED",
+                "GitHub webhook callback URL is not configured");
         }
 
         List<String> events = readEvents(subscription.getEvents());
         GitHubWebhook webhook;
         if (subscription.getWebhookId() != null) {
-            webhook = apiClient.updateWebhook(
+            webhook =
+                apiClient.updateWebhook(
                     token(connection),
                     subscription.getOwner(),
                     subscription.getRepositoryName(),
                     subscription.getWebhookId(),
                     properties.getWebhookCallbackUrl(),
                     webhookSecret,
-                    events
-            );
+                    events);
         } else {
             List<GitHubWebhook> matching = matchingCallbacks(connection, subscription);
             if (matching.isEmpty()) {
-                webhook = apiClient.createWebhook(
+                webhook =
+                    apiClient.createWebhook(
                         token(connection),
                         subscription.getOwner(),
                         subscription.getRepositoryName(),
                         properties.getWebhookCallbackUrl(),
                         webhookSecret,
-                        events
-                );
+                        events);
             } else if (allowReconcile && matching.size() == 1) {
-                webhook = apiClient.updateWebhook(
+                webhook =
+                    apiClient.updateWebhook(
                         token(connection),
                         subscription.getOwner(),
                         subscription.getRepositoryName(),
                         matching.getFirst().id(),
                         properties.getWebhookCallbackUrl(),
                         webhookSecret,
-                        events
-                );
+                        events);
             } else {
                 throw conflict("A GitHub webhook already uses the Firefly callback URL");
             }
         }
-        subscription.setWebhookId(webhook.id())
-                .setStatus(GitHubSubscriptionStatus.PROVISIONING)
-                .setLastError("")
-                .setUpdatedAt(now());
+        subscription
+            .setWebhookId(webhook.id())
+            .setStatus(GitHubSubscriptionStatus.PROVISIONING)
+            .setLastError("")
+            .setUpdatedAt(now());
         subscriptionRepository.saveAndFlush(subscription);
         apiClient.pingWebhook(
-                token(connection),
-                subscription.getOwner(),
-                subscription.getRepositoryName(),
-                webhook.id()
-        );
+            token(connection),
+            subscription.getOwner(),
+            subscription.getRepositoryName(),
+            webhook.id());
         return response(subscription, null);
     }
 
@@ -214,38 +210,34 @@ public class GitHubSubscriptionService {
         GitHubRepositorySubscriptionEntity subscription = subscription(subscriptionPublicId);
         if (subscription.getWebhookId() == null) {
             throw new GitHubIntegrationException(
-                    HttpStatus.CONFLICT,
-                    "GITHUB_WEBHOOK_NOT_BOUND",
-                    "GitHub webhook ID is not bound yet"
-            );
+                HttpStatus.CONFLICT,
+                "GITHUB_WEBHOOK_NOT_BOUND",
+                "GitHub webhook ID is not bound yet");
         }
         GitHubConnectionEntity connection = activeConnection(subscription.getConnectionId());
         apiClient.pingWebhook(
-                token(connection),
-                subscription.getOwner(),
-                subscription.getRepositoryName(),
-                subscription.getWebhookId()
-        );
+            token(connection),
+            subscription.getOwner(),
+            subscription.getRepositoryName(),
+            subscription.getWebhookId());
     }
 
     public void delete(String subscriptionPublicId) {
-        GitHubSubscriptionDeletionTarget target = deletionStateService.begin(
-                subscriptionPublicId
-        );
+        GitHubSubscriptionDeletionTarget target = deletionStateService.begin(subscriptionPublicId);
         if (target.registrationMode() == GitHubRegistrationMode.MANUAL
-                && target.webhookId() != null) {
+            && target.webhookId() != null) {
             deletionStateService.fail(
-                    target.subscriptionId(),
-                    GitHubSubscriptionStatus.ORPHANED,
-                    "The manually registered GitHub webhook was retained; "
-                            + "delete Hook " + target.webhookId() + " in GitHub"
-            );
+                target.subscriptionId(),
+                GitHubSubscriptionStatus.ORPHANED,
+                "The manually registered GitHub webhook was retained; "
+                    + "delete Hook "
+                    + target.webhookId()
+                    + " in GitHub");
             throw new GitHubIntegrationException(
-                    HttpStatus.CONFLICT,
-                    "GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED",
-                    "The Pipeline triggers are disabled, but the manually registered GitHub "
-                            + "webhook must be deleted in GitHub"
-            );
+                HttpStatus.CONFLICT,
+                "GITHUB_MANUAL_WEBHOOK_DELETE_REQUIRED",
+                "The Pipeline triggers are disabled, but the manually registered GitHub "
+                    + "webhook must be deleted in GitHub");
         }
         if (target.webhookId() == null) {
             deletionStateService.complete(target.subscriptionId());
@@ -254,37 +246,33 @@ public class GitHubSubscriptionService {
         try {
             GitHubConnectionEntity connection = activeConnection(target.connectionId());
             apiClient.deleteWebhook(
-                    token(connection),
-                    target.owner(),
-                    target.repositoryName(),
-                    target.webhookId()
-            );
+                token(connection), target.owner(), target.repositoryName(), target.webhookId());
         } catch (RuntimeException exception) {
             deletionStateService.fail(
-                    target.subscriptionId(),
-                    GitHubSubscriptionStatus.DELETING,
-                    exception.getMessage()
-            );
+                target.subscriptionId(),
+                GitHubSubscriptionStatus.DELETING,
+                exception.getMessage());
             throw exception;
         }
         deletionStateService.complete(target.subscriptionId());
     }
 
     public GitHubRepositorySubscriptionEntity subscription(String publicId) {
-        return subscriptionRepository.findByPublicId(publicId)
-                .orElseThrow(() -> new GitHubIntegrationException(
+        return subscriptionRepository
+            .findByPublicId(publicId)
+            .orElseThrow(
+                () ->
+                    new GitHubIntegrationException(
                         HttpStatus.NOT_FOUND,
                         "GITHUB_SUBSCRIPTION_NOT_FOUND",
-                        "GitHub repository subscription was not found"
-                ));
+                        "GitHub repository subscription was not found"));
     }
 
     public String webhookSecret(GitHubRepositorySubscriptionEntity subscription) {
         return secretCipher.decrypt(
-                subscription.getWebhookSecretCiphertext(),
-                subscription.getWebhookSecretNonce(),
-                subscription.getWebhookSecretKeyVersion()
-        );
+            subscription.getWebhookSecretCiphertext(),
+            subscription.getWebhookSecretNonce(),
+            subscription.getWebhookSecretKeyVersion());
     }
 
     public List<String> readEvents(String events) {
@@ -297,78 +285,81 @@ public class GitHubSubscriptionService {
     }
 
     private List<GitHubWebhook> matchingCallbacks(
-            GitHubConnectionEntity connection,
-            GitHubRepositorySubscriptionEntity subscription
-    ) {
+        GitHubConnectionEntity connection, GitHubRepositorySubscriptionEntity subscription) {
         URI callback = properties.getWebhookCallbackUrl();
-        return apiClient.listWebhooks(
-                        token(connection),
-                        subscription.getOwner(),
-                        subscription.getRepositoryName()
-                ).stream()
-                .filter(hook -> hook.config() != null
+        return apiClient
+            .listWebhooks(
+                token(connection),
+                subscription.getOwner(),
+                subscription.getRepositoryName())
+            .stream()
+            .filter(
+                hook ->
+                    hook.config() != null
                         && callback.toString().equals(hook.config().url()))
-                .toList();
+            .toList();
     }
 
     private void updateRepository(
-            GitHubRepositorySubscriptionEntity subscription,
-            GitHubRepository repository,
-            String owner,
-            String repositoryName,
-            List<String> events
-    ) {
-        subscription.setNodeId(repository.nodeId())
-                .setOwner(owner)
-                .setRepositoryName(repositoryName)
-                .setFullName(repository.fullName())
-                .setHtmlUrl(repository.htmlUrl())
-                .setCloneUrl(repository.cloneUrl())
-                .setDefaultBranch(repository.defaultBranch())
-                .setEvents(writeEvents(events))
-                .setUpdatedAt(now());
+        GitHubRepositorySubscriptionEntity subscription,
+        GitHubRepository repository,
+        String owner,
+        String repositoryName,
+        List<String> events) {
+        subscription
+            .setNodeId(repository.nodeId())
+            .setOwner(owner)
+            .setRepositoryName(repositoryName)
+            .setFullName(repository.fullName())
+            .setHtmlUrl(repository.htmlUrl())
+            .setCloneUrl(repository.cloneUrl())
+            .setDefaultBranch(repository.defaultBranch())
+            .setEvents(writeEvents(events))
+            .setUpdatedAt(now());
     }
 
     private GitHubConnectionEntity activeConnection(String publicId) {
-        return connectionRepository.findByPublicId(publicId)
-                .filter(connection -> connection.getStatus() == GitHubConnectionStatus.ACTIVE)
-                .orElseThrow(() -> new GitHubIntegrationException(
+        return connectionRepository
+            .findByPublicId(publicId)
+            .filter(connection -> connection.getStatus() == GitHubConnectionStatus.ACTIVE)
+            .orElseThrow(
+                () ->
+                    new GitHubIntegrationException(
                         HttpStatus.NOT_FOUND,
                         "GITHUB_CONNECTION_NOT_FOUND",
-                        "Active GitHub connection was not found"
-                ));
+                        "Active GitHub connection was not found"));
     }
 
     private GitHubConnectionEntity activeConnection(Long id) {
-        return connectionRepository.findById(id)
-                .filter(connection -> connection.getStatus() == GitHubConnectionStatus.ACTIVE)
-                .orElseThrow(() -> new GitHubIntegrationException(
+        return connectionRepository
+            .findById(id)
+            .filter(connection -> connection.getStatus() == GitHubConnectionStatus.ACTIVE)
+            .orElseThrow(
+                () ->
+                    new GitHubIntegrationException(
                         HttpStatus.CONFLICT,
                         "GITHUB_CONNECTION_NOT_ACTIVE",
-                        "GitHub connection is not active"
-                ));
+                        "GitHub connection is not active"));
     }
 
     private String token(GitHubConnectionEntity connection) {
         return secretCipher.decrypt(
-                connection.getAccessTokenCiphertext(),
-                connection.getTokenNonce(),
-                connection.getEncryptionKeyVersion()
-        );
+            connection.getAccessTokenCiphertext(),
+            connection.getTokenNonce(),
+            connection.getEncryptionKeyVersion());
     }
 
     private List<String> normalizeEvents(List<String> requested) {
-        LinkedHashSet<String> events = new LinkedHashSet<>(
+        LinkedHashSet<String> events =
+            new LinkedHashSet<>(
                 requested == null || requested.isEmpty()
-                        ? List.of("push", "pull_request")
-                        : requested
-        );
+                    ? List.of("push", "pull_request")
+                    : requested);
         if (events.isEmpty() || !SUPPORTED_EVENTS.containsAll(events)) {
             throw new GitHubIntegrationException(
-                    HttpStatus.BAD_REQUEST,
-                    "GITHUB_WEBHOOK_EVENTS_INVALID",
-                    "Only push and pull_request webhook events are supported"
-            );
+                HttpStatus.BAD_REQUEST,
+                "GITHUB_WEBHOOK_EVENTS_INVALID",
+                "Only push and pull_request webhook events are supported");
         }
         return List.copyOf(events);
     }
@@ -392,27 +383,21 @@ public class GitHubSubscriptionService {
     }
 
     private GitHubSubscriptionResponse response(
-            GitHubRepositorySubscriptionEntity subscription,
-            String plaintextSecret
-    ) {
+        GitHubRepositorySubscriptionEntity subscription, String plaintextSecret) {
         return new GitHubSubscriptionResponse(
-                subscription.getPublicId(),
-                subscription.getGithubRepositoryId(),
-                subscription.getFullName(),
-                subscription.getWebhookId(),
-                subscription.getRegistrationMode(),
-                subscription.getStatus(),
-                properties.getWebhookCallbackUrl(),
-                plaintextSecret,
-                readEvents(subscription.getEvents())
-        );
+            subscription.getPublicId(),
+            subscription.getGithubRepositoryId(),
+            subscription.getFullName(),
+            subscription.getWebhookId(),
+            subscription.getRegistrationMode(),
+            subscription.getStatus(),
+            properties.getWebhookCallbackUrl(),
+            plaintextSecret,
+            readEvents(subscription.getEvents()));
     }
 
     private GitHubIntegrationException conflict(String message) {
         return new GitHubIntegrationException(
-                HttpStatus.CONFLICT,
-                "GITHUB_SUBSCRIPTION_CONFLICT",
-                message
-        );
+            HttpStatus.CONFLICT, "GITHUB_SUBSCRIPTION_CONFLICT", message);
     }
 }

@@ -19,11 +19,9 @@ public class VolcanoTriggerDto extends BaseTriggerOriginDto implements Serializa
 
     private Long volcanoID;
 
-
     private Long pipelineID;
 
     private String ak;
 
     private String sk;
-
 }
