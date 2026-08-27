@@ -1,7 +1,7 @@
 # Firefly Volcano 模块技术设计
 
 > 状态：Implementation Ready  
-> 版本：v1.2
+> 版本：v1.3
 > 日期：2026-08-28  
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
@@ -42,6 +42,8 @@
 - 部署插件按 TOS Bucket + Prefix 浏览当前层，并选择按 `LastModified` 倒序的最近 10 个
   制品之一。
 - 部署插件按 Region 查询可部署 ECS，使用 `Region + InstanceId` 保存目标。
+- 部署插件允许输入或选择 `tos://<bucket>/<object-key>`，并配置受控的 ECS 部署路径；
+  Bootstrap 把经过校验的制品原子发布到该路径后再执行用户脚本。
 - 部署超时、重试、状态查询、停止执行、健康检查和可选用户回滚指令。
 
 ### 1.2 不在 MVP 范围
@@ -140,6 +142,18 @@ VPC 中重复。无公网 IP 的实例仍必须满足两个网络条件：云助
 预签名 URL 作为环境变量提供给脚本，由脚本自行下载、校验、解压和部署。Firefly 只能
 审计脚本及退出码，不能保证其完整性校验、原子切换或自动回滚，因此必须由管理员显式
 开启并再次确认风险。两种模式都不会把长期 AK/SK 或 STS 凭据发送到实例。
+
+### 2.9 TOS 地址和部署路径是配置，不是 Shell 参数
+
+Plugin 可以让用户输入 `tos://<bucket>/<object-key>`，但后端必须解析并持久化规范化的
+Region、Bucket、Key、Version ID、ETag、大小和 SHA-256；不保存预签名 URL，也不接受
+任意 `http://` / `https://` 地址。对象 Key 始终是不透明标识，不能直接拼成本地路径。
+
+用户配置的“部署路径”拆成管理员允许的绝对 `deployRoot`、用户可选的相对
+`relativePath` 和明确的 `layout`。后端生成并展示最终路径预览，ECS Bootstrap 再次执行
+相同校验。制品不能直接写入正在使用的目标：必须先下载到目标文件系统内的独占临时
+目录，完成大小、SHA-256 和归档安全校验后，再通过原子 rename 或版本目录发布，最后才
+执行用户脚本。这样“自动下载到指定路径”不会退化成任意路径覆盖能力。
 
 ## 3. 总体架构
 
@@ -735,6 +749,7 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
   "pluginType": "VOLCANO_DEPLOY",
   "pluginRaw": {
     "artifact": {
+      "tosUri": "tos://firefly-artifacts/order-service/releases/order-service.tar.gz",
       "region": "cn-beijing",
       "bucket": "firefly-artifacts",
       "prefix": "order-service/releases/",
@@ -744,9 +759,7 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
       "size": 18342190,
       "lastModified": "2026-08-28T10:00:00Z",
       "expectedSha256": "<64 lowercase hex>",
-      "handling": "TAR_GZ",
-      "outputFileName": null,
-      "executable": false
+      "handling": "TAR_GZ"
     },
     "target": {
       "region": "cn-beijing",
@@ -756,9 +769,13 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
       "vpcIdSnapshot": "vpc-xxx",
       "zoneIdSnapshot": "cn-beijing-a"
     },
-    "release": {
+    "destination": {
       "applicationName": "order-service",
       "deployRoot": "/opt/firefly/apps/order-service",
+      "relativePath": "releases",
+      "layout": "VERSIONED_DIRECTORY",
+      "outputFileName": null,
+      "executable": false,
       "retainReleases": 5
     },
     "execution": {
@@ -785,26 +802,53 @@ Pipeline Binding 得到。编辑器先选 Prefix，再从最近 10 个结果中�
 Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contract，不在本次通过
 任意字符串模板拼接实现。
 
+`artifact.tosUri` 是创建/编辑界面的便捷输入，后端以 `region + bucket + key +
+versionId` 为权威值。URI 只接受 `tos` Scheme，Bucket 位于 Authority，路径按 UTF-8
+Object Key 解析；拒绝 UserInfo、Port、Fragment、重复百分号解码和除 `versionId` 外的
+Query。通过最近 10 个制品选择器得到的对象也生成同样的规范化 URI。保存时执行
+`HeadObject` 并覆盖客户端提交的 ETag、大小和 LastModified，客户端不能伪造快照。
+
+`destination.layout`：
+
+| 类型 | 最终部署路径 | 适用制品 |
+| --- | --- | --- |
+| `VERSIONED_DIRECTORY` | `<deployRoot>/<relativePath>/<deploymentId>/` | `TAR_GZ`、`ZIP`、`FILE`，生产推荐 |
+| `FIXED_FILE` | `<deployRoot>/<relativePath>` | 仅 `FILE`，兼容必须使用固定文件名的服务 |
+
+`VERSIONED_DIRECTORY` 中，压缩包解压到最终版本目录，普通文件以 `outputFileName` 放入
+版本目录。`FIXED_FILE` 的 `relativePath` 本身包含文件名；发布时先生成同目录临时文件，
+校验后用原子 rename 替换，并保留一个受控的 previous 文件提供给用户回滚脚本；不能
+仅凭文件恢复就声称业务回滚成功。MVP 不支持覆盖非空固定目录，因为跨目录树无法可靠
+原子替换。
+
 `artifact.handling` 必须由用户确认，不能只根据扩展名自动决定：
 
 | 类型 | 准备结果 | `FIREFLY_ARTIFACT_PATH` |
 | --- | --- | --- |
 | `TAR_GZ` | 校验归档成员后解压到新 Release 目录 | 解压后的 Release 目录 |
 | `ZIP` | 校验归档成员后解压到新 Release 目录 | 解压后的 Release 目录 |
-| `FILE` | 以 `outputFileName` 放入新 Release 目录 | 最终文件绝对路径 |
+| `FILE` | 按 Destination Layout 放入版本目录或固定文件路径 | 最终文件绝对路径 |
 
 `FILE` 同时覆盖 JAR、ELF、Go/Rust 可执行文件和其他不可解压的二进制。只有
-`executable=true` 时 Bootstrap 才把模式设置为 `0750`，否则使用 `0640`；文件名必须是
-单个安全文件名，不能包含 `/`、`..` 或控制字符。UI 可以根据 `.tar.gz`、`.zip`、`.jar`
-给出建议，但保存前必须让用户确认。
+`destination.executable=true` 时 Bootstrap 才把模式设置为 `0750`，否则使用 `0640`；
+文件名必须是单个安全文件名，不能包含 `/`、`..` 或控制字符。UI 可以根据 `.tar.gz`、
+`.zip`、`.jar` 给出建议，但保存前必须让用户确认。
 
 字段校验：
 
 - `applicationName`：`[a-z][a-z0-9-]{1,62}`。
 - `instanceId`：按火山资源 ID 格式和长度白名单校验。
+- `tosUri` 解析结果必须与 `bucket`、`key` 一致；Bucket、Key 和 Version ID 必须落在
+  Pipeline Binding 的 IAM/管理员 allowlist 内。
 - Artifact Region 与 Target Region 必须一致，除非管理员显式开启跨 Region 部署。
 - `deployRoot`：必须位于管理员配置的根目录，例如 `/opt/firefly/apps/`，规范化后仍在
   根目录内；禁止 `..`、NUL 和符号链接逃逸。
+- `relativePath`：必须是非空相对路径，禁止前导 `/`、`.`/`..` 段、NUL、控制字符、Shell
+  模板和 `${...}`；UTF-8 编码后最长 1024 字节。
+- 最终路径按组件检查现有父目录，任何组件是符号链接都拒绝；执行用户必须对受控临时
+  目录和目标父目录有权限，但不能写 allowlist 之外的目录。
+- `FIXED_FILE` 只允许 `handling=FILE`；`VERSIONED_DIRECTORY + FILE` 必须提供安全的
+  `outputFileName`，不能包含 `/`、`..` 或控制字符。
 - `runAsUser`：不能由普通 Plugin 任意填写，必须来自管理员 allowlist；默认禁止 `root`。
 - `deployScript` 必填，UTF-8、无 NUL，和可信 Bootstrap 合并后的命令正文不得超过
   16 KiB；`rollbackScript` 可选，并应用相同校验。
@@ -819,11 +863,13 @@ Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contra
 3. 请求并展示当前 Prefix 最近 10 个制品，用户选择一个具体 Object Snapshot。
 4. 请求同 Region 的 ECS 列表，默认只显示 `deployable=true`，可切换查看不可用原因。
 5. 用户根据实例名、私网 IP、Zone、VPC、Tag 和 Instance ID 选择一台机器。
-6. 选择制品处理类型，填写部署指令、可选回滚指令、执行用户、超时和健康检查。
-7. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
-8. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
+6. 选择制品处理类型，配置 Deploy Root、相对路径和 Layout；后端返回规范化 URI 和最终
+   路径预览，页面明确区分临时下载路径与用户脚本看到的最终路径。
+7. 填写部署指令、可选回滚指令、执行用户、超时和健康检查。
+8. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
+9. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
    用户刷新选择，不静默替换制品或目标。
-9. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
+10. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
    和本地配置均保存成功后 Plugin 才进入 `READY`。失败时删除孤儿命令或交给 GC 回收。
 
 MVP 的管理 API 已由部署层管理员认证保护，因此管理员保存脚本即视为批准，
@@ -853,9 +899,12 @@ artifact_url_b64_1 ... artifact_url_b64_4
 artifact_sha256
 artifact_size
 artifact_handling
-artifact_output_name_b64
+destination_output_name_b64
 application_name
 deploy_root_b64
+destination_relative_path_b64
+destination_layout
+destination_executable
 execution_mode
 health_url_b64
 health_timeout_seconds
@@ -879,15 +928,21 @@ Bootstrap 自身禁止 `eval` 和 `set -x`，所有变量引用加双引号。�
 /opt/firefly/apps/<application>/
 ├── current -> releases/<deployment-id>
 ├── previous -> releases/<previous-deployment-id>
+├── .firefly-staging/
+│   └── <deployment-id>/
+│       ├── artifact.part
+│       └── prepared/
 ├── releases/
 │   ├── <deployment-id>/
 │   └── ...
 └── shared/
 
-/var/lib/firefly/artifacts/<deployment-id>.part
-/var/lib/firefly/artifacts/<deployment-id>.artifact
 /var/lock/firefly-deploy-<application>.lock
 ```
+
+临时目录放在 `deployRoot` 所在文件系统，是为了保证发布阶段可以使用同文件系统原子
+rename。若管理员把 TOS 下载缓存放在 `/var/lib/firefly`，缓存只能作为下载源，最终仍需
+先复制到目标父目录的临时文件并完成校验，不能假设跨文件系统 rename 具有原子性。
 
 用户部署脚本只依赖稳定环境变量：
 
@@ -898,8 +953,10 @@ FIREFLY_ARTIFACT_TYPE
 FIREFLY_DOWNLOAD_FILE       # MANAGED_DOWNLOAD 下已校验的原始下载文件
 FIREFLY_RELEASE_DIR         # 本次独占的新 Release 目录
 FIREFLY_ARTIFACT_PATH       # 压缩包为解压目录，FILE 为最终文件
+FIREFLY_DESTINATION_PATH    # 规范化后的最终文件或版本目录
 FIREFLY_CURRENT_LINK
 FIREFLY_PREVIOUS_RELEASE
+FIREFLY_PREVIOUS_FILE      # FIXED_FILE 被替换前的受控备份；首次部署为空
 FIREFLY_SHARED_DIR
 ```
 
@@ -910,30 +967,37 @@ FIREFLY_SHARED_DIR
 ### 8.6 Bootstrap 与用户指令执行步骤
 
 1. `set -Eeuo pipefail`、`umask 027`，关闭命令回显。
-2. 校验全部参数，确认目标目录在允许根目录内。
+2. 解码并校验全部参数，按 `deployRoot + relativePath + layout` 重新计算最终路径，确认它和
+   Plugin 保存的规范化预览一致且仍位于允许根目录内；检查现有父目录不存在符号链接。
 3. 使用 `flock -n` 获取应用级部署锁；冲突返回明确退出码。
-4. 创建新的 Release 目录，拒绝覆盖已存在且内容不匹配的目录。
+4. 在 `deployRoot/.firefly-staging/<deployment-id>` 创建权限为 `0700` 的独占临时目录；
+   相同 Deployment ID 已存在时先核对 Attempt 和内容，禁止复用未知残留目录。
 5. `MANAGED_DOWNLOAD` 使用 `curl --fail --location --retry 3 --connect-timeout 10` 下载到
    `.part`，校验实际大小和 `sha256sum` 后原子改名为 `.artifact`；失败立即清理。
 6. `TAR_GZ` / `ZIP` 先列出全部归档成员，拒绝绝对路径、`..`、设备文件和越界符号链接，
-   解包时不保留原 UID/GID；`FILE` 复制为安全文件名并设置 `0640` 或 `0750`。
-7. 设置稳定环境变量并切换到配置的工作目录，执行 Command Revision 中固定的
+   解包到临时 `prepared/` 时不保留原 UID/GID；`FILE` 在临时目录生成安全文件并设置
+   `0640` 或 `0750`。
+7. 对文件执行 `fsync`，再按 Layout 发布：`VERSIONED_DIRECTORY` 把 `prepared/` 原子
+   rename 为带 Deployment ID 的最终目录；`FIXED_FILE` 在同一父目录原子替换目标并保留
+   previous。发布后设置 `FIREFLY_DESTINATION_PATH` 和 `FIREFLY_ARTIFACT_PATH`。
+8. 设置稳定环境变量并切换到配置的工作目录，执行 Command Revision 中固定的
    `deployScript`；以其退出码作为 `USER_DEPLOY` 结果，不使用 `eval` 包装用户正文。
-8. `CUSTOM_FULL_SCRIPT` 跳过步骤 5～6，向用户脚本提供短期 URL、期望大小和 SHA-256；
+9. `CUSTOM_FULL_SCRIPT` 跳过托管下载、准备和发布步骤，向用户脚本提供短期 URL、期望
+   大小、SHA-256 和规范化 Destination；
    用户脚本必须自行下载和准备制品，Firefly 在页面和审计中标记 `integrityManaged=false`。
-9. 用户脚本成功后执行配置的本机健康检查。Firefly 不假设服务由 systemd 管理，重启、
+10. 用户脚本成功后执行配置的本机健康检查。Firefly 不假设服务由 systemd 管理，重启、
    容器更新、软链接切换等业务动作都由用户指令明确完成。
-10. 部署指令或健康检查失败时执行可选 `rollbackScript`。未配置回滚，或回滚失败时进入
+11. 部署指令或健康检查失败时执行可选 `rollbackScript`。未配置回滚，或回滚失败时进入
     `MANUAL_INTERVENTION_REQUIRED`；不能声称已经自动恢复。
-11. 仅在全部成功后清理超过 `retainReleases` 的旧 Release；活动版本、上一版本和任何
+12. 仅在全部成功后清理超过 `retainReleases` 的旧 Release；活动版本、上一版本和任何
     Attempt 正在引用的目录不得删除。
-12. 输出 Firefly 结果信封和用户 stdout/stderr 的受限摘要；对 URL 做精确脱敏，单次输出
+13. 输出 Firefly 结果信封和用户 stdout/stderr 的受限摘要；对 URL 做精确脱敏，单次输出
     截断到配置上限，完整输出不得进入 Kafka 消息。
 
 成功输出示例：
 
 ```json
-{"schemaVersion":1,"deploymentId":"dep_...","status":"SUCCESS","release":"/opt/firefly/apps/order-service/releases/dep_...","rolledBack":false}
+{"schemaVersion":1,"deploymentId":"dep_...","status":"SUCCESS","destination":"/opt/firefly/apps/order-service/releases/dep_...","rolledBack":false}
 ```
 
 脚本使用约定退出码：
@@ -1045,8 +1109,8 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `object_last_modified`         DATETIME(6) NOT NULL,
     `expected_sha256`              CHAR(64) NOT NULL,
     `artifact_handling`            VARCHAR(32) NOT NULL,
-    `artifact_output_file_name`    VARCHAR(255) NOT NULL DEFAULT '',
-    `artifact_executable`          TINYINT(1) NOT NULL DEFAULT 0,
+    `destination_output_file_name` VARCHAR(255) NOT NULL DEFAULT '',
+    `destination_executable`       TINYINT(1) NOT NULL DEFAULT 0,
     `instance_id`                  VARCHAR(128) NOT NULL,
     `instance_name_snapshot`       VARCHAR(255) NOT NULL DEFAULT '',
     `private_ip_snapshot`          VARCHAR(64) NOT NULL DEFAULT '',
@@ -1055,6 +1119,8 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `command_revision_id`          BIGINT(20) NOT NULL,
     `application_name`             VARCHAR(64) NOT NULL,
     `deploy_root`                  VARCHAR(1024) NOT NULL,
+    `destination_relative_path`    VARCHAR(1024) NOT NULL,
+    `destination_layout`           VARCHAR(32) NOT NULL,
     `health_check_mode`            VARCHAR(32) NOT NULL,
     `health_check_url`             VARCHAR(2048) NOT NULL,
     `health_check_timeout_seconds` INT NOT NULL,
@@ -1112,7 +1178,8 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
     `integrity_managed`    TINYINT(1) NOT NULL,
     `invocation_id`        VARCHAR(128) NULL,
     `provider_request_id`  VARCHAR(128) NOT NULL DEFAULT '',
-    `remote_release_path`  VARCHAR(1024) NOT NULL DEFAULT '',
+    `destination_layout`   VARCHAR(32) NOT NULL,
+    `destination_path`     VARCHAR(1024) NOT NULL,
     `rolled_back`          TINYINT(1) NOT NULL DEFAULT 0,
     `exit_code`            INT NULL,
     `output_excerpt`       VARCHAR(8192) NOT NULL DEFAULT '',
@@ -1257,6 +1324,7 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
   "status": "SUCCESS",
   "phase": "FINISHED",
   "artifact": {
+    "tosUri": "tos://firefly-artifacts/order-service/1.8.2/order-service.tar.gz",
     "region": "cn-beijing",
     "bucket": "firefly-artifacts",
     "key": "order-service/1.8.2/order-service.tar.gz",
@@ -1275,6 +1343,10 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
     "deployScriptSha256": "...",
     "integrityManaged": true
   },
+  "destination": {
+    "layout": "VERSIONED_DIRECTORY",
+    "path": "/opt/firefly/apps/order-service/releases/dep_01J..."
+  },
   "rolledBack": false,
   "startedAt": "2026-08-28T10:00:00Z",
   "finishedAt": "2026-08-28T10:01:12Z",
@@ -1292,6 +1364,32 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 创建 Command Revision 是保存 `VOLCANO_DEPLOY` Plugin 的内部原子流程，不提供独立
 “创建后立即执行”接口。查询接口默认返回 Script Hash 和摘要；只有具备配置读取权限时才
 返回完整脚本正文，且所有读取操作写审计日志。
+
+### 11.3 制品地址与部署路径预检 API
+
+```http
+POST /api/volcano/pipelines/{pipelineId}/deploy-config/validate
+```
+
+请求携带 `artifact`、`target` 和 `destination`，但不创建 Command 或 Deployment。后端
+解析 TOS URI、执行 Head Object、验证实例和 Agent、规范化部署路径，并返回：
+
+```json
+{
+  "canonicalTosUri": "tos://firefly-artifacts/order-service/releases/order-service.tar.gz",
+  "artifactSnapshot": {
+    "versionId": null,
+    "etag": "...",
+    "size": 18342190,
+    "sha256": "..."
+  },
+  "destinationPreview": "/opt/firefly/apps/order-service/releases/<deployment-id>",
+  "atomicPublishSupported": true,
+  "warnings": []
+}
+```
+
+预检结果只用于交互提示，不能替代保存时和每次执行前的重新校验。
 
 ## 12. 配置项
 
@@ -1321,6 +1419,9 @@ firefly:
       max-user-script-bytes: ${VOLCANO_MAX_USER_SCRIPT_BYTES:12288}
       allowed-run-as-users: ${VOLCANO_ALLOWED_RUN_AS_USERS:firefly-deploy}
       allowed-deploy-roots: ${VOLCANO_ALLOWED_DEPLOY_ROOTS:/opt/firefly/apps}
+      allowed-destination-layouts: ${VOLCANO_ALLOWED_DESTINATION_LAYOUTS:VERSIONED_DIRECTORY,FIXED_FILE}
+      max-relative-path-bytes: ${VOLCANO_MAX_RELATIVE_PATH_BYTES:1024}
+      reject-symlink-path-components: ${VOLCANO_REJECT_SYMLINK_PATH_COMPONENTS:true}
       custom-full-script-enabled: ${VOLCANO_CUSTOM_FULL_SCRIPT_ENABLED:false}
       command-gc-grace-period: ${VOLCANO_COMMAND_GC_GRACE_PERIOD:24h}
     deployment:
@@ -1419,6 +1520,7 @@ TOS_OBJECT_TOO_LARGE
 TOS_OBJECT_CHANGED
 TOS_CHECKSUM_MISSING
 TOS_CHECKSUM_MISMATCH
+TOS_URI_INVALID
 ARTIFACT_SCAN_LIMIT_EXCEEDED
 ECS_INSTANCE_NOT_FOUND
 ECS_INSTANCE_NOT_RUNNING
@@ -1430,6 +1532,11 @@ ECS_COMMAND_CONTENT_TOO_LARGE
 ECS_COMMAND_REVISION_NOT_READY
 DEPLOYMENT_SCRIPT_INVALID
 DEPLOYMENT_CUSTOM_SCRIPT_DISABLED
+DEPLOYMENT_PATH_INVALID
+DEPLOYMENT_PATH_OUTSIDE_ALLOWLIST
+DEPLOYMENT_PATH_SYMLINK_REJECTED
+DEPLOYMENT_LAYOUT_INCOMPATIBLE
+DEPLOYMENT_ATOMIC_PUBLISH_UNAVAILABLE
 DEPLOYMENT_LOCKED
 DEPLOYMENT_DISPATCH_UNKNOWN
 DEPLOYMENT_TIMEOUT
@@ -1527,6 +1634,7 @@ firefly_volcano_rollback_total{result}
 - STS 刷新并发互斥、提前刷新、过期和 AssumeRole 失败。
 - API 永不返回明文 AK/SK。
 - TOS Prefix 跨多页按 LastModified 计算真实 Top 10、相同时间排序和扫描上限。
+- `tos://` URI 规范化、百分号编码、非法 Scheme/Query，以及 URI 与 Bucket/Key 不一致。
 - Object Content 大文件流式传输和客户端中断关闭。
 - Plugin Config 保存和读取；修改用户脚本必须创建新 Command Revision，旧 Attempt 仍引用
   旧 Command ID 和 Script Hash。
@@ -1548,6 +1656,12 @@ firefly_volcano_rollback_total{result}
 
 - `MANAGED_DOWNLOAD` 下 tar.gz、zip、JAR 和原始可执行二进制准备正确，并将预期环境变量
   传给用户部署指令。
+- `VERSIONED_DIRECTORY` 和 `FIXED_FILE` 的最终路径计算、路径预览与实际 Bootstrap 结果
+  一致。
+- 绝对 relative path、`..`、控制字符、超长路径、现有符号链接父目录和 allowlist 逃逸
+  全部被拒绝。
+- 下载/准备失败不会修改最终路径；同文件系统原子 rename 成功，跨文件系统场景不会
+  错误声称原子发布。
 - `CUSTOM_FULL_SCRIPT` 默认禁用；开启后能执行用户自定义下载/部署指令，并标记
   `integrityManaged=false`。
 - 错误 SHA-256、错误大小、URL 过期、磁盘空间不足。
@@ -1633,6 +1747,7 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Create、Describe、Invoke、Result、
   Stop 和 Delete。
 - 完成压缩包安全解包、原始文件准备、环境变量契约、用户部署/回滚指令和健康检查测试。
+- 实现 TOS URI 解析、Destination Layout、路径预检、同文件系统暂存和原子发布。
 
 验收：测试 ECS 能从私有 TOS 直拉压缩包或二进制，执行用户给定指令并完成部署；实例内
 不存在长期 AK/SK，运行结果可关联到不可变 Script Hash。
@@ -1661,11 +1776,15 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - AK/SK 只以 AES-256-GCM 密文落库，不存在于 Pipeline JSON、Kafka、日志或运行审计中。
 - 可分页列举、Head、流式读取和下载 TOS 对象。
 - Plugin 可在 TOS 当前 Prefix 中准确选择按 LastModified 排序的最近 10 个制品之一。
+- Plugin 可输入或选择规范化的 `tos://bucket/key`，并把对象版本、ETag、大小和校验和
+  锁定为不可变执行快照。
 - 下载支持对象版本锁定、大小限制、断点续传和完整性校验。
 - 用户可提供 Bash 部署指令；每个版本固化为不可变 Command Revision，运行期只通过
   `InvokeCommand` 执行，审计能定位到 Script Hash 和 Command ID。
 - `MANAGED_DOWNLOAD` 能从私有 TOS 直拉、校验并安全准备 TAR.GZ、ZIP 或普通文件；
   `CUSTOM_FULL_SCRIPT` 只有管理员显式开启后才能把短期 URL 提供给用户脚本。
+- 用户可以配置 allowlist 内的 Deploy Root、相对路径和 Destination Layout；下载失败不
+  影响现有版本，成功制品通过同文件系统原子发布后才执行用户脚本。
 - 实例不会接收长期 AK/SK 或 STS 凭据。
 - 无公网 IP 的 ECS 可按 Region + Instance ID 发现和部署，并在执行前验证实例与 Agent。
 - 部署具有应用级锁、路径/归档安全检查、用户指令超时、健康检查和可选用户回滚指令；
