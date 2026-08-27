@@ -1,7 +1,7 @@
 # Firefly Volcano 模块技术设计
 
 > 状态：Implementation Ready  
-> 版本：v1.0  
+> 版本：v1.1
 > 日期：2026-08-28  
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
@@ -20,7 +20,8 @@
 本设计新增独立的 `firefly-volcano` 集成模块，并在 `firefly-app` 中接入持久化、HTTP
 管理接口和 Pipeline Plugin，使 Firefly 能够：
 
-1. 使用 AK/SK 调用火山引擎 API，支持可选的 STS Session Token。
+1. 在创建 Pipeline 时配置流水线级火山引擎身份，支持长期 AK/SK、直接输入 STS
+   临时凭证或通过 AssumeRole 动态获取 STS。
 2. 查询 TOS 对象元数据和对象列表。
 3. 以流方式读取对象内容，或安全下载为本地文件。
 4. 将 TOS 中的二进制制品部署到指定 ECS 实例。
@@ -28,13 +29,18 @@
 
 ### 1.1 MVP 范围
 
-- 中国区火山引擎，单个 Connection 可访问多个 Region。
+- 中国区火山引擎；创建 Pipeline 时建立一个全局 Volcano Binding，所有 Volcano Plugin
+  共享该身份。
+- 凭据模式：`STATIC_AK_SK`、`STS_SESSION` 和 `STS_ASSUME_ROLE`。
 - 私有 TOS Bucket。
 - Linux ECS、单实例、systemd 服务。
 - 制品类型：`JAR`、`TAR_GZ`、`ZIP`、`RAW_BINARY`。
 - TOS 对象读取、下载和单对象部署。
 - 使用已有且经过审核的云助手自定义命令，通过 `InvokeCommand` 执行。
 - Pipeline Plugin 类型 `VOLCANO_DEPLOY`。
+- 部署插件按 TOS Bucket + Prefix 浏览当前层，并选择按 `LastModified` 倒序的最近 10 个
+  制品之一。
+- 部署插件按 Region 查询可部署 ECS，使用 `Region + InstanceId` 保存目标。
 - 部署超时、重试、状态查询、停止执行、健康检查和自动回滚。
 
 ### 1.2 不在 MVP 范围
@@ -94,12 +100,36 @@ Trigger 只说明 Pipeline 为什么启动，不应携带云凭据。现有 `VOL
 禁止在 Kafka Consumer 线程中等待几分钟甚至几小时，否则会占用 Listener、触发
 `max.poll.interval.ms` 风险，并使进程重启后的任务无法恢复。
 
+### 2.6 凭据在创建 Pipeline 时输入，但不嵌入 Pipeline JSON
+
+Pipeline 创建向导必须提供“火山引擎全局配置”步骤。用户可以新输入 AK/SK、输入一组
+STS 临时 AK/SK/Session Token，或配置 AssumeRole。后端验证后创建加密 Connection，
+再把 `pipeline_id -> connection_id` 写入 `volcano_pipeline_binding`。
+
+Pipeline、Job 的 `plugin_raw`、Kafka 消息和查询响应只保存或返回 Connection 引用与
+脱敏信息，不保存明文凭据。这样既满足“创建流水线时输入”，又允许在不修改 Pipeline
+拓扑的情况下独立轮换密钥。
+
+### 2.7 ECS 目标使用 `Region + InstanceId`
+
+无公网 IP 不影响云助手部署。Firefly 调用的是火山引擎 ECS OpenAPI，不会连接 ECS 的
+公网或私网 IP；云助手服务根据 Instance ID 把命令下发给实例内 Agent。因此持久化目标
+必须是 `(connectionId, region, instanceId)`，其中 `connectionId` 确定账号身份，Region
+确定 API Endpoint，Instance ID 确定实例。
+
+私网 IP 只用于 UI 展示和运行前一致性检查，不能作为主标识：IP 可能变化、释放或在不同
+VPC 中重复。无公网 IP 的实例仍必须满足两个网络条件：云助手 Agent 能出站访问云助手
+服务，实例能通过内网 Endpoint/VPC Endpoint 访问 TOS。完全无出站能力时，Instance ID
+也无法让云助手工作，此时需另行部署 Firefly Agent，不属于 MVP。
+
 ## 3. 总体架构
 
 ```mermaid
 flowchart LR
     UI["Firefly 管理端"] --> API["Volcano 管理 API"]
     PIPE["Pipeline / VOLCANO_DEPLOY"] --> DS["Deployment Service"]
+    PIPE --> PBIND["Pipeline Volcano Binding"]
+    PBIND --> CS
     API --> CS["Connection Service"]
     API --> OS["Object Service"]
     CS --> VAULT["AES-256-GCM Credential Store"]
@@ -284,6 +314,8 @@ public interface VolcanoObjectStorageClient extends AutoCloseable {
 
 ```java
 public interface VolcanoEcsCommandClient {
+    InstancePage listInstances(ListInstancesCommand command);
+
     EcsInstance describeInstance(DescribeInstanceCommand command);
 
     CloudAssistantStatus describeCloudAssistant(
@@ -324,10 +356,11 @@ AK、SK、Session Token、Authorization Header、预签名 URL 或完整云助�
 
 ## 6. 凭据和连接管理
 
-### 6.1 Connection 模型
+### 6.1 Connection 与 Pipeline Binding 模型
 
-一个 Connection 表示一组火山引擎身份，不与某条 Pipeline 绑定。Pipeline Plugin
-通过不可猜测的 `public_id` 引用 Connection。
+一个 Connection 表示一组火山引擎身份。创建 Pipeline 时可以创建新 Connection，也可
+选择已有 Connection；随后通过 `volcano_pipeline_binding` 绑定到 Pipeline。Plugin 不再
+单独选择凭据，而是根据所属 Pipeline 解析唯一的全局 Binding。
 
 ```sql
 CREATE TABLE `firefly`.`volcano_connection`
@@ -335,9 +368,11 @@ CREATE TABLE `firefly`.`volcano_connection`
     `id`                    BIGINT(20) NOT NULL AUTO_INCREMENT,
     `public_id`             VARCHAR(64) NOT NULL,
     `connection_name`       VARCHAR(128) NOT NULL,
+    `credential_type`       VARCHAR(32) NOT NULL,
     `credential_ciphertext` TEXT NOT NULL,
     `credential_nonce`      VARBINARY(32) NOT NULL,
     `encryption_key_version` VARCHAR(64) NOT NULL,
+    `credential_expires_at` DATETIME(6) NULL,
     `default_region`        VARCHAR(64) NOT NULL,
     `tos_endpoint`          VARCHAR(512) NOT NULL DEFAULT '',
     `ecs_endpoint`          VARCHAR(512) NOT NULL DEFAULT '',
@@ -351,9 +386,31 @@ CREATE TABLE `firefly`.`volcano_connection`
     UNIQUE INDEX `uidx_volcano_connection_name` (`connection_name`),
     INDEX `idx_volcano_connection_status` (`status`)
 );
+
+CREATE TABLE `firefly`.`volcano_pipeline_binding`
+(
+    `id`                    BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `pipeline_id`           BIGINT(20) NOT NULL,
+    `connection_id`         BIGINT(20) NOT NULL,
+    `default_region`        VARCHAR(64) NOT NULL,
+    `project_name`          VARCHAR(128) NOT NULL DEFAULT '',
+    `created_at`            DATETIME(6) NOT NULL,
+    `updated_at`            DATETIME(6) NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_volcano_binding_pipeline` (`pipeline_id`),
+    INDEX `idx_volcano_binding_connection` (`connection_id`)
+);
 ```
 
-`credential_ciphertext` 加密前是带版本的内部 JSON：
+`credential_type`：
+
+| 类型 | 创建时输入 | 运行方式 | 适用性 |
+| --- | --- | --- | --- |
+| `STATIC_AK_SK` | AK、SK | 直接签名 TOS/ECS API | 简单，但必须定期轮换 |
+| `STS_SESSION` | 临时 AK、临时 SK、Session Token、Expires At | 有效期内直接签名 | 仅适合短期/一次性 Pipeline；过期后必须更新 |
+| `STS_ASSUME_ROLE` | IAM 子用户 AK/SK、Role TRN、Session Name、Duration | 每次运行前调用 `AssumeRole`，缓存临时凭据到过期前 | 生产推荐 |
+
+`credential_ciphertext` 加密前是带版本的内部 JSON。静态模式示例：
 
 ```json
 {
@@ -363,6 +420,22 @@ CREATE TABLE `firefly`.`volcano_connection`
   "sessionToken": null
 }
 ```
+
+STS AssumeRole 模式示例：
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceAccessKeyId": "AKLT...",
+  "sourceSecretAccessKey": "...",
+  "roleTrn": "trn:iam::<account-id>:role/FireflyDeployRole",
+  "roleSessionName": "firefly",
+  "durationSeconds": 3600
+}
+```
+
+STS Provider 必须在临时凭据过期前 5 分钟刷新，并用 Connection 级互斥避免并发请求同时
+刷新。刷新失败时已有未过期凭据可继续使用；凭据已经过期则阻止新的对象查询和部署。
 
 ### 6.2 加密要求
 
@@ -374,16 +447,65 @@ CREATE TABLE `firefly`.`volcano_connection`
 - 新建/轮换请求 DTO 禁止 Lombok `@Data`、`@ToString`；显式实现脱敏 `toString()`。
 - 密钥轮换采用“新 Key Version 可读写、旧 Key Version 只读、后台重加密、确认完成后
   移除旧密钥”的两阶段流程。
-- 生产环境后续优先接入 KMS Envelope Encryption 或 STS；数据库结构无需改变。
+- `STS_SESSION` 的 `expiresAt` 必须落在密文中，同时单独保存非敏感的
+  `credential_expires_at` 便于状态提示和调度，但 API 不返回 Token。
+- 生产环境优先使用 `STS_ASSUME_ROLE`；后续可接入 KMS Envelope Encryption，数据库
+  结构无需改变。
 
-### 6.3 Connection API
+### 6.3 Pipeline 创建契约
+
+创建请求在 Pipeline 顶层增加全局 `volcanoConfig`，不能放在某个 Deploy Plugin 内：
+
+```json
+{
+  "uuid": "<pipeline-uuid>",
+  "name": "order-service-pipeline",
+  "volcanoConfig": {
+    "connectionName": "order-service-prod",
+    "credential": {
+      "type": "STS_ASSUME_ROLE",
+      "sourceAccessKeyId": "<ak>",
+      "sourceSecretAccessKey": "<sk>",
+      "roleTrn": "trn:iam::<account-id>:role/FireflyDeployRole",
+      "roleSessionName": "firefly",
+      "durationSeconds": 3600
+    },
+    "defaultRegion": "cn-beijing",
+    "projectName": "production"
+  },
+  "stageConfigs": []
+}
+```
+
+后端处理顺序：
+
+1. 校验字段和 Endpoint allowlist。
+2. 使用输入身份调用 STS（如适用），再对管理员选择的 TOS/ECS 资源执行最小权限验证。
+3. 加密凭据；开启数据库事务。
+4. 保存 Connection、Pipeline、Binding、Stage、Job 和 Plugin 配置。
+5. 任一步失败则整体回滚，不产生只有凭据或只有 Pipeline 的半成品。
+
+查询 Pipeline 时只返回：
+
+```json
+{
+  "connectionId": "vc_01J...",
+  "connectionName": "order-service-prod",
+  "credentialType": "STS_ASSUME_ROLE",
+  "accessKeyIdMask": "AKLT****82KD",
+  "defaultRegion": "cn-beijing",
+  "credentialStatus": "ACTIVE"
+}
+```
+
+### 6.4 Connection API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/volcano/connections` | 加密保存 AK/SK |
+| `POST` | `/api/volcano/connections` | 加密保存 AK/SK、STS Session 或 AssumeRole 配置 |
 | `GET` | `/api/volcano/connections` | 分页查询脱敏 Connection |
 | `GET` | `/api/volcano/connections/{id}` | 查询单个脱敏 Connection |
-| `PUT` | `/api/volcano/connections/{id}/credentials` | 原子轮换 AK/SK |
+| `PUT` | `/api/volcano/connections/{id}/credentials` | 原子轮换凭据或切换凭据类型 |
 | `POST` | `/api/volcano/connections/{id}/validate` | 对指定 TOS/ECS 资源做最小权限验证 |
 | `DELETE` | `/api/volcano/connections/{id}` | 无活动配置引用时禁用并删除密文 |
 
@@ -400,10 +522,50 @@ CREATE TABLE `firefly`.`volcano_connection`
 | `GET` | `/api/volcano/connections/{id}/tos/objects` | 按 Bucket/Prefix 分页列举对象 |
 | `GET` | `/api/volcano/connections/{id}/tos/object-metadata` | 查询单个对象元数据 |
 | `GET` | `/api/volcano/connections/{id}/tos/object-content` | 流式读取或下载单个对象 |
+| `GET` | `/api/volcano/pipelines/{pipelineId}/artifacts/recent` | Plugin 编辑器查询当前 Prefix 最近制品 |
 
 使用 Query Parameter 传递 `bucket`、`key`、`region` 和可选 `versionId`。不要把 Object
 Key 放在 Path Variable 中，因为 Key 可以包含 `/`、空格和编码字符，代理层也可能错误
 归一化路径。
+
+### 7.2 “当前路径最近 10 个制品”语义
+
+Plugin 编辑器调用：
+
+```http
+GET /api/volcano/pipelines/{pipelineId}/artifacts/recent
+    ?region=cn-beijing
+    &bucket=firefly-artifacts
+    &prefix=order-service/releases/
+    &limit=10
+```
+
+固定规则：
+
+- Connection 从 Pipeline Binding 解析，前端不能通过该接口传 `connectionId` 越权切换。
+- `prefix` 表示 TOS 当前目录，后端调用 `ListObjectsV2` 时设置 `delimiter=/`，只返回当前
+  层对象，不递归进入 `CommonPrefixes` 子目录。
+- 排除以 `/` 结尾的目录占位对象、0 字节对象、不支持的扩展名、归档未恢复对象和缺少
+  SHA-256 元数据的对象。
+- 以 `LastModified DESC, Key ASC` 排序，最多返回 10 条。
+- 返回 `key`、`versionId`、`etag`、`sha256`、`size`、`lastModified`、`storageClass` 和
+  `displayName`；选择时前端必须回传完整不可变快照，不能只回传文件名。
+
+TOS List API 根据 Key 字典序分页，而不是按 `LastModified` 倒序，`max-keys=10` 不能保证
+得到“最新 10 个”。MVP 后端必须遍历该 Prefix 的所有分页，并用大小为 10 的最小堆计算
+Top-K；设置 `max-artifact-scan`（默认 10,000）和 30 秒缓存。超过扫描上限返回
+`ARTIFACT_SCAN_LIMIT_EXCEEDED`，不能把不完整结果标为“最近 10 个”。
+
+当单 Prefix 长期超过扫描上限时，生产方案二选一：
+
+1. 由制品发布流程写入 Firefly `volcano_artifact` 索引表，查询直接按
+   `(pipeline_id, prefix, last_modified)` 索引取 10 条。
+2. 强制 Key 使用可排序时间/版本前缀，并维护一个受签名保护的 `manifest.json`。
+
+对象最终被选中后立即调用 `HeadObject` 再确认快照。MVP 是“配置时选择具体制品”，不是
+运行时隐式部署最新对象；否则相同 Pipeline 配置在不同时间会部署不同内容，无法审计。
+
+### 7.3 对象内容流式读取
 
 `object-content`：
 
@@ -416,7 +578,7 @@ Key 放在 Path Variable 中，因为 Key 可以包含 `/`、空格和编码字�
 - Controller 和 Access Log 不记录包含敏感 Query 的预签名 URL；管理下载接口本身不把
   预签名 URL返回浏览器。
 
-### 7.2 下载到 Firefly 本地文件
+### 7.4 下载到 Firefly 本地文件
 
 内部下载过程：
 
@@ -432,7 +594,7 @@ Key 放在 Path Variable 中，因为 Key 可以包含 `/`、空格和编码字�
 不能把 ETag 一律当作 MD5。分片上传或对象修改后 ETag 的语义可能不同；部署完整性使用
 SHA-256，CRC64 只作为额外的传输一致性校验。
 
-### 7.3 对象版本锁定
+### 7.5 对象版本锁定
 
 部署不能只记录 Bucket + Key，因为同名对象可能在部署中被覆盖。创建部署尝试时必须
 保存以下快照：
@@ -445,7 +607,7 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 下载时设置 `versionId`；没有 Version ID 时设置 `If-Match: <etag>`。若条件不再满足，
 部署以 `TOS_OBJECT_CHANGED` 失败，不能悄悄部署新内容。
 
-### 7.4 SHA-256 来源
+### 7.6 SHA-256 来源
 
 生产部署要求 SHA-256 必填，优先顺序：
 
@@ -468,7 +630,71 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 - 目标服务由 systemd 管理，服务名在管理员允许列表中。
 - 目标机安装 `curl`、`sha256sum`、`flock`，按包类型安装 `tar` 或 `unzip`。
 
-### 8.2 Plugin 配置
+### 8.2 无公网 IP 的实例发现与选择
+
+Plugin 编辑器通过 Pipeline Binding 查询目标账号下的 ECS：
+
+```http
+GET /api/volcano/pipelines/{pipelineId}/ecs/instances
+    ?region=cn-beijing
+    &projectName=production
+    &vpcId=vpc-xxx
+    &status=RUNNING
+    &pageNumber=1
+    &pageSize=50
+```
+
+后端先调用 `DescribeInstances`，再批量调用 `DescribeCloudAssistantStatus`，只将以下实例
+标记为 `deployable=true`：
+
+- 与所选 TOS Bucket 位于允许的 Region。
+- 实例状态为 `RUNNING`。
+- 操作系统为 MVP 支持的 Linux。
+- 云助手 Agent 已安装且在线。
+- Instance ID、Project、VPC/Tag 满足 Connection 的 IAM 和管理员 allowlist。
+
+选择框不能只展示 Instance ID。推荐显示：
+
+```text
+order-prod-01 | 10.0.12.34 | cn-beijing-a | production-vpc | i-ycxxxx
+```
+
+返回模型：
+
+```json
+{
+  "region": "cn-beijing",
+  "instanceId": "i-ycxxxx",
+  "instanceName": "order-prod-01",
+  "privateIp": "10.0.12.34",
+  "vpcId": "vpc-xxx",
+  "subnetId": "subnet-xxx",
+  "zoneId": "cn-beijing-a",
+  "projectName": "production",
+  "tags": {"env": "prod", "app": "order-service"},
+  "status": "RUNNING",
+  "cloudAssistantStatus": "ONLINE",
+  "deployable": true,
+  "unavailableReason": null
+}
+```
+
+保存时以 `Region + InstanceId` 为真实目标，同时保存名称、私网 IP、VPC 和 Zone 快照供
+审计。执行前再次 `DescribeInstances(instanceId)`：实例不存在、Region 不匹配、已停止、
+Agent 离线或关键 Tag 已改变时停止部署。私网 IP 变化只产生审计告警，不改变目标身份。
+
+网络路径如下：
+
+```text
+Firefly --HTTPS--> ecs.<region>.volcengineapi.com --控制面--> Cloud Assistant Agent
+ECS VM  --内网/出站 HTTPS--> TOS Endpoint
+```
+
+Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标 ECS 没有公网 IP是正常且
+推荐的部署形态。若安全组禁止所有入站也不影响本方案；但不能阻断 Agent 和 TOS 所需的
+出站或 VPC Endpoint。
+
+### 8.3 Plugin 配置
 
 `PluginType` 新增 `VOLCANO_DEPLOY`。Pipeline 请求示例：
 
@@ -478,16 +704,24 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
   "name": "deploy-order-service",
   "pluginType": "VOLCANO_DEPLOY",
   "pluginRaw": {
-    "connectionId": "vc_01J...",
     "artifact": {
       "region": "cn-beijing",
       "bucket": "firefly-artifacts",
+      "prefix": "order-service/releases/",
       "key": "order-service/1.8.2/order-service.tar.gz",
       "versionId": null,
+      "etag": "<selected-object-etag>",
+      "size": 18342190,
+      "lastModified": "2026-08-28T10:00:00Z",
       "expectedSha256": "<64 lowercase hex>"
     },
     "target": {
+      "region": "cn-beijing",
       "instanceId": "i-yc...",
+      "instanceNameSnapshot": "order-prod-01",
+      "privateIpSnapshot": "10.0.12.34",
+      "vpcIdSnapshot": "vpc-xxx",
+      "zoneIdSnapshot": "cn-beijing-a",
       "commandId": "cmd-yc..."
     },
     "release": {
@@ -504,13 +738,16 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 }
 ```
 
-配置中不再接受 `ak` 或 `sk`。MVP 使用固定 Object Key；动态消费上游 Job 产物需要先
-设计 Pipeline Artifact Contract，不在本次通过任意字符串模板拼接实现。
+配置中不再接受 `connectionId`、`ak`、`sk` 或 Session Token；Connection 只能从所属
+Pipeline Binding 得到。编辑器先选 Prefix，再从最近 10 个结果中选择固定 Object
+Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contract，不在本次通过
+任意字符串模板拼接实现。
 
 字段校验：
 
 - `applicationName`：`[a-z][a-z0-9-]{1,62}`。
 - `instanceId`、`commandId`：按火山资源 ID 格式和长度白名单校验。
+- Artifact Region 与 Target Region 必须一致，除非管理员显式开启跨 Region 部署。
 - `deployRoot`：必须位于管理员配置的根目录，例如 `/opt/firefly/apps/`，规范化后仍在
   根目录内；禁止 `..`、NUL 和符号链接逃逸。
 - `systemdService`：只允许 `[A-Za-z0-9_.@-]+\.service`，且必须在服务允许列表中。
@@ -518,7 +755,17 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 - 超时范围 30～86400 秒，且预签名 URL TTL 大于命令超时和调度余量。
 - `retainReleases` 范围 2～20。
 
-### 8.3 部署命令参数
+编辑器交互顺序固定为：
+
+1. 读取 Pipeline 全局 Volcano Binding；凭据无效或 STS 已过期时禁用 Plugin 保存。
+2. 选择 Region、Bucket 和 Prefix。
+3. 请求并展示当前 Prefix 最近 10 个制品，用户选择一个具体 Object Snapshot。
+4. 请求同 Region 的 ECS 列表，默认只显示 `deployable=true`，可切换查看不可用原因。
+5. 用户根据实例名、私网 IP、Zone、VPC、Tag 和 Instance ID 选择一台机器。
+6. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
+   用户刷新选择，不静默替换制品或目标。
+
+### 8.4 部署命令参数
 
 固定自定义命令只接受以下参数：
 
@@ -540,7 +787,7 @@ URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell �
 不是安全校验。脚本解码后仍需执行长度、字符、协议、主机和路径边界校验。脚本禁止
 `eval`，禁止 `set -x`，所有变量引用必须加双引号。
 
-### 8.4 实例内目录
+### 8.5 实例内目录
 
 ```text
 /opt/firefly/apps/<application>/
@@ -555,7 +802,7 @@ URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell �
 /var/lock/firefly-deploy-<application>.lock
 ```
 
-### 8.5 固定脚本执行步骤
+### 8.6 固定脚本执行步骤
 
 1. `set -Eeuo pipefail`、`umask 027`，关闭命令回显。
 2. 校验全部参数，确认目标目录在允许根目录内。
@@ -592,7 +839,7 @@ URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell �
 | `41` | 新版本健康检查失败但回滚成功 |
 | `42` | 回滚也失败，需要人工介入 |
 
-### 8.6 部署顺序
+### 8.7 部署顺序
 
 ```mermaid
 sequenceDiagram
@@ -631,13 +878,20 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
 (
     `id`                           BIGINT(20) NOT NULL AUTO_INCREMENT,
     `job_config_id`                BIGINT(20) NOT NULL,
-    `connection_id`                BIGINT(20) NOT NULL,
     `region`                       VARCHAR(64) NOT NULL,
     `bucket_name`                  VARCHAR(255) NOT NULL,
+    `artifact_prefix`              VARCHAR(2048) NOT NULL,
     `object_key`                   VARCHAR(2048) NOT NULL,
     `object_version_id`            VARCHAR(512) NOT NULL DEFAULT '',
+    `object_etag`                  VARCHAR(512) NOT NULL,
+    `object_size`                  BIGINT NOT NULL,
+    `object_last_modified`         DATETIME(6) NOT NULL,
     `expected_sha256`              CHAR(64) NOT NULL,
     `instance_id`                  VARCHAR(128) NOT NULL,
+    `instance_name_snapshot`       VARCHAR(255) NOT NULL DEFAULT '',
+    `private_ip_snapshot`          VARCHAR(64) NOT NULL DEFAULT '',
+    `vpc_id_snapshot`              VARCHAR(128) NOT NULL DEFAULT '',
+    `zone_id_snapshot`             VARCHAR(128) NOT NULL DEFAULT '',
     `command_id`                   VARCHAR(128) NOT NULL,
     `application_name`             VARCHAR(64) NOT NULL,
     `package_type`                 VARCHAR(32) NOT NULL,
@@ -651,7 +905,7 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `updated_at`                   DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_volcano_deploy_job` (`job_config_id`),
-    INDEX `idx_volcano_deploy_connection` (`connection_id`)
+    INDEX `idx_volcano_deploy_instance` (`region`, `instance_id`)
 );
 ```
 
@@ -806,7 +1060,8 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 4. Recovery Scheduler 收到终态后在同一事务更新 Attempt、Plugin Build，并向现有
    Plugin Topic 写 Outbox。
 5. `PipelineWorkspaceService` 删除 Pipeline 时先校验没有运行中的部署，再按逻辑引用顺序
-   删除 Volcano Plugin 配置；Connection 不随 Pipeline 删除。
+   删除 Volcano Plugin 配置和 Pipeline Binding；仅当 Connection 标记为 Pipeline 私有且
+   不再被其他 Binding 引用时，才删除其凭据密文。
 
 当前静态 `PluginServiceParser.PLUGIN_MAP` / `PLUGIN_BUILD_MAP` 可先兼容，但建议改为构造器
 注入后生成不可变 Map，并在启动时检测重复 `PluginType`，避免静态可变状态影响测试。
@@ -866,7 +1121,11 @@ firefly:
       multipart-threshold: ${VOLCANO_TOS_MULTIPART_THRESHOLD:100MB}
       part-size: ${VOLCANO_TOS_PART_SIZE:20MB}
       task-count: ${VOLCANO_TOS_TASK_COUNT:4}
+      max-artifact-scan: ${VOLCANO_TOS_MAX_ARTIFACT_SCAN:10000}
+      artifact-list-cache-ttl: ${VOLCANO_TOS_ARTIFACT_CACHE_TTL:30s}
       workspace: ${VOLCANO_TOS_WORKSPACE:/var/lib/firefly/tos}
+    sts:
+      refresh-before-expiry: ${VOLCANO_STS_REFRESH_BEFORE_EXPIRY:5m}
     ecs:
       connect-timeout: ${VOLCANO_ECS_CONNECT_TIMEOUT:3s}
       read-timeout: ${VOLCANO_ECS_READ_TIMEOUT:15s}
@@ -943,16 +1202,21 @@ min(commandTimeout + presignGrace, maxPresignTtl)
 VOLCANO_ENCRYPTION_NOT_CONFIGURED
 VOLCANO_CONNECTION_NOT_FOUND
 VOLCANO_CREDENTIAL_INVALID
+VOLCANO_STS_EXPIRED
+VOLCANO_ASSUME_ROLE_FAILED
 VOLCANO_ACCESS_DENIED
 VOLCANO_ENDPOINT_REJECTED
+VOLCANO_PIPELINE_BINDING_NOT_FOUND
 TOS_OBJECT_NOT_FOUND
 TOS_OBJECT_ARCHIVED
 TOS_OBJECT_TOO_LARGE
 TOS_OBJECT_CHANGED
 TOS_CHECKSUM_MISSING
 TOS_CHECKSUM_MISMATCH
+ARTIFACT_SCAN_LIMIT_EXCEEDED
 ECS_INSTANCE_NOT_FOUND
 ECS_INSTANCE_NOT_RUNNING
+ECS_INSTANCE_REGION_MISMATCH
 ECS_CLOUD_ASSISTANT_UNAVAILABLE
 ECS_COMMAND_NOT_ALLOWED
 DEPLOYMENT_LOCKED
@@ -1041,11 +1305,16 @@ firefly_volcano_rollback_total{result}
 `VolcanoEcsCommandClient`：
 
 - Connection 加密落库、解密、轮换和错误 Key Version。
+- Pipeline 创建时 `STATIC_AK_SK`、`STS_SESSION`、`STS_ASSUME_ROLE` 三种 Binding 的原子保存。
+- STS 刷新并发互斥、提前刷新、过期和 AssumeRole 失败。
 - API 永不返回明文 AK/SK。
+- TOS Prefix 跨多页按 LastModified 计算真实 Top 10、相同时间排序和扫描上限。
 - Object Content 大文件流式传输和客户端中断关闭。
 - Plugin Config 保存和读取。
 - Pipeline Build 创建 Volcano Deploy Build。
 - `InvokeCommand` 成功、失败、超时和未知结果。
+- 无公网 IP 实例可按 Region + Instance ID 部署；私网 IP 变化不改变目标，Region/Agent
+  状态变化会阻止部署。
 - Scheduler Lease 抢占，两个实例不能重复处理同一 Attempt。
 - Firefly 重启后根据 Invocation ID 恢复。
 - 终态 Outbox 重放不重复推进 Job/Stage/Pipeline。
@@ -1093,7 +1362,7 @@ Docker/Testcontainers 的完整 `verify` 是后端合并前的权威结果。
 
 - 新建 `firefly-volcano` 模块和上述新表。
 - 新代码只写加密的 `volcano_connection`。
-- 新 Pipeline 使用 `VOLCANO_DEPLOY` 和 `connectionId`。
+- 新 Pipeline 使用全局 Volcano Binding，`VOLCANO_DEPLOY` Plugin 不再携带 Connection。
 - 旧 `VOLCANO` Trigger 暂时只读兼容。
 
 ### 阶段 B：凭据迁移
@@ -1101,7 +1370,7 @@ Docker/Testcontainers 的完整 `verify` 是后端合并前的权威结果。
 - 提供一次性、可审计的应用迁移任务，读取 `volcano_engine` / `volcano_config` 中的
   明文 AK/SK，加密写入 Connection。
 - 迁移任务输出记录数和 Hash，不输出凭据。
-- Pipeline 配置切换到 Connection 引用。
+- Pipeline 配置切换到 `volcano_pipeline_binding`，旧明文凭据按 `STATIC_AK_SK` 迁移。
 - 完成业务核对和回滚快照后，清空旧表 AK/SK 字段。
 
 SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复制到新表。
@@ -1121,7 +1390,7 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 ### Milestone 1：基础模块与安全凭据
 
 - 创建 `firefly-volcano` Maven 模块和自动装配。
-- 实现 Connection、AES-GCM、Endpoint 校验和错误模型。
+- 实现三种凭据模式、Pipeline Binding、AES-GCM、STS Provider、Endpoint 校验和错误模型。
 - 引入 TOS/ECS SDK并通过 Java 25 构建。
 
 验收：能加密保存 Connection，能对指定对象和实例进行只读验证，无明文泄露。
@@ -1129,6 +1398,7 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 ### Milestone 2：TOS 读取与下载
 
 - 实现 List、Head、Get、Range、Download、Presign。
+- 实现 Prefix 当前层的最近 10 个制品查询、Top-K 和扫描上限。
 - 实现管理 API、限流、大小限制、CRC64/SHA-256 和临时文件清理。
 
 验收：小对象可流式读取，大对象可断点下载，版本和校验不一致能明确失败。
@@ -1136,7 +1406,7 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 ### Milestone 3：ECS 云助手与固定脚本
 
 - 管理员创建并审核固定 Command。
-- 实现 Describe、Invoke、Result、Stop。
+- 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Describe、Invoke、Result、Stop。
 - 完成安全解包、原子切换、systemd、健康检查和回滚脚本测试。
 
 验收：测试 ECS 能从私有 TOS 直拉并完成部署，实例内不存在长期 AK/SK。
@@ -1160,10 +1430,14 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 以下条件全部满足，才认为 `firefly-volcano` 完成：
 
 - `firefly-volcano` 是独立 Maven 模块，`firefly-app` 不直接引用 Vendor SDK 类型。
+- 创建 Pipeline 时可输入 AK/SK、STS Session 或 AssumeRole，并只持久化加密 Connection
+  与 Pipeline Binding。
 - AK/SK 只以 AES-256-GCM 密文落库，不存在于 Pipeline JSON、Kafka、日志或运行审计中。
 - 可分页列举、Head、流式读取和下载 TOS 对象。
+- Plugin 可在 TOS 当前 Prefix 中准确选择按 LastModified 排序的最近 10 个制品之一。
 - 下载支持对象版本锁定、大小限制、断点续传和完整性校验。
 - ECS 通过固定 `InvokeCommand` 从私有 TOS 直拉制品，实例不接收 AK/SK。
+- 无公网 IP 的 ECS 可按 Region + Instance ID 发现和部署，并在执行前验证实例与 Agent。
 - 部署具有应用级锁、路径/归档安全检查、原子切换、健康检查和回滚。
 - Invocation 和每次 Pipeline Retry 都有独立、可恢复的持久化审计。
 - Firefly 或 Kafka 重启不造成任务丢失或重复部署。
@@ -1177,7 +1451,10 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - TOS Java SDK 快速入门：<https://www.volcengine.com/docs/6349/79896>
 - TOS Java SDK 断点续传下载：<https://www.volcengine.com/docs/6349/158830>
 - TOS 数据一致性校验：<https://www.volcengine.com/docs/6349/136729>
+- TOS ListObjectsV2：<https://www.volcengine.com/docs/6349/74861>
+- STS AssumeRole 临时授权：<https://www.volcengine.com/docs/6720/1144521>
 - 云助手 API 概览：<https://api.volcengine.com/api-docs/view/115526>
+- 云助手 InvokeCommand：<https://www.volcengine.com/docs/6396/170898>
 - 创建自定义命令：<https://www.volcengine.com/docs/6396/170743>
 - 查看命令执行结果：<https://www.volcengine.com/docs/6396/170924>
 - 云助手运维概述：<https://www.volcengine.com/docs/6396/164682>
