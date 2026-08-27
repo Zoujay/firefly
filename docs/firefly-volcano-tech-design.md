@@ -1,7 +1,7 @@
 # Firefly Volcano 模块技术设计
 
 > 状态：Implementation Ready  
-> 版本：v1.1
+> 版本：v1.2
 > 日期：2026-08-28  
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
@@ -24,8 +24,8 @@
    临时凭证或通过 AssumeRole 动态获取 STS。
 2. 查询 TOS 对象元数据和对象列表。
 3. 以流方式读取对象内容，或安全下载为本地文件。
-4. 将 TOS 中的二进制制品部署到指定 ECS 实例。
-5. 对下载、命令执行、健康检查和回滚全过程进行持久化审计和失败恢复。
+4. 将 TOS 中的压缩包或二进制文件部署到指定 ECS 实例，并执行用户配置的部署指令。
+5. 对下载、准备制品、用户指令执行、健康检查和回滚全过程进行持久化审计和失败恢复。
 
 ### 1.1 MVP 范围
 
@@ -34,21 +34,22 @@
 - 凭据模式：`STATIC_AK_SK`、`STS_SESSION` 和 `STS_ASSUME_ROLE`。
 - 私有 TOS Bucket。
 - Linux ECS、单实例、systemd 服务。
-- 制品类型：`JAR`、`TAR_GZ`、`ZIP`、`RAW_BINARY`。
+- 制品处理类型：`FILE`、`TAR_GZ`、`ZIP`；`FILE` 覆盖 JAR 和其他原始二进制。
 - TOS 对象读取、下载和单对象部署。
-- 使用已有且经过审核的云助手自定义命令，通过 `InvokeCommand` 执行。
+- 用户可为 Plugin 提供部署指令；Firefly 为每个脚本版本创建不可变的云助手自定义命令，
+  运行期通过 `InvokeCommand` 执行。
 - Pipeline Plugin 类型 `VOLCANO_DEPLOY`。
 - 部署插件按 TOS Bucket + Prefix 浏览当前层，并选择按 `LastModified` 倒序的最近 10 个
   制品之一。
 - 部署插件按 Region 查询可部署 ECS，使用 `Region + InstanceId` 保存目标。
-- 部署超时、重试、状态查询、停止执行、健康检查和自动回滚。
+- 部署超时、重试、状态查询、停止执行、健康检查和可选用户回滚指令。
 
 ### 1.2 不在 MVP 范围
 
 - 创建、启动、停止或删除 ECS 实例。
 - Windows 实例。
 - 多实例滚动发布、灰度发布、负载均衡摘挂、Auto Scaling Group。
-- 在 Firefly 页面中提供任意 Shell 脚本输入。
+- Windows Bat、PowerShell 或 Python 部署脚本；MVP 只支持 Linux Bash。
 - TOS 上传、删除、覆盖对象。
 - Firefly User/Tenant/RBAC 模型；管理 API 仍由部署层管理员认证保护。
 - 把 SSH 私钥或长期 AK/SK 下发到 ECS。
@@ -70,20 +71,27 @@
 1. Firefly 用 AK/SK 调用 TOS `HeadObject`，锁定对象版本和校验信息。
 2. Firefly 生成短期、只允许 `GET` 指定对象的预签名 URL。
 3. Firefly 调用 ECS 云助手 `InvokeCommand`。
-4. ECS 内的固定部署脚本使用预签名 URL 下载制品，校验 SHA-256，完成原子切换。
+4. ECS 内经过 Firefly 包装的不可变命令使用预签名 URL 下载制品并校验 SHA-256。
+5. 包装命令按配置安全解压压缩包或准备原始文件，再执行用户给定的部署指令。
 
 这样可以避免大文件占用 Firefly 的磁盘、内存和出口带宽，并确保 ECS 永远拿不到长期
 AK/SK。管理端“下载对象”接口仍由 Firefly 以流式代理方式提供，满足人工下载和调试
 需求。
 
-### 2.3 使用 `InvokeCommand`，不使用 `RunCommand`
+### 2.3 用户指令固化为 Command Revision，再使用 `InvokeCommand`
 
-运行期只允许执行管理员预先创建、审计并记录 Command ID 的云助手自定义命令。
-Firefly 仅调用 `InvokeCommand` 并传递严格校验后的参数。
+用户保存 Plugin 时，Firefly 校验部署脚本，将可信 Bootstrap 与用户脚本组合成完整 Bash
+内容，通过 `CreateCommand` 创建一条不可变的云助手自定义命令，并保存 Command ID、用户
+脚本 SHA-256 和渲染后命令 SHA-256。修改脚本必须创建新的 Command Revision，禁止
+`ModifyCommand` 原地覆盖，确保已经创建的 Deployment Attempt 始终指向相同代码。
+
+运行期只调用 `InvokeCommand`，传递严格校验后的制品参数；不会在每次部署时创建或修改
+命令。Firefly 页面必须显示脚本内容、Hash、创建人和最后批准时间，保存前明确提示：拥有
+脚本编辑权限等价于拥有目标 ECS 上指定 `runAsUser` 的代码执行权限。
 
 不使用 `RunCommand`，原因是它可以直接提交任意命令内容，难以用 IAM Policy 把权限
-限制到一条固定命令。生产运行 AK/SK 也不授予 `CreateCommand`、`ModifyCommand` 或
-`DeleteCommand`。
+限制到已持久化的脚本版本。`CreateCommand` / `DeleteCommand` 只允许在配置发布和垃圾
+回收路径使用；执行 Deployment 的运行角色只需要 `InvokeCommand` 等运行权限。
 
 ### 2.4 Volcano 是部署 Plugin，不是凭据型 Trigger
 
@@ -122,6 +130,17 @@ VPC 中重复。无公网 IP 的实例仍必须满足两个网络条件：云助
 服务，实例能通过内网 Endpoint/VPC Endpoint 访问 TOS。完全无出站能力时，Instance ID
 也无法让云助手工作，此时需另行部署 Firefly Agent，不属于 MVP。
 
+### 2.8 下载与用户部署脚本分层
+
+默认使用 `MANAGED_DOWNLOAD`：可信 Bootstrap 负责预签名 URL 下载、大小/SHA-256 校验、
+安全解压和工作目录准备，随后才执行用户的 `deployScript`。用户脚本只接收本地路径环境
+变量，不接触 AK/SK 或预签名 URL。这是生产推荐模式。
+
+确实需要自定义下载工具或完整安装流程时，可选择 `CUSTOM_FULL_SCRIPT`。该模式把短期
+预签名 URL 作为环境变量提供给脚本，由脚本自行下载、校验、解压和部署。Firefly 只能
+审计脚本及退出码，不能保证其完整性校验、原子切换或自动回滚，因此必须由管理员显式
+开启并再次确认风险。两种模式都不会把长期 AK/SK 或 STS 凭据发送到实例。
+
 ## 3. 总体架构
 
 ```mermaid
@@ -140,7 +159,7 @@ flowchart LR
     ECSC --> ECSAPI["Volcengine ECS OpenAPI"]
     ECSAPI --> AGENT["ECS Cloud Assistant Agent"]
     AGENT --> TOS
-    AGENT --> HOST["Release Directory + systemd"]
+    AGENT --> HOST["Release Directory + User Deployment Script"]
     REC["Deployment Recovery Scheduler"] --> ECSC
     REC --> OUTBOX["MySQL Outbox"]
     OUTBOX --> KAFKA["Plugin Topic"]
@@ -153,8 +172,8 @@ flowchart LR
 | `firefly-volcano` | SDK Client、请求/响应模型、Endpoint、超时、错误标准化 | 数据库、Pipeline 状态、HTTP Controller |
 | `firefly-app` Connection | 加密保存 AK/SK、轮换、连接验证 | 把明文凭据返回给 API |
 | `firefly-app` Object | 列表、元数据、流式读取和本地下载编排 | 将整个对象读入 `byte[]` |
-| `firefly-app` Deployment | 锁定制品、调用云助手、状态机、恢复和回滚结果 | 接收任意 Shell |
-| ECS 固定命令 | 下载、校验、解包、切换、重启、健康检查、回滚 | 输出预签名 URL 或任何凭据 |
+| `firefly-app` Deployment | 锁定制品、版本化用户脚本、调用云助手、状态机和恢复 | 运行未持久化、未审计的临时命令 |
+| ECS Command Revision | 下载/校验/准备制品，执行固定版本的用户部署和回滚指令 | 获取长期云凭据；运行其他脚本版本 |
 
 ## 4. Maven 模块设计
 
@@ -323,6 +342,10 @@ public interface VolcanoEcsCommandClient {
 
     CommandDefinition describeCommand(DescribeCommand command);
 
+    CreatedCommand createCommand(CreateCommand command);
+
+    DeleteCommandResult deleteCommand(DeleteCommand command);
+
     CommandInvocation invokeCommand(InvokeCommand command);
 
     InvocationStatus describeInvocation(DescribeInvocation command);
@@ -334,8 +357,11 @@ public interface VolcanoEcsCommandClient {
 }
 ```
 
-`InvokeCommand` 只包含 Command ID、Instance ID、固定参数映射、超时和 Deployment ID，
-不提供命令正文。
+`CreateCommand` 只在 Plugin 配置发布时调用，输入包含已验证的完整 Bash、参数定义、
+`runAsUser`、工作目录、超时和 Firefly Tag；命令正文编码前不得超过火山引擎当前限制
+16 KiB。`InvokeCommand` 只包含已持久化 Command ID、Instance ID、固定参数映射、超时
+和 Deployment ID，不提供命令正文。`DeleteCommand` 只能由引用计数为零且没有活动
+Attempt 的垃圾回收任务调用。
 
 ### 5.4 SDK 错误转换
 
@@ -510,8 +536,10 @@ STS Provider 必须在临时凭据过期前 5 分钟刷新，并用 Connection �
 | `DELETE` | `/api/volcano/connections/{id}` | 无活动配置引用时禁用并删除密文 |
 
 不能通过 `ListBuckets` 或其他宽权限接口判断凭据“是否有效”。Validate 请求应携带管理员
-明确选择的 `region`、`bucket`、`objectKey`、`instanceId` 和 `commandId`，分别执行
-`HeadObject`、`DescribeInstances`、`DescribeCloudAssistantStatus` 和 `DescribeCommands`。
+明确选择的 `region`、`bucket`、`objectKey`、`instanceId`，分别执行 `HeadObject`、
+`DescribeInstances` 和 `DescribeCloudAssistantStatus`。如果校验已有 Command，可以额外传
+`commandId` 执行 `DescribeCommands`；`CreateCommand` 权限在第一次发布 Plugin 时以真实
+创建结果验证，不能为了探测权限创建不可追踪的测试命令。
 
 ## 7. TOS 对象读取与下载
 
@@ -626,8 +654,10 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 - 实例与 TOS Bucket 默认要求同 Region；跨 Region 方案需显式开启并接受公网、费用和
   带宽风险。
 - ECS 能访问 TOS Endpoint；优先使用 VPC 内网接入或 VPC Endpoint。
-- 已预创建 Firefly 部署自定义命令，并将其 Command ID 配置到 Firefly。
-- 目标服务由 systemd 管理，服务名在管理员允许列表中。
+- Connection 的配置发布身份有权创建 Firefly 管理的云助手 Command，运行身份有权执行
+  该 Command；禁止 `RunCommand` 和原地 `ModifyCommand`。
+- 目标机存在 allowlist 中的 `runAsUser`，且该用户具备用户部署指令实际需要的最小权限；
+  是否使用 systemd、容器或自定义进程管理器由部署指令决定。
 - 目标机安装 `curl`、`sha256sum`、`flock`，按包类型安装 `tar` 或 `unzip`。
 
 ### 8.2 无公网 IP 的实例发现与选择
@@ -713,7 +743,10 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
       "etag": "<selected-object-etag>",
       "size": 18342190,
       "lastModified": "2026-08-28T10:00:00Z",
-      "expectedSha256": "<64 lowercase hex>"
+      "expectedSha256": "<64 lowercase hex>",
+      "handling": "TAR_GZ",
+      "outputFileName": null,
+      "executable": false
     },
     "target": {
       "region": "cn-beijing",
@@ -721,18 +754,27 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
       "instanceNameSnapshot": "order-prod-01",
       "privateIpSnapshot": "10.0.12.34",
       "vpcIdSnapshot": "vpc-xxx",
-      "zoneIdSnapshot": "cn-beijing-a",
-      "commandId": "cmd-yc..."
+      "zoneIdSnapshot": "cn-beijing-a"
     },
     "release": {
       "applicationName": "order-service",
-      "packageType": "TAR_GZ",
       "deployRoot": "/opt/firefly/apps/order-service",
-      "systemdService": "order-service.service",
-      "healthCheckUrl": "http://127.0.0.1:8080/actuator/health",
-      "healthCheckTimeoutSeconds": 60,
-      "commandTimeoutSeconds": 900,
       "retainReleases": 5
+    },
+    "execution": {
+      "mode": "MANAGED_DOWNLOAD",
+      "interpreter": "BASH",
+      "runAsUser": "firefly-deploy",
+      "workingDirectory": "RELEASE_DIR",
+      "deployScript": "install -m 0755 \"$FIREFLY_ARTIFACT_PATH/bin/order-service\" /opt/order-service/bin/order-service\nsudo -n systemctl restart order-service.service",
+      "rollbackScript": "sudo -n systemctl restart order-service.service",
+      "commandTimeoutSeconds": 900,
+      "healthCheck": {
+        "mode": "HTTP",
+        "url": "http://127.0.0.1:8080/actuator/health",
+        "timeoutSeconds": 60,
+        "successCount": 2
+      }
     }
   }
 }
@@ -743,15 +785,30 @@ Pipeline Binding 得到。编辑器先选 Prefix，再从最近 10 个结果中�
 Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contract，不在本次通过
 任意字符串模板拼接实现。
 
+`artifact.handling` 必须由用户确认，不能只根据扩展名自动决定：
+
+| 类型 | 准备结果 | `FIREFLY_ARTIFACT_PATH` |
+| --- | --- | --- |
+| `TAR_GZ` | 校验归档成员后解压到新 Release 目录 | 解压后的 Release 目录 |
+| `ZIP` | 校验归档成员后解压到新 Release 目录 | 解压后的 Release 目录 |
+| `FILE` | 以 `outputFileName` 放入新 Release 目录 | 最终文件绝对路径 |
+
+`FILE` 同时覆盖 JAR、ELF、Go/Rust 可执行文件和其他不可解压的二进制。只有
+`executable=true` 时 Bootstrap 才把模式设置为 `0750`，否则使用 `0640`；文件名必须是
+单个安全文件名，不能包含 `/`、`..` 或控制字符。UI 可以根据 `.tar.gz`、`.zip`、`.jar`
+给出建议，但保存前必须让用户确认。
+
 字段校验：
 
 - `applicationName`：`[a-z][a-z0-9-]{1,62}`。
-- `instanceId`、`commandId`：按火山资源 ID 格式和长度白名单校验。
+- `instanceId`：按火山资源 ID 格式和长度白名单校验。
 - Artifact Region 与 Target Region 必须一致，除非管理员显式开启跨 Region 部署。
 - `deployRoot`：必须位于管理员配置的根目录，例如 `/opt/firefly/apps/`，规范化后仍在
   根目录内；禁止 `..`、NUL 和符号链接逃逸。
-- `systemdService`：只允许 `[A-Za-z0-9_.@-]+\.service`，且必须在服务允许列表中。
-- `healthCheckUrl`：MVP 只允许 `http://127.0.0.1` 或 `http://localhost`，禁止 SSRF。
+- `runAsUser`：不能由普通 Plugin 任意填写，必须来自管理员 allowlist；默认禁止 `root`。
+- `deployScript` 必填，UTF-8、无 NUL，和可信 Bootstrap 合并后的命令正文不得超过
+  16 KiB；`rollbackScript` 可选，并应用相同校验。
+- `healthCheck.url`：MVP 只允许 `http://127.0.0.1` 或 `http://localhost`，禁止 SSRF。
 - 超时范围 30～86400 秒，且预签名 URL TTL 大于命令超时和调度余量。
 - `retainReleases` 范围 2～20。
 
@@ -762,30 +819,59 @@ Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contra
 3. 请求并展示当前 Prefix 最近 10 个制品，用户选择一个具体 Object Snapshot。
 4. 请求同 Region 的 ECS 列表，默认只显示 `deployable=true`，可切换查看不可用原因。
 5. 用户根据实例名、私网 IP、Zone、VPC、Tag 和 Instance ID 选择一台机器。
-6. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
+6. 选择制品处理类型，填写部署指令、可选回滚指令、执行用户、超时和健康检查。
+7. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
+8. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
    用户刷新选择，不静默替换制品或目标。
+9. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
+   和本地配置均保存成功后 Plugin 才进入 `READY`。失败时删除孤儿命令或交给 GC 回收。
+
+MVP 的管理 API 已由部署层管理员认证保护，因此管理员保存脚本即视为批准，
+`created_by` 和 `approved_by` 可以相同；接入 Firefly RBAC 后再扩展为编写人与批准人分离，
+数据结构无需改变。系统不提供脱离 Pipeline/Plugin 的“立即执行任意脚本”接口。
+
+数据库和 ECS OpenAPI 不能组成一个事务，Command 发布采用可恢复 Saga：
+
+1. 数据库事务写入 `PROVISIONING` Revision，保存渲染 Hash 和唯一操作 ID。
+2. 事务外调用 `CreateCommand`；命令名限制为 32 字符内的
+   `firefly-<hash12>-<suffix>`，Tag 保存完整操作 ID 和 Hash。
+3. 第二个数据库事务写入 Command ID、把 Revision 改为 `READY` 并绑定 Plugin Config。
+4. 请求超时或进程崩溃时，恢复器按 Tag + Hash 查询云端命令：唯一匹配则补写，多个匹配
+   则告警并禁止发布，没有匹配才允许重试创建。
+5. 只有 `READY` Revision 可以执行；失败 Revision 标记 `ORPHANED`，24 小时后由 GC 在
+   确认零引用、零活动 Attempt 且 Tag 匹配后删除。
 
 ### 8.4 部署命令参数
 
-固定自定义命令只接受以下参数：
+每个 Command Revision 的命令正文由“可信 Bootstrap + 固定用户脚本”组成，运行时只接受
+以下参数：
 
 ```text
 deployment_id
-artifact_url_b64
+artifact_url_b64_chunk_count
+artifact_url_b64_1 ... artifact_url_b64_4
 artifact_sha256
 artifact_size
-package_type
+artifact_handling
+artifact_output_name_b64
 application_name
 deploy_root_b64
-systemd_service
+execution_mode
 health_url_b64
 health_timeout_seconds
 retain_releases
 ```
 
-URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell 解析问题，但 Base64
-不是安全校验。脚本解码后仍需执行长度、字符、协议、主机和路径边界校验。脚本禁止
-`eval`，禁止 `set -x`，所有变量引用必须加双引号。
+云助手 String 自定义参数单值最大 1000 字符。预签名 URL 使用标准 Base64 后按每段最多
+900 字符拆成 1～4 个只含 Base64 字符的参数；Bootstrap 校验段数、拼接、解码并检查
+`https`、TOS Host allowlist 和长度。超出总容量则配置失败，不能截断 URL。路径也使用
+Base64 传入以减少参数替换造成的 Shell 解析风险，但 Base64 不是安全校验。
+
+Bootstrap 自身禁止 `eval` 和 `set -x`，所有变量引用加双引号。用户的 `deployScript` 和
+`rollbackScript` 是 Command Revision 的静态正文，不通过 `{{parameter}}` 或字符串替换
+拼入参数值。`MANAGED_DOWNLOAD` 在进入用户脚本前执行 `unset FIREFLY_ARTIFACT_URL`；
+`CUSTOM_FULL_SCRIPT` 才导出短期 URL，并将该 URL 的原文和 Base64 值都加入本次日志
+精确脱敏集合。
 
 ### 8.5 实例内目录
 
@@ -799,25 +885,50 @@ URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell �
 └── shared/
 
 /var/lib/firefly/artifacts/<deployment-id>.part
+/var/lib/firefly/artifacts/<deployment-id>.artifact
 /var/lock/firefly-deploy-<application>.lock
 ```
 
-### 8.6 固定脚本执行步骤
+用户部署脚本只依赖稳定环境变量：
+
+```text
+FIREFLY_DEPLOYMENT_ID
+FIREFLY_APPLICATION_NAME
+FIREFLY_ARTIFACT_TYPE
+FIREFLY_DOWNLOAD_FILE       # MANAGED_DOWNLOAD 下已校验的原始下载文件
+FIREFLY_RELEASE_DIR         # 本次独占的新 Release 目录
+FIREFLY_ARTIFACT_PATH       # 压缩包为解压目录，FILE 为最终文件
+FIREFLY_CURRENT_LINK
+FIREFLY_PREVIOUS_RELEASE
+FIREFLY_SHARED_DIR
+```
+
+`CUSTOM_FULL_SCRIPT` 额外提供 `FIREFLY_ARTIFACT_URL`、`FIREFLY_ARTIFACT_SHA256` 和
+`FIREFLY_ARTIFACT_SIZE`。环境变量名构成版本化契约；新增变量允许向后兼容，删除或修改
+语义必须提升 Command Schema Version。
+
+### 8.6 Bootstrap 与用户指令执行步骤
 
 1. `set -Eeuo pipefail`、`umask 027`，关闭命令回显。
 2. 校验全部参数，确认目标目录在允许根目录内。
 3. 使用 `flock -n` 获取应用级部署锁；冲突返回明确退出码。
 4. 创建新的 Release 目录，拒绝覆盖已存在且内容不匹配的目录。
-5. 使用 `curl --fail --location --retry 3 --connect-timeout 10` 下载到 `.part`。
-6. 校验实际文件大小和 `sha256sum`，不一致立即删除 `.part` 并失败。
-7. 解包前列出归档内容，拒绝绝对路径、`..`、设备文件和越界符号链接。
-8. 解包时禁止保留原 UID/GID；`RAW_BINARY` 只写到约定文件名并设置固定权限。
-9. 执行包结构检查，例如 JAR 存在、启动文件存在、目录不为空。
-10. 记录旧 `current`，创建新软链接并在同一目录原子替换 `current`。
-11. `systemctl restart <allowlisted-service>`。
-12. 在限定时间内轮询本机健康检查；要求连续 2 次成功。
-13. 健康检查失败时把 `current` 切回旧 Release，再次 restart 并检查旧版本。
-14. 输出单行、无敏感字段的结果 JSON；保留当前和前一版本，清理更老 Release。
+5. `MANAGED_DOWNLOAD` 使用 `curl --fail --location --retry 3 --connect-timeout 10` 下载到
+   `.part`，校验实际大小和 `sha256sum` 后原子改名为 `.artifact`；失败立即清理。
+6. `TAR_GZ` / `ZIP` 先列出全部归档成员，拒绝绝对路径、`..`、设备文件和越界符号链接，
+   解包时不保留原 UID/GID；`FILE` 复制为安全文件名并设置 `0640` 或 `0750`。
+7. 设置稳定环境变量并切换到配置的工作目录，执行 Command Revision 中固定的
+   `deployScript`；以其退出码作为 `USER_DEPLOY` 结果，不使用 `eval` 包装用户正文。
+8. `CUSTOM_FULL_SCRIPT` 跳过步骤 5～6，向用户脚本提供短期 URL、期望大小和 SHA-256；
+   用户脚本必须自行下载和准备制品，Firefly 在页面和审计中标记 `integrityManaged=false`。
+9. 用户脚本成功后执行配置的本机健康检查。Firefly 不假设服务由 systemd 管理，重启、
+   容器更新、软链接切换等业务动作都由用户指令明确完成。
+10. 部署指令或健康检查失败时执行可选 `rollbackScript`。未配置回滚，或回滚失败时进入
+    `MANUAL_INTERVENTION_REQUIRED`；不能声称已经自动恢复。
+11. 仅在全部成功后清理超过 `retainReleases` 的旧 Release；活动版本、上一版本和任何
+    Attempt 正在引用的目录不得删除。
+12. 输出 Firefly 结果信封和用户 stdout/stderr 的受限摘要；对 URL 做精确脱敏，单次输出
+    截断到配置上限，完整输出不得进入 Kafka 消息。
 
 成功输出示例：
 
@@ -834,12 +945,29 @@ URL 和路径以 Base64 传入是为了减少命令参数替换导致的 Shell �
 | `20` | 下载失败或 URL 过期 |
 | `21` | 文件大小不一致 |
 | `22` | SHA-256 不一致 |
-| `30` | 包格式或解包安全校验失败 |
-| `40` | systemd 重启失败 |
-| `41` | 新版本健康检查失败但回滚成功 |
-| `42` | 回滚也失败，需要人工介入 |
+| `30` | 包类型、文件名或解包安全校验失败 |
+| `40` | 用户部署指令失败 |
+| `41` | 部署或健康检查失败，但用户回滚指令成功 |
+| `42` | 用户回滚指令失败，需要人工介入 |
+| `43` | 用户指令输出超限或结果信封无效 |
 
-### 8.7 部署顺序
+### 8.7 用户指令的安全边界
+
+允许用户 Bash 意味着该用户能够以 `runAsUser` 权限在目标实例执行代码。正则校验、Shell
+lint 或关键字黑名单都不能把任意脚本变成安全脚本，因此本设计不宣称对恶意脚本提供
+沙箱。安全边界必须由权限和运行环境保证：
+
+- 只有部署管理员可以创建或修改脚本；每次修改生成新 Revision 和新 Hash。
+- 使用无登录、最小权限的专用 `firefly-deploy` 用户；仅通过受控 `sudoers` 允许必要动作，
+  例如重启指定服务，禁止通配符命令和任意 root Shell。
+- 实例上不保存 AK/SK、STS Token；`MANAGED_DOWNLOAD` 也不向用户脚本暴露预签名 URL。
+- `CUSTOM_FULL_SCRIPT` 的作者能够读取并输出短期 URL。精确脱敏只能防止意外打印，不能
+  防止编码、拆分或网络外传，因此该模式只能授予可信管理员并尽量使用无公网出口实例。
+- stdout/stderr 属于不可信数据，必须截断、脱敏并作为纯文本展示，不能当 JSON、HTML、
+  Shell 或后续 Pipeline 参数再次执行。
+- 脚本执行前展示完整 diff；运行审计固定记录 Revision、Hash、批准人和 Instance ID。
+
+### 8.8 部署顺序
 
 ```mermaid
 sequenceDiagram
@@ -860,8 +988,8 @@ sequenceDiagram
     D->>E: InvokeCommand(commandId, instanceId, safe params)
     E-->>D: invocationId
     D-->>P: DISPATCHED
-    A->>T: GET signed URL
-    A->>A: verify, unpack, switch, restart, health check
+    A->>T: GET signed URL (managed or user script)
+    A->>A: verify/prepare -> deployScript -> health -> rollbackScript if needed
     loop until terminal
         R->>E: DescribeInvocation/Results
         E-->>R: status, exitCode, redacted output
@@ -874,6 +1002,35 @@ sequenceDiagram
 ### 9.1 配置表
 
 ```sql
+CREATE TABLE `firefly`.`volcano_command_revision`
+(
+    `id`                       BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `public_id`                VARCHAR(64) NOT NULL,
+    `connection_id`            BIGINT(20) NOT NULL,
+    `region`                   VARCHAR(64) NOT NULL,
+    `command_id`               VARCHAR(128) NOT NULL,
+    `command_schema_version`   INT NOT NULL,
+    `execution_mode`           VARCHAR(32) NOT NULL,
+    `run_as_user`              VARCHAR(64) NOT NULL,
+    `working_directory`        VARCHAR(32) NOT NULL,
+    `deploy_script`            TEXT NOT NULL,
+    `rollback_script`          TEXT NOT NULL,
+    `deploy_script_sha256`     CHAR(64) NOT NULL,
+    `rendered_command_sha256`  CHAR(64) NOT NULL,
+    `status`                   VARCHAR(32) NOT NULL,
+    `created_by`               VARCHAR(128) NOT NULL,
+    `approved_by`              VARCHAR(128) NOT NULL DEFAULT '',
+    `approved_at`              DATETIME(6) NULL,
+    `created_at`               DATETIME(6) NOT NULL,
+    `updated_at`               DATETIME(6) NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_volcano_command_revision_public` (`public_id`),
+    UNIQUE INDEX `uidx_volcano_command_revision_cloud`
+        (`connection_id`, `region`, `command_id`),
+    INDEX `idx_volcano_command_revision_hash`
+        (`connection_id`, `region`, `rendered_command_sha256`)
+);
+
 CREATE TABLE `firefly`.`volcano_deploy_config`
 (
     `id`                           BIGINT(20) NOT NULL AUTO_INCREMENT,
@@ -887,25 +1044,29 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `object_size`                  BIGINT NOT NULL,
     `object_last_modified`         DATETIME(6) NOT NULL,
     `expected_sha256`              CHAR(64) NOT NULL,
+    `artifact_handling`            VARCHAR(32) NOT NULL,
+    `artifact_output_file_name`    VARCHAR(255) NOT NULL DEFAULT '',
+    `artifact_executable`          TINYINT(1) NOT NULL DEFAULT 0,
     `instance_id`                  VARCHAR(128) NOT NULL,
     `instance_name_snapshot`       VARCHAR(255) NOT NULL DEFAULT '',
     `private_ip_snapshot`          VARCHAR(64) NOT NULL DEFAULT '',
     `vpc_id_snapshot`              VARCHAR(128) NOT NULL DEFAULT '',
     `zone_id_snapshot`             VARCHAR(128) NOT NULL DEFAULT '',
-    `command_id`                   VARCHAR(128) NOT NULL,
+    `command_revision_id`          BIGINT(20) NOT NULL,
     `application_name`             VARCHAR(64) NOT NULL,
-    `package_type`                 VARCHAR(32) NOT NULL,
     `deploy_root`                  VARCHAR(1024) NOT NULL,
-    `systemd_service`              VARCHAR(255) NOT NULL,
+    `health_check_mode`            VARCHAR(32) NOT NULL,
     `health_check_url`             VARCHAR(2048) NOT NULL,
     `health_check_timeout_seconds` INT NOT NULL,
+    `health_check_success_count`   INT NOT NULL,
     `command_timeout_seconds`      INT NOT NULL,
     `retain_releases`              INT NOT NULL,
     `created_at`                   DATETIME(6) NOT NULL,
     `updated_at`                   DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_volcano_deploy_job` (`job_config_id`),
-    INDEX `idx_volcano_deploy_instance` (`region`, `instance_id`)
+    INDEX `idx_volcano_deploy_instance` (`region`, `instance_id`),
+    INDEX `idx_volcano_deploy_command` (`command_revision_id`)
 );
 ```
 
@@ -944,7 +1105,11 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
     `object_sha256`        CHAR(64) NOT NULL,
     `object_size`          BIGINT NOT NULL,
     `instance_id`          VARCHAR(128) NOT NULL,
+    `command_revision_id`  BIGINT(20) NOT NULL,
     `command_id`           VARCHAR(128) NOT NULL,
+    `deploy_script_sha256` CHAR(64) NOT NULL,
+    `execution_mode`       VARCHAR(32) NOT NULL,
+    `integrity_managed`    TINYINT(1) NOT NULL,
     `invocation_id`        VARCHAR(128) NULL,
     `provider_request_id`  VARCHAR(128) NOT NULL DEFAULT '',
     `remote_release_path`  VARCHAR(1024) NOT NULL DEFAULT '',
@@ -985,15 +1150,16 @@ DISPATCHING
 DISPATCH_UNKNOWN
 WAITING_AGENT
 DOWNLOADING
-INSTALLING
+PREPARING_ARTIFACT
+RUNNING_DEPLOY_SCRIPT
 HEALTH_CHECKING
-ROLLING_BACK
+RUNNING_ROLLBACK_SCRIPT
 FINISHED
 ```
 
 云助手在命令结束前不保证返回可解析的实时阶段，所以 Firefly 在运行期间通常保持
-`WAITING_AGENT`。`DOWNLOADING` 到 `ROLLING_BACK` 用于解析终态结果、错误定位，或未来
-接入可信 Agent 心跳后表达更细粒度进度；MVP 不根据不完整 stdout 猜测阶段。
+`WAITING_AGENT`。`DOWNLOADING` 到 `RUNNING_ROLLBACK_SCRIPT` 用于解析终态结果、错误
+定位，或未来接入可信 Agent 心跳后表达更细粒度进度；MVP 不根据不完整 stdout 猜测阶段。
 
 Attempt `status`：
 
@@ -1037,6 +1203,8 @@ firefly-app/src/main/java/firefly/volcano
 ├── security/VolcanoCredentialCipher.java
 ├── service/VolcanoConnectionService.java
 ├── service/VolcanoObjectService.java
+├── service/VolcanoCommandRevisionService.java
+├── service/VolcanoCommandGarbageCollector.java
 ├── service/VolcanoDeploymentService.java
 ├── service/VolcanoDeploymentRecoveryScheduler.java
 ├── service/VolcanoDeploymentStateService.java
@@ -1054,14 +1222,16 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 
 1. `PluginType` 增加 `VOLCANO_DEPLOY`。
 2. `VolcanoDeployPluginConfigService` 实现 `IPluginConfig`，保存并查询
-   `volcano_deploy_config`。
+   `volcano_deploy_config`；脚本发生变化时调用 `VolcanoCommandRevisionService` 创建新的
+   不可变 Command Revision。
 3. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`；`executePluginBuild` 只创建
    Attempt、校验并分发云助手命令，不同步等待结果。
 4. Recovery Scheduler 收到终态后在同一事务更新 Attempt、Plugin Build，并向现有
    Plugin Topic 写 Outbox。
 5. `PipelineWorkspaceService` 删除 Pipeline 时先校验没有运行中的部署，再按逻辑引用顺序
-   删除 Volcano Plugin 配置和 Pipeline Binding；仅当 Connection 标记为 Pipeline 私有且
-   不再被其他 Binding 引用时，才删除其凭据密文。
+   删除 Volcano Plugin 配置和 Pipeline Binding；Command Revision 先标记 `ORPHANED`，待
+   没有配置和 Attempt 引用后由 GC 删除云端 Command；仅当 Connection 标记为 Pipeline
+   私有且不再被其他 Binding 引用时，才删除其凭据密文。
 
 当前静态 `PluginServiceParser.PLUGIN_MAP` / `PLUGIN_BUILD_MAP` 可先兼容，但建议改为构造器
 注入后生成不可变 Map，并在启动时检测重复 `PluginType`，避免静态可变状态影响测试。
@@ -1096,8 +1266,14 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
   },
   "target": {
     "instanceId": "i-yc...",
+    "commandRevisionId": "vcr_01J...",
     "commandId": "cmd-yc...",
     "invocationId": "ivk-yc..."
+  },
+  "execution": {
+    "mode": "MANAGED_DOWNLOAD",
+    "deployScriptSha256": "...",
+    "integrityManaged": true
   },
   "rolledBack": false,
   "startedAt": "2026-08-28T10:00:00Z",
@@ -1105,6 +1281,17 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
   "error": null
 }
 ```
+
+### 11.2 Command Revision API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/volcano/pipelines/{pipelineId}/commands/validate` | 只校验/渲染，不创建云端命令；返回字节数、Hash、风险提示 |
+| `GET` | `/api/volcano/command-revisions/{publicId}` | 管理员查询脚本、Hash、Command ID、状态和审计信息 |
+
+创建 Command Revision 是保存 `VOLCANO_DEPLOY` Plugin 的内部原子流程，不提供独立
+“创建后立即执行”接口。查询接口默认返回 Script Hash 和摘要；只有具备配置读取权限时才
+返回完整脚本正文，且所有读取操作写审计日志。
 
 ## 12. 配置项
 
@@ -1129,9 +1316,13 @@ firefly:
     ecs:
       connect-timeout: ${VOLCANO_ECS_CONNECT_TIMEOUT:3s}
       read-timeout: ${VOLCANO_ECS_READ_TIMEOUT:15s}
-      allowed-command-ids: ${VOLCANO_ALLOWED_COMMAND_IDS:}
+      command-provisioning-enabled: ${VOLCANO_COMMAND_PROVISIONING_ENABLED:true}
+      command-name-prefix: ${VOLCANO_COMMAND_NAME_PREFIX:firefly-}
+      max-user-script-bytes: ${VOLCANO_MAX_USER_SCRIPT_BYTES:12288}
+      allowed-run-as-users: ${VOLCANO_ALLOWED_RUN_AS_USERS:firefly-deploy}
       allowed-deploy-roots: ${VOLCANO_ALLOWED_DEPLOY_ROOTS:/opt/firefly/apps}
-      allowed-systemd-services: ${VOLCANO_ALLOWED_SYSTEMD_SERVICES:}
+      custom-full-script-enabled: ${VOLCANO_CUSTOM_FULL_SCRIPT_ENABLED:false}
+      command-gc-grace-period: ${VOLCANO_COMMAND_GC_GRACE_PERIOD:24h}
     deployment:
       presign-grace: ${VOLCANO_PRESIGN_GRACE:5m}
       max-presign-ttl: ${VOLCANO_MAX_PRESIGN_TTL:1h}
@@ -1157,7 +1348,7 @@ tos:GetObject
 tos:GetObjectVersion      使用版本控制时
 ```
 
-ECS 只授予：
+部署运行角色只授予：
 
 ```text
 ecs:DescribeInstances
@@ -1169,9 +1360,22 @@ ecs:DescribeInvocationResults
 ecs:StopInvocation
 ```
 
-`ecs:InvokeCommand` 的 Resource 限制到批准的 Command ID；如账号策略能力支持，再限制到
-目标实例或项目。运行 AK/SK 不授予 `ecs:RunCommand`、`ecs:CreateCommand`、
-`ecs:ModifyCommand`、`ecs:DeleteCommand`，也不授予任何 ECS 创建、删除或关机权限。
+配置发布/垃圾回收角色额外授予：
+
+```text
+ecs:CreateCommand
+ecs:DeleteCommand
+```
+
+生产推荐在 `STS_ASSUME_ROLE` 下配置独立的 `FireflyCommandProvisionerRole` 和
+`FireflyDeployRuntimeRole`；若 MVP 暂时共用一个 Connection，则身份权限是两组权限的
+并集，但应用代码仍必须隔离配置发布与运行执行服务。任何角色都不授予
+`ecs:RunCommand`、`ecs:ModifyCommand`，也不授予 ECS 创建、删除或关机权限。
+
+`ecs:InvokeCommand` 尽可能用 Resource、项目或 Tag 限制到名称前缀为 `firefly-` 且由
+Firefly 创建的 Command 和目标实例。云端 Command 的 Tag 至少包含
+`managed-by=firefly`、Pipeline UUID、Plugin UUID 和 Script Hash；删除时必须校验这些 Tag，
+禁止 GC 删除非 Firefly 命令。
 
 TOS Bucket 保持私有。预签名 URL 的有效期设置为：
 
@@ -1190,6 +1394,8 @@ min(commandTimeout + presignGrace, maxPresignTtl)
 | `ListObjects` / `HeadObject` / `GetObject` | 是 | 网络错误、429、部分 5xx；指数退避和抖动 |
 | 本地断点下载 | 是 | 使用同一 Version ID/ETag 和 checkpoint |
 | `Describe*` | 是 | 网络错误、429、部分 5xx |
+| `CreateCommand` | 条件重试 | 超时后先按 Firefly Tag + rendered Hash 对账，确认不存在才重建 |
+| `DeleteCommand` | 是 | 仅 GC 调用；Not Found 视为幂等成功 |
 | `InvokeCommand` | 否，除非能证明未创建 | 超时进入 `DISPATCH_UNKNOWN` 并先对账 |
 | `StopInvocation` | 可重试 | 已终态视为幂等成功 |
 | 实例内 `curl` | 是 | 固定 3 次，只在原 URL TTL 内 |
@@ -1219,11 +1425,18 @@ ECS_INSTANCE_NOT_RUNNING
 ECS_INSTANCE_REGION_MISMATCH
 ECS_CLOUD_ASSISTANT_UNAVAILABLE
 ECS_COMMAND_NOT_ALLOWED
+ECS_COMMAND_CREATE_FAILED
+ECS_COMMAND_CONTENT_TOO_LARGE
+ECS_COMMAND_REVISION_NOT_READY
+DEPLOYMENT_SCRIPT_INVALID
+DEPLOYMENT_CUSTOM_SCRIPT_DISABLED
 DEPLOYMENT_LOCKED
 DEPLOYMENT_DISPATCH_UNKNOWN
 DEPLOYMENT_TIMEOUT
 DEPLOYMENT_DOWNLOAD_FAILED
-DEPLOYMENT_INSTALL_FAILED
+DEPLOYMENT_ARTIFACT_PREPARE_FAILED
+DEPLOYMENT_USER_SCRIPT_FAILED
+DEPLOYMENT_OUTPUT_INVALID
 DEPLOYMENT_HEALTH_CHECK_FAILED
 DEPLOYMENT_ROLLED_BACK
 DEPLOYMENT_ROLLBACK_FAILED
@@ -1257,6 +1470,9 @@ region
 bucketHash
 objectKeyHash
 instanceId
+commandRevisionId
+deployScriptSha256
+executionMode
 invocationId
 providerRequestId
 phase
@@ -1264,7 +1480,9 @@ status
 durationMs
 ```
 
-Bucket/Key 默认以 Hash 记录，查询审计表时才展示完整值。严禁记录凭据和预签名 URL。
+Bucket/Key 默认以 Hash 记录，查询审计表时才展示完整值。审计必须记录脚本创建人、批准
+人、脚本 Hash、云端 Command ID、目标 Instance ID 和每次 Attempt 的退出码。严禁记录
+凭据和预签名 URL；用户脚本正文只在受权限保护的配置查询接口返回，不进入普通运行日志。
 
 指标：
 
@@ -1310,7 +1528,10 @@ firefly_volcano_rollback_total{result}
 - API 永不返回明文 AK/SK。
 - TOS Prefix 跨多页按 LastModified 计算真实 Top 10、相同时间排序和扫描上限。
 - Object Content 大文件流式传输和客户端中断关闭。
-- Plugin Config 保存和读取。
+- Plugin Config 保存和读取；修改用户脚本必须创建新 Command Revision，旧 Attempt 仍引用
+  旧 Command ID 和 Script Hash。
+- `CreateCommand` 超时按 Tag + rendered Hash 对账、配置事务补偿和无引用命令 GC。
+- 命令总长度 16 KiB、用户脚本长度、URL Base64 分片及超过 4 片时拒绝。
 - Pipeline Build 创建 Volcano Deploy Build。
 - `InvokeCommand` 成功、失败、超时和未知结果。
 - 无公网 IP 实例可按 Region + Instance ID 部署；私网 IP 变化不改变目标，Region/Agent
@@ -1325,13 +1546,15 @@ firefly_volcano_rollback_total{result}
 
 在临时 Linux 容器中测试：
 
-- JAR、tar.gz、zip 和 raw binary 成功安装。
+- `MANAGED_DOWNLOAD` 下 tar.gz、zip、JAR 和原始可执行二进制准备正确，并将预期环境变量
+  传给用户部署指令。
+- `CUSTOM_FULL_SCRIPT` 默认禁用；开启后能执行用户自定义下载/部署指令，并标记
+  `integrityManaged=false`。
 - 错误 SHA-256、错误大小、URL 过期、磁盘空间不足。
 - 归档中的绝对路径、`../`、危险符号链接和设备文件被拒绝。
 - 两个并发部署只能有一个取得 `flock`。
-- systemd 模拟重启失败。
-- 新版本健康检查失败后回滚成功。
-- 新旧版本健康检查都失败时返回人工介入。
+- 用户部署指令退出非零、超时、stdout/stderr 超限和特殊字符脚本。
+- 健康检查失败后用户回滚指令成功；回滚缺失或失败时返回人工介入。
 - 预签名 URL 不出现在 stdout/stderr。
 
 ### 16.4 火山引擎 Staging 合同测试
@@ -1341,10 +1564,11 @@ firefly_volcano_rollback_total{result}
 1. List/Head/Get/Range/Download/Presign。
 2. 版本对象和 If-Match 失败。
 3. 100 MB 以上对象断点续传及 CRC64/SHA-256。
-4. Describe Instance、Agent、Command。
-5. Invoke、Describe Result、Stop。
-6. 真实部署、健康检查、回滚和进程重启恢复。
-7. 用 IAM 明确验证未授权 Bucket、实例和 Command 均被拒绝。
+4. Create、Describe、Invoke、Describe Result、Stop 和 Delete Command。
+5. 验证云助手 16 KiB 命令正文和 String 参数长度边界。
+6. 分别使用压缩包、JAR 和原始可执行文件执行用户给定的部署指令。
+7. 真实部署、健康检查、用户回滚指令和进程重启恢复。
+8. 用 IAM 明确验证未授权 Bucket、实例、RunCommand 和非 Firefly Command 均被拒绝。
 
 最终必须执行：
 
@@ -1403,13 +1627,15 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 
 验收：小对象可流式读取，大对象可断点下载，版本和校验不一致能明确失败。
 
-### Milestone 3：ECS 云助手与固定脚本
+### Milestone 3：ECS 云助手与用户部署指令
 
-- 管理员创建并审核固定 Command。
-- 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Describe、Invoke、Result、Stop。
-- 完成安全解包、原子切换、systemd、健康检查和回滚脚本测试。
+- 实现可信 Bootstrap 渲染、用户脚本校验、不可变 Command Revision 创建与垃圾回收。
+- 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Create、Describe、Invoke、Result、
+  Stop 和 Delete。
+- 完成压缩包安全解包、原始文件准备、环境变量契约、用户部署/回滚指令和健康检查测试。
 
-验收：测试 ECS 能从私有 TOS 直拉并完成部署，实例内不存在长期 AK/SK。
+验收：测试 ECS 能从私有 TOS 直拉压缩包或二进制，执行用户给定指令并完成部署；实例内
+不存在长期 AK/SK，运行结果可关联到不可变 Script Hash。
 
 ### Milestone 4：Pipeline Plugin 与恢复
 
@@ -1436,9 +1662,14 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - 可分页列举、Head、流式读取和下载 TOS 对象。
 - Plugin 可在 TOS 当前 Prefix 中准确选择按 LastModified 排序的最近 10 个制品之一。
 - 下载支持对象版本锁定、大小限制、断点续传和完整性校验。
-- ECS 通过固定 `InvokeCommand` 从私有 TOS 直拉制品，实例不接收 AK/SK。
+- 用户可提供 Bash 部署指令；每个版本固化为不可变 Command Revision，运行期只通过
+  `InvokeCommand` 执行，审计能定位到 Script Hash 和 Command ID。
+- `MANAGED_DOWNLOAD` 能从私有 TOS 直拉、校验并安全准备 TAR.GZ、ZIP 或普通文件；
+  `CUSTOM_FULL_SCRIPT` 只有管理员显式开启后才能把短期 URL 提供给用户脚本。
+- 实例不会接收长期 AK/SK 或 STS 凭据。
 - 无公网 IP 的 ECS 可按 Region + Instance ID 发现和部署，并在执行前验证实例与 Agent。
-- 部署具有应用级锁、路径/归档安全检查、原子切换、健康检查和回滚。
+- 部署具有应用级锁、路径/归档安全检查、用户指令超时、健康检查和可选用户回滚指令；
+  无法证明回滚成功时进入人工介入状态。
 - Invocation 和每次 Pipeline Retry 都有独立、可恢复的持久化审计。
 - Firefly 或 Kafka 重启不造成任务丢失或重复部署。
 - IAM 权限只覆盖指定 TOS Prefix、Command 和必要的只读/查询 API。
