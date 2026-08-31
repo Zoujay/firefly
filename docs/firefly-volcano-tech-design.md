@@ -1,8 +1,8 @@
 # Firefly Volcano 模块技术设计
 
 > 状态：Implementation Ready  
-> 版本：v1.3
-> 日期：2026-08-28  
+> 版本：v1.4
+> 日期：2026-09-01
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
 ## 1. 背景与目标
@@ -39,11 +39,13 @@
 - 用户可为 Plugin 提供部署指令；Firefly 为每个脚本版本创建不可变的云助手自定义命令，
   运行期通过 `InvokeCommand` 执行。
 - Pipeline Plugin 类型 `VOLCANO_DEPLOY`。
-- 部署插件按 TOS Bucket + Prefix 浏览当前层，并选择按 `LastModified` 倒序的最近 10 个
-  制品之一。
+- 部署 Job 配置只保存 TOS Region + Bucket + Prefix 制品范围，不保存具体制品。
+- 用户真正手动执行 Pipeline 时，每个部署 Job 必须从该 Prefix 当前层按
+  `LastModified` 倒序的最近 10 个制品中选择一个。
 - 部署插件按 Region 查询可部署 ECS，使用 `Region + InstanceId` 保存目标。
-- 部署插件允许输入或选择 `tos://<bucket>/<object-key>`，并配置受控的 ECS 部署路径；
-  Bootstrap 把经过校验的制品原子发布到该路径后再执行用户脚本。
+- 部署插件允许配置 `tos://<bucket>/<prefix>/` 和受控的 ECS 部署路径；手动执行
+  时再选择 Prefix 下的具体对象，Bootstrap 把经过校验的制品原子发布到该路径
+  后再执行用户脚本。
 - 部署超时、重试、状态查询、停止执行、健康检查和可选用户回滚指令。
 
 ### 1.2 不在 MVP 范围
@@ -143,11 +145,17 @@ VPC 中重复。无公网 IP 的实例仍必须满足两个网络条件：云助
 审计脚本及退出码，不能保证其完整性校验、原子切换或自动回滚，因此必须由管理员显式
 开启并再次确认风险。两种模式都不会把长期 AK/SK 或 STS 凭据发送到实例。
 
-### 2.9 TOS 地址和部署路径是配置，不是 Shell 参数
+### 2.9 Job 配置制品范围，手动执行锁定具体制品
 
-Plugin 可以让用户输入 `tos://<bucket>/<object-key>`，但后端必须解析并持久化规范化的
-Region、Bucket、Key、Version ID、ETag、大小和 SHA-256；不保存预签名 URL，也不接受
-任意 `http://` / `https://` 地址。对象 Key 始终是不透明标识，不能直接拼成本地路径。
+Plugin 配置可以让用户输入 `tos://<bucket>/<prefix>/`，但只持久化规范化的
+Region、Bucket、Prefix、当前层规则和允许的制品处理类型。Job 配置中不允许出现
+Object Key、Version ID、ETag、大小、LastModified 或 SHA-256 快照，因为这些字段在配置
+时尚未选定。系统不保存预签名 URL，也不接受任意 `http://` / `https://`
+地址。
+
+具体 Object 只能在用户提交手动执行时选择。后端必须根据 Job 中的 Prefix 重新校验
+Key，再执行 `HeadObject` 生成不可变的运行快照。该快照归属 Pipeline Build，不回写
+Pipeline 或 Job 配置。对象 Key 始终是不透明标识，不能直接拼成本地路径。
 
 用户配置的“部署路径”拆成管理员允许的绝对 `deployRoot`、用户可选的相对
 `relativePath` 和明确的 `layout`。后端生成并展示最终路径预览，ECS Bootstrap 再次执行
@@ -564,7 +572,7 @@ STS Provider 必须在临时凭据过期前 5 分钟刷新，并用 Connection �
 | `GET` | `/api/volcano/connections/{id}/tos/objects` | 按 Bucket/Prefix 分页列举对象 |
 | `GET` | `/api/volcano/connections/{id}/tos/object-metadata` | 查询单个对象元数据 |
 | `GET` | `/api/volcano/connections/{id}/tos/object-content` | 流式读取或下载单个对象 |
-| `GET` | `/api/volcano/pipelines/{pipelineId}/artifacts/recent` | Plugin 编辑器查询当前 Prefix 最近制品 |
+| `GET` | `/api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent` | 手动执行弹窗查询该 Job 允许的最近制品 |
 
 使用 Query Parameter 传递 `bucket`、`key`、`region` 和可选 `versionId`。不要把 Object
 Key 放在 Path Variable 中，因为 Key 可以包含 `/`、空格和编码字符，代理层也可能错误
@@ -572,26 +580,25 @@ Key 放在 Path Variable 中，因为 Key 可以包含 `/`、空格和编码字�
 
 ### 7.2 “当前路径最近 10 个制品”语义
 
-Plugin 编辑器调用：
+手动执行弹窗在已保存的 Pipeline 上按 Job 调用：
 
 ```http
-GET /api/volcano/pipelines/{pipelineId}/artifacts/recent
-    ?region=cn-beijing
-    &bucket=firefly-artifacts
-    &prefix=order-service/releases/
-    &limit=10
+GET /api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent?limit=10
 ```
 
 固定规则：
 
-- Connection 从 Pipeline Binding 解析，前端不能通过该接口传 `connectionId` 越权切换。
-- `prefix` 表示 TOS 当前目录，后端调用 `ListObjectsV2` 时设置 `delimiter=/`，只返回当前
-  层对象，不递归进入 `CommonPrefixes` 子目录。
+- Connection 从 Pipeline Binding 解析，Region、Bucket、Prefix 和当前层规则从
+  `{pipelineId} + {jobUuid}` 对应的 `VOLCANO_DEPLOY` Job 配置解析。前端不能传
+  `connectionId`、`region`、`bucket` 或 `prefix` 切换资源范围。
+- `prefix` 表示 TOS 当前目录，后端调用 `ListObjectsV2` 时设置 `delimiter=/`，只返回
+  当前层对象，不递归进入 `CommonPrefixes` 子目录。
 - 排除以 `/` 结尾的目录占位对象、0 字节对象、不支持的扩展名、归档未恢复对象和缺少
   SHA-256 元数据的对象。
 - 以 `LastModified DESC, Key ASC` 排序，最多返回 10 条。
-- 返回 `key`、`versionId`、`etag`、`sha256`、`size`、`lastModified`、`storageClass` 和
-  `displayName`；选择时前端必须回传完整不可变快照，不能只回传文件名。
+- 返回供人阅读的 `key`、`versionId`、`etag`、`sha256`、`size`、`lastModified`、
+  `storageClass` 和 `displayName`。提交手动执行时前端只回传选中的 `key`、可选
+  `versionId` 和 `handling`；后端不信任客户端回传的 ETag、大小或校验和。
 
 TOS List API 根据 Key 字典序分页，而不是按 `LastModified` 倒序，`max-keys=10` 不能保证
 得到“最新 10 个”。MVP 后端必须遍历该 Prefix 的所有分页，并用大小为 10 的最小堆计算
@@ -604,8 +611,9 @@ Top-K；设置 `max-artifact-scan`（默认 10,000）和 30 秒缓存。超过�
    `(pipeline_id, prefix, last_modified)` 索引取 10 条。
 2. 强制 Key 使用可排序时间/版本前缀，并维护一个受签名保护的 `manifest.json`。
 
-对象最终被选中后立即调用 `HeadObject` 再确认快照。MVP 是“配置时选择具体制品”，不是
-运行时隐式部署最新对象；否则相同 Pipeline 配置在不同时间会部署不同内容，无法审计。
+用户提交手动执行后，后端对选中对象立即调用 `HeadObject` 并以服务端响应为准生成
+不可变快照。MVP 是“运行时显式选择”，不是隐式部署最新对象；手动执行记录和
+后续重试始终引用该快照，因此 Pipeline 配置本身不锁定制品也不会牺牲可审计性。
 
 ### 7.3 对象内容流式读取
 
@@ -654,10 +662,11 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 生产部署要求 SHA-256 必填，优先顺序：
 
 1. TOS 自定义元数据 `x-tos-meta-firefly-sha256`。
-2. Pipeline Plugin 配置中的 `expectedSha256`。
+2. 手动执行选择流程中由服务端受信任的制品索引提供，并写入运行快照。
 3. 仅限管理端人工下载：Firefly 下载完成后计算；不能用于 ECS 直拉前的信任判断。
 
-如果元数据和配置同时存在但不一致，直接失败。SHA-256 必须是 64 位小写十六进制。
+如果元数据和受信任索引同时存在但不一致，直接失败。SHA-256 必须是 64 位小写
+十六进制。Job 配置不接受 `expectedSha256`，避免把某个具体制品的快照重新引入配置层。
 
 ## 8. ECS 部署设计
 
@@ -748,18 +757,15 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
   "name": "deploy-order-service",
   "pluginType": "VOLCANO_DEPLOY",
   "pluginRaw": {
-    "artifact": {
-      "tosUri": "tos://firefly-artifacts/order-service/releases/order-service.tar.gz",
+    "artifactSource": {
+      "selectionMode": "MANUAL_AT_RUN",
+      "tosUri": "tos://firefly-artifacts/order-service/releases/",
       "region": "cn-beijing",
       "bucket": "firefly-artifacts",
       "prefix": "order-service/releases/",
-      "key": "order-service/1.8.2/order-service.tar.gz",
-      "versionId": null,
-      "etag": "<selected-object-etag>",
-      "size": 18342190,
-      "lastModified": "2026-08-28T10:00:00Z",
-      "expectedSha256": "<64 lowercase hex>",
-      "handling": "TAR_GZ"
+      "currentLevelOnly": true,
+      "allowedHandling": ["TAR_GZ", "ZIP", "FILE"],
+      "defaultHandling": "TAR_GZ"
     },
     "target": {
       "region": "cn-beijing",
@@ -798,15 +804,15 @@ Firefly 不通过公网 IP 或私网 IP SSH/复制文件到实例，因此目标
 ```
 
 配置中不再接受 `connectionId`、`ak`、`sk` 或 Session Token；Connection 只能从所属
-Pipeline Binding 得到。编辑器先选 Prefix，再从最近 10 个结果中选择固定 Object
-Snapshot。动态消费上游 Job 产物需要先设计 Pipeline Artifact Contract，不在本次通过
-任意字符串模板拼接实现。
+Pipeline Binding 得到。`artifactSource` 只定义可选制品的范围；不包含 `key`、
+`versionId`、`etag`、`size`、`lastModified` 或 `expectedSha256`。动态消费上游 Job
+产物需要先设计 Pipeline Artifact Contract，不在本次通过任意字符串模板拼接实现。
 
-`artifact.tosUri` 是创建/编辑界面的便捷输入，后端以 `region + bucket + key +
-versionId` 为权威值。URI 只接受 `tos` Scheme，Bucket 位于 Authority，路径按 UTF-8
-Object Key 解析；拒绝 UserInfo、Port、Fragment、重复百分号解码和除 `versionId` 外的
-Query。通过最近 10 个制品选择器得到的对象也生成同样的规范化 URI。保存时执行
-`HeadObject` 并覆盖客户端提交的 ETag、大小和 LastModified，客户端不能伪造快照。
+`artifactSource.tosUri` 是创建/编辑界面的便捷输入，后端以 `region + bucket +
+prefix` 为权威配置。URI 只接受 `tos` Scheme，Bucket 位于 Authority，路径按 UTF-8
+Prefix 解析；拒绝 UserInfo、Port、Fragment、Query 和重复百分号解码。保存时只验证 Prefix
+属于 Pipeline Binding 允许范围，并使用 `ListObjectsV2` 确认凭据具有必要的列举权限；
+不对某个具体 Object 执行 `HeadObject`。
 
 `destination.layout`：
 
@@ -821,7 +827,8 @@ Query。通过最近 10 个制品选择器得到的对象也生成同样的规�
 仅凭文件恢复就声称业务回滚成功。MVP 不支持覆盖非空固定目录，因为跨目录树无法可靠
 原子替换。
 
-`artifact.handling` 必须由用户确认，不能只根据扩展名自动决定：
+`handling` 必须在手动执行时由用户确认，且必须位于 Job 配置的
+`allowedHandling` 内，不能只根据扩展名自动决定：
 
 | 类型 | 准备结果 | `FIREFLY_ARTIFACT_PATH` |
 | --- | --- | --- |
@@ -838,8 +845,8 @@ Query。通过最近 10 个制品选择器得到的对象也生成同样的规�
 
 - `applicationName`：`[a-z][a-z0-9-]{1,62}`。
 - `instanceId`：按火山资源 ID 格式和长度白名单校验。
-- `tosUri` 解析结果必须与 `bucket`、`key` 一致；Bucket、Key 和 Version ID 必须落在
-  Pipeline Binding 的 IAM/管理员 allowlist 内。
+- `artifactSource.tosUri` 解析结果必须与 `bucket`、`prefix` 一致；Bucket 和 Prefix
+  必须落在 Pipeline Binding 的 IAM/管理员 allowlist 内。
 - Artifact Region 与 Target Region 必须一致，除非管理员显式开启跨 Region 部署。
 - `deployRoot`：必须位于管理员配置的根目录，例如 `/opt/firefly/apps/`，规范化后仍在
   根目录内；禁止 `..`、NUL 和符号链接逃逸。
@@ -847,8 +854,9 @@ Query。通过最近 10 个制品选择器得到的对象也生成同样的规�
   模板和 `${...}`；UTF-8 编码后最长 1024 字节。
 - 最终路径按组件检查现有父目录，任何组件是符号链接都拒绝；执行用户必须对受控临时
   目录和目标父目录有权限，但不能写 allowlist 之外的目录。
-- `FIXED_FILE` 只允许 `handling=FILE`；`VERSIONED_DIRECTORY + FILE` 必须提供安全的
-  `outputFileName`，不能包含 `/`、`..` 或控制字符。
+- `FIXED_FILE` 要求 `allowedHandling` 和 `defaultHandling` 均为 `FILE`；
+  `VERSIONED_DIRECTORY` 允许包含 `FILE`，但必须提供安全的 `outputFileName`，不能包含
+  `/`、`..` 或控制字符。
 - `runAsUser`：不能由普通 Plugin 任意填写，必须来自管理员 allowlist；默认禁止 `root`。
 - `deployScript` 必填，UTF-8、无 NUL，和可信 Bootstrap 合并后的命令正文不得超过
   16 KiB；`rollbackScript` 可选，并应用相同校验。
@@ -859,17 +867,16 @@ Query。通过最近 10 个制品选择器得到的对象也生成同样的规�
 编辑器交互顺序固定为：
 
 1. 读取 Pipeline 全局 Volcano Binding；凭据无效或 STS 已过期时禁用 Plugin 保存。
-2. 选择 Region、Bucket 和 Prefix。
-3. 请求并展示当前 Prefix 最近 10 个制品，用户选择一个具体 Object Snapshot。
-4. 请求同 Region 的 ECS 列表，默认只显示 `deployable=true`，可切换查看不可用原因。
-5. 用户根据实例名、私网 IP、Zone、VPC、Tag 和 Instance ID 选择一台机器。
-6. 选择制品处理类型，配置 Deploy Root、相对路径和 Layout；后端返回规范化 URI 和最终
-   路径预览，页面明确区分临时下载路径与用户脚本看到的最终路径。
-7. 填写部署指令、可选回滚指令、执行用户、超时和健康检查。
-8. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
-9. 保存前后端再次 Head Object、Describe Instance 和检查 Agent；任何快照已经变化时要求
-   用户刷新选择，不静默替换制品或目标。
-10. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
+2. 选择 Region、Bucket 和 Prefix，设置当前层规则、允许的处理类型和默认值。编辑器
+   不查询“最近 10 个制品”，也不展示具体 Object 选择器。
+3. 请求同 Region 的 ECS 列表，默认只显示 `deployable=true`，可切换查看不可用原因。
+4. 用户根据实例名、私网 IP、Zone、VPC、Tag 和 Instance ID 选择一台机器。
+5. 配置 Deploy Root、相对路径和 Layout；后端返回规范化 Prefix URI 和最终路径
+   预览，页面明确区分临时下载路径与用户脚本看到的最终路径。
+6. 填写部署指令、可选回滚指令、执行用户、超时和健康检查。
+7. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
+8. 保存前后端校验 Prefix 访问权限、Describe Instance 和 Agent，不要求用户选择制品。
+9. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
    和本地配置均保存成功后 Plugin 才进入 `READY`。失败时删除孤儿命令或交给 GC 回收。
 
 MVP 的管理 API 已由部署层管理员认证保护，因此管理员保存脚本即视为批准，
@@ -887,7 +894,66 @@ MVP 的管理 API 已由部署层管理员认证保护，因此管理员保存�
 5. 只有 `READY` Revision 可以执行；失败 Revision 标记 `ORPHANED`，24 小时后由 GC 在
    确认零引用、零活动 Attempt 且 Tag 匹配后删除。
 
-### 8.4 部署命令参数
+### 8.4 手动执行时选择制品
+
+现有代码中手动执行入口是 `POST /manual_trigger/pipeline`，请求类为
+`PipelineBuildRequest`。当前请求只包含 `pipelineId`、`uuid`、`triggerModel`、
+`triggerMatch` 和 `triggerOrigin`，本设计在保持路径兼容的前提下增加按 Job UUID 索引的
+`jobInputs`：
+
+```json
+{
+  "pipelineId": 1001,
+  "uuid": "<64-char-request-uuid>",
+  "triggerModel": "MANUAL",
+  "triggerMatch": "ACCURATE",
+  "triggerOrigin": "VOLCANO",
+  "jobInputs": {
+    "<64-char-volcano-job-uuid>": {
+      "artifact": {
+        "key": "order-service/releases/order-service-1.8.2.tar.gz",
+        "versionId": null,
+        "handling": "TAR_GZ"
+      }
+    }
+  }
+}
+```
+
+`jobInputs` 使用 Job 的稳定 64 位 UUID，不使用前端拖拽节点 ID 或数据库自增 ID。一个
+Pipeline 有多个 `VOLCANO_DEPLOY` Job 时，弹窗逐个调用 7.2 的最近制品接口，并要求
+每个 Job 各选一个制品。运行时选择不修改已保存 Pipeline，也不触发“编辑 Pipeline”
+状态。
+
+后端在调度任何 Stage 前必须完成以下校验：
+
+1. `triggerModel` 必须为 `MANUAL`，并且 Pipeline 属于当前用户可执行范围。
+2. 通过 Job UUID 解析唯一 `JobConfig`，确认其 `PluginType=VOLCANO_DEPLOY`。拒绝未知 Job、
+   重复选择、非 Volcano Job 输入和漏选。
+3. 从 Pipeline Binding 和 Job 配置解析 Connection、Region、Bucket、Prefix 和允许处理
+   类型，不从请求体接受这些边界字段。
+4. 规范化 `key`，确认其在配置的 Prefix/当前层内，并重新计算该 Job 的最近 10 个
+   制品，选中 Key 必须仍在集合中；列表已变化时返回 `VOLCANO_ARTIFACT_SELECTION_INVALID`
+   并要求刷新。`handling` 必须属于 `allowedHandling`，且扩展名与处理方式没有明显冲突。
+5. 使用服务端凭据调用 `HeadObject`，获得并校验 Version ID/ETag、CRC64、大小、
+   LastModified 和 SHA-256。请求中即使出现这些字段也必须拒绝，不能接受客户端快照。
+6. 一次数据库事务中创建 `PipelineBuild`、`StageBuild`、`JobBuild`、`PluginBuild`
+   和每个 Job 的制品选择快照。任一校验/落库失败则不创建半成品 Build；事务提交
+   后再通过现有 Dispatch/Outbox 启动执行。
+
+当前 `PipelineBuildServiceImpl.parsePipelineBuildRequest` 没有把 `triggerModel` 和 `triggerMatch`
+复制到 `PipelineBuildDto`，`PipelineBuildDto`、`PipelineBuild` 和 `JobBuildContext` 也没有运行输入。
+实现时必须显式补齐这条传递链：`PipelineBuildRequest -> PipelineBuildDto -> PipelineBuild`
+持久化触发模式，并且由 `JobBuildContext` 携带 `artifactSelectionId`，或由 Volcano
+Build Service 按 `(pipelineBuildId, jobConfigId)` 唯一解析选择记录。不能在
+`IPluginBuild.savePluginBuild(JobBuildContext)` 之后再从临时 HTTP 请求中取值。
+
+包含 `MANUAL_AT_RUN` Job 的 Pipeline 在 MVP 中不允许被 GitHub Webhook 等自动触发启动，
+因为自动触发没有人工制品选择。系统在创建 Build 前返回
+`VOLCANO_MANUAL_ARTIFACT_SELECTION_ONLY`，不得隐式取最新对象。未来只能通过受信任的上游
+Artifact Contract/制品索引为自动触发提供显式输入。
+
+### 8.5 部署命令参数
 
 每个 Command Revision 的命令正文由“可信 Bootstrap + 固定用户脚本”组成，运行时只接受
 以下参数：
@@ -922,7 +988,7 @@ Bootstrap 自身禁止 `eval` 和 `set -x`，所有变量引用加双引号。�
 `CUSTOM_FULL_SCRIPT` 才导出短期 URL，并将该 URL 的原文和 Base64 值都加入本次日志
 精确脱敏集合。
 
-### 8.5 实例内目录
+### 8.6 实例内目录
 
 ```text
 /opt/firefly/apps/<application>/
@@ -964,7 +1030,7 @@ FIREFLY_SHARED_DIR
 `FIREFLY_ARTIFACT_SIZE`。环境变量名构成版本化契约；新增变量允许向后兼容，删除或修改
 语义必须提升 Command Schema Version。
 
-### 8.6 Bootstrap 与用户指令执行步骤
+### 8.7 Bootstrap 与用户指令执行步骤
 
 1. `set -Eeuo pipefail`、`umask 027`，关闭命令回显。
 2. 解码并校验全部参数，按 `deployRoot + relativePath + layout` 重新计算最终路径，确认它和
@@ -1015,7 +1081,7 @@ FIREFLY_SHARED_DIR
 | `42` | 用户回滚指令失败，需要人工介入 |
 | `43` | 用户指令输出超限或结果信封无效 |
 
-### 8.7 用户指令的安全边界
+### 8.8 用户指令的安全边界
 
 允许用户 Bash 意味着该用户能够以 `runAsUser` 权限在目标实例执行代码。正则校验、Shell
 lint 或关键字黑名单都不能把任意脚本变成安全脚本，因此本设计不宣称对恶意脚本提供
@@ -1031,7 +1097,7 @@ lint 或关键字黑名单都不能把任意脚本变成安全脚本，因此本
   Shell 或后续 Pipeline 参数再次执行。
 - 脚本执行前展示完整 diff；运行审计固定记录 Revision、Hash、批准人和 Instance ID。
 
-### 8.8 部署顺序
+### 8.9 部署顺序
 
 ```mermaid
 sequenceDiagram
@@ -1102,13 +1168,10 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `region`                       VARCHAR(64) NOT NULL,
     `bucket_name`                  VARCHAR(255) NOT NULL,
     `artifact_prefix`              VARCHAR(2048) NOT NULL,
-    `object_key`                   VARCHAR(2048) NOT NULL,
-    `object_version_id`            VARCHAR(512) NOT NULL DEFAULT '',
-    `object_etag`                  VARCHAR(512) NOT NULL,
-    `object_size`                  BIGINT NOT NULL,
-    `object_last_modified`         DATETIME(6) NOT NULL,
-    `expected_sha256`              CHAR(64) NOT NULL,
-    `artifact_handling`            VARCHAR(32) NOT NULL,
+    `artifact_selection_mode`      VARCHAR(32) NOT NULL,
+    `current_level_only`           TINYINT(1) NOT NULL DEFAULT 1,
+    `allowed_artifact_handling`    VARCHAR(128) NOT NULL,
+    `default_artifact_handling`    VARCHAR(32) NOT NULL,
     `destination_output_file_name` VARCHAR(255) NOT NULL DEFAULT '',
     `destination_executable`       TINYINT(1) NOT NULL DEFAULT 0,
     `instance_id`                  VARCHAR(128) NOT NULL,
@@ -1134,7 +1197,42 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     INDEX `idx_volcano_deploy_instance` (`region`, `instance_id`),
     INDEX `idx_volcano_deploy_command` (`command_revision_id`)
 );
+
+CREATE TABLE `firefly`.`volcano_artifact_selection`
+(
+    `id`                    BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `public_id`             VARCHAR(64) NOT NULL,
+    `pipeline_build_id`     BIGINT(20) NOT NULL,
+    `job_config_id`         BIGINT(20) NOT NULL,
+    `region`                VARCHAR(64) NOT NULL,
+    `bucket_name`           VARCHAR(255) NOT NULL,
+    `object_key`            VARCHAR(2048) NOT NULL,
+    `object_version_id`     VARCHAR(512) NOT NULL DEFAULT '',
+    `object_etag`           VARCHAR(512) NOT NULL,
+    `object_crc64`          VARCHAR(64) NOT NULL DEFAULT '',
+    `object_sha256`         CHAR(64) NOT NULL,
+    `object_size`           BIGINT NOT NULL,
+    `object_last_modified`  DATETIME(6) NOT NULL,
+    `artifact_handling`     VARCHAR(32) NOT NULL,
+    `selection_source`      VARCHAR(32) NOT NULL,
+    `selected_by`           VARCHAR(128) NOT NULL,
+    `selected_at`           DATETIME(6) NOT NULL,
+    `created_at`            DATETIME(6) NOT NULL,
+    `updated_at`            DATETIME(6) NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_volcano_artifact_selection_public` (`public_id`),
+    UNIQUE INDEX `uidx_volcano_artifact_selection_build_job`
+        (`pipeline_build_id`, `job_config_id`),
+    INDEX `idx_volcano_artifact_selection_object`
+        (`region`, `bucket_name`, `object_key`(255))
+);
 ```
+
+`volcano_deploy_config` 只保存可选制品范围，`artifact_selection_mode` 在 MVP 中只能为
+`MANUAL_AT_RUN`。`allowed_artifact_handling` 使用排序后的受控枚举集合序列化，不接受
+任意字符串。`volcano_artifact_selection` 是手动执行创建的不可变快照；
+`selection_source=MANUAL`，且 `(pipeline_build_id, job_config_id)` 唯一约束保证每个部署
+Job 在一次 Build 中恰好选择一个制品。
 
 ### 9.2 Plugin Build 与 Attempt
 
@@ -1144,6 +1242,7 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
     `id`                    BIGINT(20) NOT NULL AUTO_INCREMENT,
     `plugin_id`             BIGINT(20) NOT NULL,
     `job_build_id`          BIGINT(20) NOT NULL,
+    `artifact_selection_id` BIGINT(20) NOT NULL,
     `deploy_status`         VARCHAR(32) NOT NULL,
     `execution_attempt`     INT NOT NULL DEFAULT 0,
     `current_attempt_id`    BIGINT(20) NULL,
@@ -1151,52 +1250,56 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
     `updated_at`            DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_volcano_deploy_build_job` (`job_build_id`),
+    UNIQUE INDEX `uidx_volcano_deploy_build_selection` (`artifact_selection_id`),
     INDEX `idx_volcano_deploy_build_plugin` (`plugin_id`)
 );
 
 CREATE TABLE `firefly`.`volcano_deployment_attempt`
 (
-    `id`                   BIGINT(20) NOT NULL AUTO_INCREMENT,
-    `public_id`            VARCHAR(64) NOT NULL,
-    `deploy_build_id`      BIGINT(20) NOT NULL,
-    `execution_attempt`    INT NOT NULL,
-    `phase`                VARCHAR(32) NOT NULL,
-    `status`               VARCHAR(32) NOT NULL,
-    `region`               VARCHAR(64) NOT NULL,
-    `bucket_name`          VARCHAR(255) NOT NULL,
-    `object_key`           VARCHAR(2048) NOT NULL,
-    `object_version_id`    VARCHAR(512) NOT NULL DEFAULT '',
-    `object_etag`          VARCHAR(512) NOT NULL DEFAULT '',
-    `object_crc64`         VARCHAR(64) NOT NULL DEFAULT '',
-    `object_sha256`        CHAR(64) NOT NULL,
-    `object_size`          BIGINT NOT NULL,
-    `instance_id`          VARCHAR(128) NOT NULL,
-    `command_revision_id`  BIGINT(20) NOT NULL,
-    `command_id`           VARCHAR(128) NOT NULL,
-    `deploy_script_sha256` CHAR(64) NOT NULL,
-    `execution_mode`       VARCHAR(32) NOT NULL,
-    `integrity_managed`    TINYINT(1) NOT NULL,
-    `invocation_id`        VARCHAR(128) NULL,
-    `provider_request_id`  VARCHAR(128) NOT NULL DEFAULT '',
-    `destination_layout`   VARCHAR(32) NOT NULL,
-    `destination_path`     VARCHAR(1024) NOT NULL,
-    `rolled_back`          TINYINT(1) NOT NULL DEFAULT 0,
-    `exit_code`            INT NULL,
-    `output_excerpt`       VARCHAR(8192) NOT NULL DEFAULT '',
-    `error_code`           VARCHAR(64) NOT NULL DEFAULT '',
-    `error_message`        VARCHAR(2048) NOT NULL DEFAULT '',
-    `processor_id`         VARCHAR(128) NOT NULL DEFAULT '',
-    `lease_expires_at`     DATETIME(6) NULL,
-    `next_poll_at`         DATETIME(6) NULL,
-    `started_at`           DATETIME(6) NULL,
-    `finished_at`          DATETIME(6) NULL,
-    `created_at`           DATETIME(6) NOT NULL,
-    `updated_at`           DATETIME(6) NOT NULL,
+    `id`                    BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `public_id`             VARCHAR(64) NOT NULL,
+    `deploy_build_id`       BIGINT(20) NOT NULL,
+    `artifact_selection_id` BIGINT(20) NOT NULL,
+    `execution_attempt`     INT NOT NULL,
+    `phase`                 VARCHAR(32) NOT NULL,
+    `status`                VARCHAR(32) NOT NULL,
+    `region`                VARCHAR(64) NOT NULL,
+    `bucket_name`           VARCHAR(255) NOT NULL,
+    `object_key`            VARCHAR(2048) NOT NULL,
+    `object_version_id`     VARCHAR(512) NOT NULL DEFAULT '',
+    `object_etag`           VARCHAR(512) NOT NULL DEFAULT '',
+    `object_crc64`          VARCHAR(64) NOT NULL DEFAULT '',
+    `object_sha256`         CHAR(64) NOT NULL,
+    `object_size`           BIGINT NOT NULL,
+    `object_last_modified`  DATETIME(6) NOT NULL,
+    `instance_id`           VARCHAR(128) NOT NULL,
+    `command_revision_id`   BIGINT(20) NOT NULL,
+    `command_id`            VARCHAR(128) NOT NULL,
+    `deploy_script_sha256`  CHAR(64) NOT NULL,
+    `execution_mode`        VARCHAR(32) NOT NULL,
+    `integrity_managed`     TINYINT(1) NOT NULL,
+    `invocation_id`         VARCHAR(128) NULL,
+    `provider_request_id`   VARCHAR(128) NOT NULL DEFAULT '',
+    `destination_layout`    VARCHAR(32) NOT NULL,
+    `destination_path`      VARCHAR(1024) NOT NULL,
+    `rolled_back`           TINYINT(1) NOT NULL DEFAULT 0,
+    `exit_code`             INT NULL,
+    `output_excerpt`        VARCHAR(8192) NOT NULL DEFAULT '',
+    `error_code`            VARCHAR(64) NOT NULL DEFAULT '',
+    `error_message`         VARCHAR(2048) NOT NULL DEFAULT '',
+    `processor_id`          VARCHAR(128) NOT NULL DEFAULT '',
+    `lease_expires_at`      DATETIME(6) NULL,
+    `next_poll_at`          DATETIME(6) NULL,
+    `started_at`            DATETIME(6) NULL,
+    `finished_at`           DATETIME(6) NULL,
+    `created_at`            DATETIME(6) NOT NULL,
+    `updated_at`            DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_volcano_deployment_public` (`public_id`),
     UNIQUE INDEX `uidx_volcano_deployment_attempt`
         (`deploy_build_id`, `execution_attempt`),
     UNIQUE INDEX `uidx_volcano_deployment_invocation` (`invocation_id`),
+    INDEX `idx_volcano_deployment_selection` (`artifact_selection_id`),
     INDEX `idx_volcano_deployment_recovery`
         (`status`, `next_poll_at`, `lease_expires_at`)
 );
@@ -1204,6 +1307,10 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
 
 与现有项目风格一致，表之间使用逻辑引用，不创建数据库外键。应用服务校验引用存在性、
 归属关系和删除顺序；不使用 `findFirst` 掩盖重复或悬空数据。
+
+`volcano_deployment_attempt` 保留对象字段的副本用于独立审计，但其值必须从
+`volcano_artifact_selection` 复制，不得再从 Job 配置或 HTTP 请求解析。同时在现有
+`pipeline_build` 中增加并持久化 `trigger_model`，以便在数据库层审计手动/自动执行边界。
 
 ### 9.3 状态
 
@@ -1272,6 +1379,7 @@ firefly-app/src/main/java/firefly/volcano
 ├── service/VolcanoObjectService.java
 ├── service/VolcanoCommandRevisionService.java
 ├── service/VolcanoCommandGarbageCollector.java
+├── service/VolcanoArtifactSelectionService.java
 ├── service/VolcanoDeploymentService.java
 ├── service/VolcanoDeploymentRecoveryScheduler.java
 ├── service/VolcanoDeploymentStateService.java
@@ -1289,13 +1397,18 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 
 1. `PluginType` 增加 `VOLCANO_DEPLOY`。
 2. `VolcanoDeployPluginConfigService` 实现 `IPluginConfig`，保存并查询
-   `volcano_deploy_config`；脚本发生变化时调用 `VolcanoCommandRevisionService` 创建新的
-   不可变 Command Revision。
-3. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`；`executePluginBuild` 只创建
+   `volcano_deploy_config` 中的制品范围；脚本发生变化时调用
+   `VolcanoCommandRevisionService` 创建新的不可变 Command Revision。
+3. `VolcanoArtifactSelectionService` 查询每个 Job 的最近制品，并在手动执行创建
+   Build 前完成 Job/Prefix/HeadObject 校验与快照持久化。
+4. `PipelineBuildRequest`、`PipelineBuildDto`、`PipelineBuild` 和 `JobBuildContext` 增加手动运行
+   输入传递所需字段；`PipelineBuildServiceImpl.buildPipeline` 在创建 Plugin Build 前为每个
+   Volcano Job 解析唯一 `artifactSelectionId`。
+5. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`；`executePluginBuild` 只创建
    Attempt、校验并分发云助手命令，不同步等待结果。
-4. Recovery Scheduler 收到终态后在同一事务更新 Attempt、Plugin Build，并向现有
+6. Recovery Scheduler 收到终态后在同一事务更新 Attempt、Plugin Build，并向现有
    Plugin Topic 写 Outbox。
-5. `PipelineWorkspaceService` 删除 Pipeline 时先校验没有运行中的部署，再按逻辑引用顺序
+7. `PipelineWorkspaceService` 删除 Pipeline 时先校验没有运行中的部署，再按逻辑引用顺序
    删除 Volcano Plugin 配置和 Pipeline Binding；Command Revision 先标记 `ORPHANED`，待
    没有配置和 Attempt 引用后由 GC 删除云端 Command；仅当 Connection 标记为 Pipeline
    私有且不再被其他 Binding 引用时，才删除其凭据密文。
@@ -1305,7 +1418,19 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 
 ## 11. 管理与查询 API
 
-### 11.1 Deployment API
+### 11.1 手动执行 API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent?limit=10` | 手动执行弹窗查询该 Job 范围内的最近制品 |
+| `POST` | `/manual_trigger/pipeline` | 提交手动执行及每个 Volcano Job 的制品选择，成功返回 Pipeline Build ID |
+
+弹窗打开时先读取 Pipeline 中所有 `MANUAL_AT_RUN` Job，并行请求各自的最近 10 个
+制品。确认页必须展示 Job 名称、TOS Prefix、Key、大小、LastModified、Version ID/ETag、
+SHA-256 和 handling。任一 Job 没有选择或制品被替换时，整个手动执行失败，不部分创建
+Build。
+
+### 11.2 Deployment API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -1314,7 +1439,9 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 | `POST` | `/api/volcano/deployments/{publicId}/stop` | 停止仍在运行的 Invocation |
 
 部署重试沿用 `/pipeline-builds/{pipelineBuildID}/retry`，不另建绕过 Pipeline 状态机的
-重试入口。
+重试入口。重试必须复用原 Build 的 `volcano_artifact_selection` 和对象 Version ID/ETag，
+不再展示制品选择器，也不重新计算“最近制品”。若需部署另一制品，用户必须发起新的
+手动执行。
 
 响应只包含安全输出摘要：
 
@@ -1354,7 +1481,7 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 }
 ```
 
-### 11.2 Command Revision API
+### 11.3 Command Revision API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -1365,31 +1492,28 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 “创建后立即执行”接口。查询接口默认返回 Script Hash 和摘要；只有具备配置读取权限时才
 返回完整脚本正文，且所有读取操作写审计日志。
 
-### 11.3 制品地址与部署路径预检 API
+### 11.4 制品范围与部署路径预检 API
 
 ```http
 POST /api/volcano/pipelines/{pipelineId}/deploy-config/validate
 ```
 
-请求携带 `artifact`、`target` 和 `destination`，但不创建 Command 或 Deployment。后端
-解析 TOS URI、执行 Head Object、验证实例和 Agent、规范化部署路径，并返回：
+请求携带 `artifactSource`、`target` 和 `destination`，但不创建 Command 或 Deployment。
+后端解析 TOS Prefix URI、执行受限 `ListObjectsV2` 权限检查、验证实例和 Agent、规范化
+部署路径，不对具体对象执行 Head Object，并返回：
 
 ```json
 {
-  "canonicalTosUri": "tos://firefly-artifacts/order-service/releases/order-service.tar.gz",
-  "artifactSnapshot": {
-    "versionId": null,
-    "etag": "...",
-    "size": 18342190,
-    "sha256": "..."
-  },
+  "canonicalPrefixUri": "tos://firefly-artifacts/order-service/releases/",
+  "artifactSourceValid": true,
   "destinationPreview": "/opt/firefly/apps/order-service/releases/<deployment-id>",
   "atomicPublishSupported": true,
   "warnings": []
 }
 ```
 
-预检结果只用于交互提示，不能替代保存时和每次执行前的重新校验。
+预检结果只用于交互提示，不能替代保存时的 Prefix/实例校验，也不能替代手动
+执行提交时对具体制品的 Head Object 和快照锁定。
 
 ## 12. 配置项
 
@@ -1503,6 +1627,10 @@ min(commandTimeout + presignGrace, maxPresignTtl)
 
 403、404、参数错误、校验失败和脚本安全校验失败不自动重试。
 
+Pipeline Retry 是对原 Pipeline Build 的恢复，不属于新的手动执行：它只能使用原
+`volcano_artifact_selection`，并根据该快照重新生成短期预签名 URL。如果无 Version ID
+且 ETag 条件已不匹配，重试以 `TOS_OBJECT_CHANGED` 失败，不能要求用户在重试中换制品。
+
 ### 14.2 Firefly 错误码
 
 ```text
@@ -1514,6 +1642,9 @@ VOLCANO_ASSUME_ROLE_FAILED
 VOLCANO_ACCESS_DENIED
 VOLCANO_ENDPOINT_REJECTED
 VOLCANO_PIPELINE_BINDING_NOT_FOUND
+VOLCANO_ARTIFACT_SELECTION_REQUIRED
+VOLCANO_ARTIFACT_SELECTION_INVALID
+VOLCANO_MANUAL_ARTIFACT_SELECTION_ONLY
 TOS_OBJECT_NOT_FOUND
 TOS_OBJECT_ARCHIVED
 TOS_OBJECT_TOO_LARGE
@@ -1634,10 +1765,17 @@ firefly_volcano_rollback_total{result}
 - STS 刷新并发互斥、提前刷新、过期和 AssumeRole 失败。
 - API 永不返回明文 AK/SK。
 - TOS Prefix 跨多页按 LastModified 计算真实 Top 10、相同时间排序和扫描上限。
-- `tos://` URI 规范化、百分号编码、非法 Scheme/Query，以及 URI 与 Bucket/Key 不一致。
+- `tos://` URI 规范化、百分号编码、非法 Scheme/Query，以及 Job 配置 URI 与
+  Bucket/Prefix 不一致。
 - Object Content 大文件流式传输和客户端中断关闭。
-- Plugin Config 保存和读取；修改用户脚本必须创建新 Command Revision，旧 Attempt 仍引用
-  旧 Command ID 和 Script Hash。
+- Plugin Config 保存和读取只包含 Region/Bucket/Prefix 范围，提交 Key、Version ID、
+  ETag、大小或 SHA-256 快照必须被拒绝。修改用户脚本必须创建新 Command Revision，
+  旧 Attempt 仍引用旧 Command ID 和 Script Hash。
+- 手动执行对单个/多个 Volcano Job 逐个选择制品；漏选、多选、未知 Job UUID、越出
+  Prefix/当前层、不允许 handling 和客户端伪造快照均被拒绝。
+- 手动提交的 `HeadObject` 快照与 Pipeline/Stage/Job/Plugin Build 在同一事务中落库；
+  中途失败不留半成品 Build。
+- 包含 `MANUAL_AT_RUN` Job 的 Pipeline 自动触发被拒绝，不会隐式选择最新制品。
 - `CreateCommand` 超时按 Tag + rendered Hash 对账、配置事务补偿和无引用命令 GC。
 - 命令总长度 16 KiB、用户脚本长度、URL Base64 分片及超过 4 片时拒绝。
 - Pipeline Build 创建 Volcano Deploy Build。
@@ -1647,7 +1785,8 @@ firefly_volcano_rollback_total{result}
 - Scheduler Lease 抢占，两个实例不能重复处理同一 Attempt。
 - Firefly 重启后根据 Invocation ID 恢复。
 - 终态 Outbox 重放不重复推进 Job/Stage/Pipeline。
-- Pipeline Retry 创建新的 Attempt 且不覆盖旧 Attempt 审计。
+- Pipeline Retry 创建新的 Attempt、不覆盖旧 Attempt 审计，并且复用原制品选择
+  快照，不查询/选择新制品。
 - 删除 Pipeline/Connection 时的活动部署和逻辑引用校验。
 
 ### 16.3 部署脚本测试
@@ -1736,7 +1875,8 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 ### Milestone 2：TOS 读取与下载
 
 - 实现 List、Head、Get、Range、Download、Presign。
-- 实现 Prefix 当前层的最近 10 个制品查询、Top-K 和扫描上限。
+- 实现按 Pipeline + Job UUID 限定 Prefix 当前层的最近 10 个制品查询、Top-K 和
+  扫描上限，该接口只供手动执行交互使用。
 - 实现管理 API、限流、大小限制、CRC64/SHA-256 和临时文件清理。
 
 验收：小对象可流式读取，大对象可断点下载，版本和校验不一致能明确失败。
@@ -1754,7 +1894,9 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 
 ### Milestone 4：Pipeline Plugin 与恢复
 
-- 新增 `VOLCANO_DEPLOY` 配置/build/attempt 表和服务。
+- 新增 `VOLCANO_DEPLOY` 配置、运行制品选择、build/attempt 表和服务。
+- 扩展 `/manual_trigger/pipeline` 的按 Job UUID 运行输入，在一个事务内固化制品快照并创建
+  Build；包含手动选择 Job 时拒绝自动触发。
 - 接入现有 Plugin、Outbox、Inbox 和 Pipeline Retry。
 - 实现 Recovery Scheduler、Lease、状态查询和告警指标。
 
@@ -1775,9 +1917,14 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
   与 Pipeline Binding。
 - AK/SK 只以 AES-256-GCM 密文落库，不存在于 Pipeline JSON、Kafka、日志或运行审计中。
 - 可分页列举、Head、流式读取和下载 TOS 对象。
-- Plugin 可在 TOS 当前 Prefix 中准确选择按 LastModified 排序的最近 10 个制品之一。
-- Plugin 可输入或选择规范化的 `tos://bucket/key`，并把对象版本、ETag、大小和校验和
-  锁定为不可变执行快照。
+- Job 配置只保存规范化的 `tos://bucket/prefix/` 制品范围，不包含任何具体 Object
+  Key、版本、ETag、大小或校验和。
+- 用户手动执行时，每个 Volcano 部署 Job 可在自身 TOS Prefix 中准确选择按
+  LastModified 排序的最近 10 个制品之一。
+- 后端通过 Head Object 把选中对象的版本、ETag、大小和校验和锁定为归属 Pipeline
+  Build 的不可变执行快照；客户端不能提交自己的快照字段。
+- 包含 `MANUAL_AT_RUN` Job 的 Pipeline 只能在显式制品选择后手动启动；自动触发不会
+  隐式选择最新制品。
 - 下载支持对象版本锁定、大小限制、断点续传和完整性校验。
 - 用户可提供 Bash 部署指令；每个版本固化为不可变 Command Revision，运行期只通过
   `InvokeCommand` 执行，审计能定位到 Script Hash 和 Command ID。
@@ -1789,7 +1936,8 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - 无公网 IP 的 ECS 可按 Region + Instance ID 发现和部署，并在执行前验证实例与 Agent。
 - 部署具有应用级锁、路径/归档安全检查、用户指令超时、健康检查和可选用户回滚指令；
   无法证明回滚成功时进入人工介入状态。
-- Invocation 和每次 Pipeline Retry 都有独立、可恢复的持久化审计。
+- Invocation 和每次 Pipeline Retry 都有独立、可恢复的持久化审计；Retry 始终复用
+  原 Build 制品快照，更换制品必须创建新的手动执行。
 - Firefly 或 Kafka 重启不造成任务丢失或重复部署。
 - IAM 权限只覆盖指定 TOS Prefix、Command 和必要的只读/查询 API。
 - 单元、集成、脚本安全、Staging 合同测试全部通过，`mvn clean verify` 成功。
