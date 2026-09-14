@@ -1,7 +1,7 @@
 # Firefly Volcano 模块技术设计
 
 > 状态：设计评审修订，待实现与 Staging 合同验证
-> 版本：v1.6
+> 版本：v1.7
 > 日期：2026-09-15
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
@@ -442,10 +442,17 @@ AK、SK、Session Token、Authorization Header、预签名 URL 或完整云助�
 
 ## 6. 凭据和连接管理
 
-### 6.0 DDL 与缺省值约定
+### 6.0 全仓库 NOT NULL 规范与缺省值约定
 
-本模块按本次评审要求统一使用 `NOT NULL`，这是 Volcano 新表的设计约定，不声称现有
-全仓库都禁止 NULL，也不把 MySQL 可空唯一索引误判为只能存一条未派发记录。
+`NOT NULL` 是 Firefly 全仓库强制规范，不仅适用于 Volcano 模块或本 PR 的新增表。
+所有模块维护的数据库列均须显式声明 `NOT NULL`，不得持久化 SQL NULL；适用范围包括
+建库基线、后续 DDL/迁移、测试建库脚本和技术文档中的表结构。新增及修改字段都必须
+满足该规范，缺失值按业务状态采用明确的哨兵、缺省值或独立关联模型。
+
+仓库现有可空字段属于尚未整改的历史违规，不构成规范例外，也不能据此把要求缩小为
+“只约束 Volcano 新表”。本文落实规范和整改设计；本次文档修订不表示实际全库迁移已完成。
+以下是该全仓库规范在 Volcano 字段上的具体映射，其他模块须按自身业务语义制定映射，
+不能对所有字段机械填同一个值：
 
 | 字段/场景 | 未产生值时的持久化表示 | 读取和状态判断 |
 | --- | --- | --- |
@@ -457,9 +464,14 @@ AK、SK、Session Token、Authorization Header、预签名 URL 或完整云助�
 | 云端 Command / Invocation 尚未创建 | 每行唯一 `pending-<operation_id>` / `pending-<attempt_public_id>` | CAS 补写真实 ID；禁止空串占用唯一索引 |
 
 不对缺失的真实业务事实编造时间或退出码。API 层将哨兵映射为明确的可选字段/未发生状态，
-不向用户显示 `pending-*` 或假日期；JSON 可选字段仍可为 null，SQL 列不可为 NULL。
+不向用户显示 `pending-*` 或假日期；接口中的空缺值必须在持久化前按契约处理，不能直接
+写入数据库。这里的 NULL 禁令针对数据库列和持久化数据，不是对代码中关键字的文本替换。
 所有时间按 UTC 保存。增加 CHECK/应用校验约束非法哨兵与状态组合；迁移旧值时按此表
 逐字段转换，不使用一次全列替换。
+
+唯一键必须单独设计未绑定状态：`pending-*` 字符串每行唯一；数字型唯一字段不能统一
+回填 `0` 或 `-1`，否则多条未绑定记录会冲突。应选用经审核的每行唯一占位或重构关联
+模型/约束，并保留真实关联的唯一性；不能为通过 NOT NULL 校验而删除必要的唯一约束。
 
 ### 6.1 Connection 与 Pipeline Binding 模型
 
@@ -2389,7 +2401,9 @@ firefly_volcano_rollback_total{result}
 `VolcanoEcsCommandClient`：
 
 - Connection 加密落库、解密、轮换和错误 Key Version。
-- 执行全部新表 DDL，检查所有列 NOT NULL；验证 1970/9999/0/-1 哨兵的读写语义与 API
+- 按 17.1 增加全仓库 Schema 门禁：全量建库和历史升级后的全部业务表均无可空列，
+  不能只检查 Volcano 新表；覆盖 DAO 空值条件、插入/更新缺省值和并发唯一性回归。
+- 执行本文全部新表 DDL，检查所有列 NOT NULL；验证 1970/9999/0/-1 哨兵的读写语义与 API
   映射。并发创建多条 PROVISIONING Revision/Attempt 不发生占位唯一键冲突。
 - `pending-*` 向真实 ID 的 CAS、重复/冲突响应、结果先到/响应后到；恢复器与 GC 不把
   占位 ID 发给云 API，操作 ID 可用于唯一恢复。
@@ -2507,9 +2521,48 @@ Docker/Testcontainers 的完整 `verify` 是后端实现合并前的必要结果
 
 ## 17. 数据迁移与兼容
 
-现有明文表不能直接继续使用。迁移采用三阶段：
+### 17.1 全仓库 NULL 存量清查与整改
 
-### 阶段 A：新增能力
+全仓库禁止可空列和 SQL NULL 数据。必须同时治理现有模块，不能仅通过本文 8 张设计表
+的 NOT NULL 检查就宣称仓库合规。PR 当前源码基线中的已知待整改范围包括：
+
+| 表/来源 | 已知可空字段与约束风险 |
+| --- | --- |
+| `github_trigger` | delivery_id、pipeline_id、pipeline_build_id、github_repository_id、event_type、action、source_branch、target_branch、head_sha；pipeline_build_id 有唯一约束 |
+| `github_oauth_state` | consumed_at；DAO 用空值判断 OAuth State 是否已消费 |
+| `github_repository_subscription` | connection_id、webhook_id；webhook_id 有唯一约束，DAO 用空值判断未注册状态 |
+| `github_webhook_delivery` | action、processing_started_at、next_retry_at、processing_finished_at；重试调度依赖空值语义 |
+| `github_delivery_pipeline` | pipeline_build_id；需区分未创建 Build 与已绑定 Build |
+| `v2_github_oauth.sql` | 包含上述可空定义，且新增 github_trigger.created_at 时允许 NULL，不能只检查 v1 建库结果 |
+
+清查从 `firefly-app/src/main/resources/v1.sql`、`v2_github_oauth.sql` 开始，覆盖全仓库
+SQL、实体映射、DAO、测试夹具、生成 DDL 与文档示例；上述清单是已知问题，不是范围白名单。
+实施流程：
+
+1. 输出按表/字段的清单、现有 NULL 数量、读写路径和业务状态；为每列确定缺省值、
+   哨兵或关联模型，尤其审查唯一键、时间排序、到期判断和未绑定状态。
+2. 同步修改实体/DTO 到持久化层的映射以及 INSERT/UPDATE 默认行为，阻止新 NULL 写入；
+   更新 DAO 中的空值条件。例如 OAuth `consumedAt is null`、Webhook 未注册判断和
+   `nextRetryAt is null` 必须与新的状态/哨兵契约一致，不能只修改列约束。
+3. 为存量数据提供可审计、有备份和恢复方案的回填及约束迁移，先核验值和唯一性，再
+   收紧 NOT NULL；验证与旧应用实例的兼容顺序，必要时暂停写入，不能在生产直接全列替换。
+   已执行并登记校验和的历史迁移不得盲目原地改写，升级环境使用前向修复迁移；历史中的
+   NULL 定义记录为遗留违规，不能用于豁免最终 Schema 或继续新增可空列。
+4. 更新受维护的全量建库基线、实体映射、测试脚本和文档，使新安装直接满足规范；
+   对仍使用历史迁移链的安装路径，必须执行到修复版本后才允许启动业务。
+5. CI 同时检查受维护 DDL 的显式 NOT NULL、ORM 生成结果，以及全新安装/历史升级后
+   全部业务表的实际列元数据，要求可空列和存量 NULL 数量都为 0；新增可空定义、回填
+   遗漏或唯一键冲突必须失败，不能只搜索文本或只验证本文设计表。
+
+全库整改实现需完成 OAuth 单次消费、Webhook 注册/重试、Pipeline 关联和消息状态机
+回归测试。整改尚未完成时应明确报告违规清单，不把“规范已确定”写成“仓库已全部达标”。
+本 PR 只更新设计要求、迁移方案和验收标准，不修改现有 SQL/Java 或执行真实数据库迁移。
+
+### 17.2 Volcano 凭据迁移与兼容
+
+现有明文表不能直接继续使用。以下三阶段与 17.1 的全库整改协调执行：
+
+#### 阶段 A：新增能力
 
 - 新建 `firefly-volcano` 模块和上述新表。
 - 新代码只写加密的 `volcano_connection`。
@@ -2519,7 +2572,7 @@ Docker/Testcontainers 的完整 `verify` 是后端实现合并前的必要结果
   NOT NULL/唯一索引迁移；未知历史云资源需人工核对，不伪造真实 ID。新结果 Inbox 独立
   建表，不原地改变四张业务 Inbox 的载荷语义。
 
-### 阶段 B：凭据迁移
+#### 阶段 B：凭据迁移
 
 - 提供一次性、可审计的应用迁移任务，读取 `volcano_engine` / `volcano_config` 中的
   明文 AK/SK，加密写入 Connection。
@@ -2529,7 +2582,7 @@ Docker/Testcontainers 的完整 `verify` 是后端实现合并前的必要结果
 
 SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复制到新表。
 
-### 阶段 C：删除遗留传播
+#### 阶段 C：删除遗留传播
 
 - 从 `VolcanoMessageEntity`、`VolcanoTriggerDto`、`VolcanoTriggerEntity` 删除 AK/SK。
 - 删除 `volcano_trigger.idx_ak`。
@@ -2543,6 +2596,8 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 
 ### Milestone 1：基础模块与安全凭据
 
+- 按 17.1 完成全仓库 NULL 清查、字段语义和修复计划；整改及全库 Schema 门禁是发布
+  验收要求，不因为本模块新表合规而豁免已有违规字段。
 - 创建 `firefly-volcano` Maven 模块和自动装配。
 - 实现三种凭据模式、Pipeline Binding、AES-GCM、STS Provider、Endpoint 校验和错误模型。
 - 引入 TOS/ECS SDK并通过 Java 25 构建。
@@ -2634,7 +2689,9 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
   一次 Cloud Assistant 对账，无法证明业务终态则进入 `RESULT_UNKNOWN`。
 - 专用结果 Inbox 正确拆分 events[]、提交后 ACK；ACK 后崩溃可人工恢复且不会重复 Invoke。
 - 无效对象/读取失败/崩溃接管最终有界进入未知状态并只推进一次失败，不无限 FAILURE/对账。
-- DDL 全列 NOT NULL，缺省值语义明确，占位云 ID 唯一且不会误传云 API；Once 不提供停止承诺。
+- 全仓库全部业务表的列及持久化数据遵守 NOT NULL 规范；已有可空字段完成整改，全新
+  安装与升级路径通过全库 Schema/数据门禁，不能只以 Volcano 新表合规作为验收结果。
+- 缺省值语义明确，占位云 ID 唯一且不会误传云 API；Once 不提供停止承诺。
 - IAM 分离制品访问、平台结果存储和 Bucket 通知身份，只覆盖指定 TOS Prefix、Command
   和必要的只读/异常对账 API；ECS 不持有 TOS/Kafka 长期凭据。
 - 单元、集成、脚本安全、Staging 合同测试全部通过，`mvn clean verify` 成功。
@@ -2664,11 +2721,11 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 SDK 版本和 API 参数在实施时必须再次以 Maven Central、官方仓库和 API Explorer 为准；
 本文的架构边界、安全规则、数据状态机和验收标准不依赖某个生成 SDK 的具体方法名。
 
-## 21. PR #50 评审闭环（v1.6）
+## 21. PR #50 评审闭环（v1.7）
 
 | 评论 | 设计修订 | 对应章节 |
 | --- | --- | --- |
-| 1. NULL 与派发前云 ID | Volcano 新表统一 NOT NULL，明确哨兵、唯一 pending ID、操作 ID 和 CAS/GC 边界；不声称现有全库禁 NULL | 6.0、8.3、9.1～9.2 |
+| 1. NULL 与派发前云 ID | 全仓库强制 NOT NULL；现有可空字段是待整改违规，不是例外；明确哨兵、唯一 pending ID、CAS/GC、全库迁移与 CI 门禁 | 6.0、8.3、9.1～9.2、17.1 |
 | 2. Inbox 不可原样复用 | 新增结果 Inbox、events[] 子项归档、源位置/业务版本去重、category 和人工恢复 | 8.6.4、9.2.1、10、11.5 |
 | 3. Bootstrap 秘密边界 | 明确可信管理员模型，env -i 非沙箱，Token 是 Attempt 认证而非执行证明 | 2.8、8.6.2、8.8～8.9 |
 | 4. Parameters 回显 | ECS 白名单映射、禁止 SDK 原文日志，Invocation 查询者纳入对应结果可信域 | 5.3、13、14.2 |
