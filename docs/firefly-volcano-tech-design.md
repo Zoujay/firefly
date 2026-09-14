@@ -1,8 +1,8 @@
 # Firefly Volcano 模块技术设计
 
-> 状态：Implementation Ready  
-> 版本：v1.5
-> 日期：2026-09-01
+> 状态：设计评审修订，待实现与 Staging 合同验证
+> 版本：v1.6
+> 日期：2026-09-15
 > 目标代码库：Firefly（Java 25、Spring Boot 3.5、Maven 多模块）
 
 ## 1. 背景与目标
@@ -33,7 +33,7 @@
   共享该身份。
 - 凭据模式：`STATIC_AK_SK`、`STS_SESSION` 和 `STS_ASSUME_ROLE`。
 - 私有 TOS Bucket。
-- Linux ECS、单实例、systemd 服务。
+- Linux ECS、单实例；服务管理方式由管理员脚本决定。
 - 制品处理类型：`FILE`、`TAR_GZ`、`ZIP`；`FILE` 覆盖 JAR 和其他原始二进制。
 - TOS 对象读取、下载和单对象部署。
 - 用户可为 Plugin 提供部署指令；Firefly 为每个脚本版本创建不可变的云助手自定义命令，
@@ -48,7 +48,7 @@
   后再执行用户脚本。
 - 可信 Bootstrap 将部署终态作为 JSON 结果对象上传至平台专用 TOS Bucket，TOS
   `ObjectCreated` 事件通过 Kafka 驱动 Firefly 状态机，正常执行路径不轮询云助手。
-- 部署超时、重试、状态查询、停止执行、健康检查和可选用户回滚指令。
+- 部署超时、重试、状态查询、健康检查和可选用户回滚指令；不承诺停止已派发的 Once 命令。
 
 ### 1.2 不在 MVP 范围
 
@@ -59,6 +59,7 @@
 - 用户制品 Bucket 的上传、删除、覆盖对象；平台 Result Store 的内部结果上传除外。
 - Firefly User/Tenant/RBAC 模型；管理 API 仍由部署层管理员认证保护。
 - 把 SSH 私钥或长期 AK/SK 下发到 ECS。
+- 不可信脚本沙箱、通过 `StopInvocation` 中断 Once 部署、由超时自动撤销已发生的业务变更。
 
 ## 2. 核心设计决策
 
@@ -146,8 +147,9 @@ VPC 中重复。无公网 IP 的实例仍必须满足两个网络条件：云助
 ### 2.8 下载与用户部署脚本分层
 
 默认使用 `MANAGED_DOWNLOAD`：可信 Bootstrap 负责预签名 URL 下载、大小/SHA-256 校验、
-安全解压和工作目录准备，随后才执行用户的 `deployScript`。用户脚本只接收本地路径环境
-变量，不接触 AK/SK 或预签名 URL。这是生产推荐模式。
+安全解压和工作目录准备，随后才执行用户的 `deployScript`。环境变量契约只主动传入本地
+路径，不主动导出预签名 URL；这减少意外泄露，但不能隔离同 UID 脚本对 URL/Token 的访问。
+两种模式均要求脚本作者和目标主机管理员完全可信，具体信任边界见 8.9。
 
 确实需要自定义下载工具或完整安装流程时，可选择 `CUSTOM_FULL_SCRIPT`。该模式把短期
 预签名 URL 作为环境变量提供给脚本，由脚本自行下载、校验、解压和部署。Firefly 只能
@@ -193,7 +195,8 @@ flowchart LR
     AGENT --> HOST["Release Directory + User Deployment Script"]
     AGENT -->|PUT 结果 JSON| RESULT_TOS["Platform Result TOS"]
     RESULT_TOS -->|ObjectCreated| RESULT_KAFKA["Volcano Result Kafka Topic"]
-    RESULT_KAFKA --> CONSUMER["Deployment Result Consumer"]
+    RESULT_KAFKA --> INBOX["Result Event Inbox / commit then ACK"]
+    INBOX --> CONSUMER["Deployment Result Processor"]
     CONSUMER --> STATE["Attempt State Service"]
     STATE --> OUTBOX["MySQL Outbox"]
     OUTBOX --> PLUGIN_KAFKA["Plugin Topic"]
@@ -210,7 +213,7 @@ flowchart LR
 | `firefly-app` Object | 列表、元数据、流式读取和本地下载编排 | 将整个对象读入 `byte[]` |
 | `firefly-app` Deployment | 锁定制品、版本化用户脚本、调用云助手、状态机和恢复 | 运行未持久化、未审计的临时命令；周期查询云助手状态 |
 | Platform Result Store | 签发固定 Key PUT URL，读取并校验结果对象 | 使用 Pipeline Connection 身份；接受任意 Bucket/Key |
-| Deployment Result Consumer | 消费 TOS 事件、验证信封、CAS 更新终态和写 Outbox | 信任 Kafka 事件体中的状态；调用云助手查询 |
+| Result Event Inbox / Processor | 拆分通知、先持久化再 ACK、验证信封、CAS 更新终态和写 Outbox | 原样调用业务消息解析器；信任事件体中的状态；查询云助手 |
 | Deadline Reconciler | 对逾期 Attempt 直查结果 Key，并做一次云端异常对账 | 对运行中 Attempt 周期轮询；自动重发未知 Invoke |
 | ECS Command Revision | 下载/校验/准备制品，执行固定版本的用户部署和回滚指令 | 获取长期云凭据；运行其他脚本版本 |
 
@@ -397,19 +400,28 @@ public interface VolcanoEcsCommandClient {
     InvocationResult describeInvocationResult(
         DescribeInvocationResultCommand command);
 
-    StopInvocationResult stopInvocation(StopInvocationCommand command);
 }
 ```
 
 `CreateCommand` 只在 Plugin 配置发布时调用，输入包含已验证的完整 Bash、参数定义、
-`runAsUser`、工作目录、超时和 Firefly Tag；命令正文编码前不得超过火山引擎当前限制
-16 KiB。`InvokeCommand` 只包含已持久化 Command ID、Instance ID、固定参数映射、超时
+`runAsUser`、工作目录、超时和 Firefly Tag；创建时校验完整正文，派发时再次按 8.5.1
+校验正文与实际参数的综合 Base64 字节预算，不能只检查编码前正文为 16 KiB。
+`InvokeCommand` 只包含已持久化 Command ID、Instance ID、固定参数映射、超时
 和 Deployment ID，不提供命令正文。`DeleteCommand` 只能由引用计数为零且没有活动
 Attempt 的垃圾回收任务调用。
 
 `describeInvocation*` 不属于正常部署状态推进链路，只允许 Deadline Reconciler 在
 结果超时或 `DISPATCH_UNKNOWN` 时单次调用。代码层将其放在独立的
 `VolcanoDeploymentReconciliationService`，避免 Result Consumer 误用为定时轮询。
+
+`DescribeInvocations` 返回结构包含执行时传入的 `Parameters`。ECS Adapter 使用字段白名单
+映射 `InvocationStatus` / `InvocationResult`，显式丢弃 `Parameters`；禁止 Vendor 响应对象
+进入数据库、日志、异常或 HTTP 响应。SDK HTTP wire/debug 日志同样关闭，不能依赖 DTO
+脱敏补救此前的日志泄露。拥有对应 Invocation 查询权限的身份仍能绕过 Firefly 直接读回
+参数，必须纳入该 Attempt 的结果可信域，见 8.9 和 13。
+
+MVP 不暴露 `stopInvocation` 方法。官方 `StopInvocation` 使用限制针对定时/周期任务，
+且已开始的命令仍会继续；不得把它当作 Once 命令的 kill API，见 9.4.1。
 
 ### 5.4 SDK 错误转换
 
@@ -430,6 +442,25 @@ AK、SK、Session Token、Authorization Header、预签名 URL 或完整云助�
 
 ## 6. 凭据和连接管理
 
+### 6.0 DDL 与缺省值约定
+
+本模块按本次评审要求统一使用 `NOT NULL`，这是 Volcano 新表的设计约定，不声称现有
+全仓库都禁止 NULL，也不把 MySQL 可空唯一索引误判为只能存一条未派发记录。
+
+| 字段/场景 | 未产生值时的持久化表示 | 读取和状态判断 |
+| --- | --- | --- |
+| 未发生的校验、批准、执行、接收、对账时间和未占用 Lease | `1970-01-01 00:00:00.000000` | 按状态判断，不把哨兵展示为真实事件时间 |
+| 静态 AK/SK、AssumeRole 源 AK/SK 的 Connection 过期时间 | `9999-12-31 23:59:59.999999` | 仅表示源凭据无已知到期日，不代表不可撤销 |
+| `STS_SESSION.credential_expires_at` | 必填真实到期日，无有效凭据则禁止创建/派发 | AssumeRole 缓存的临时凭据另用实际 expiry 校验 |
+| `current_attempt_id` 尚未创建 | `0` | 正常主键从 1 开始；创建 Attempt 与绑定正整数 ID 同事务 |
+| `exit_code` 尚未知 | `-1` | 不能用 `0` 占位，更不能由默认值推断成功 |
+| 云端 Command / Invocation 尚未创建 | 每行唯一 `pending-<operation_id>` / `pending-<attempt_public_id>` | CAS 补写真实 ID；禁止空串占用唯一索引 |
+
+不对缺失的真实业务事实编造时间或退出码。API 层将哨兵映射为明确的可选字段/未发生状态，
+不向用户显示 `pending-*` 或假日期；JSON 可选字段仍可为 null，SQL 列不可为 NULL。
+所有时间按 UTC 保存。增加 CHECK/应用校验约束非法哨兵与状态组合；迁移旧值时按此表
+逐字段转换，不使用一次全列替换。
+
 ### 6.1 Connection 与 Pipeline Binding 模型
 
 一个 Connection 表示一组火山引擎身份。创建 Pipeline 时可以创建新 Connection，也可
@@ -446,12 +477,12 @@ CREATE TABLE `firefly`.`volcano_connection`
     `credential_ciphertext` TEXT NOT NULL,
     `credential_nonce`      VARBINARY(32) NOT NULL,
     `encryption_key_version` VARCHAR(64) NOT NULL,
-    `credential_expires_at` DATETIME(6) NULL,
+    `credential_expires_at` DATETIME(6) NOT NULL,
     `default_region`        VARCHAR(64) NOT NULL,
     `tos_endpoint`          VARCHAR(512) NOT NULL DEFAULT '',
     `ecs_endpoint`          VARCHAR(512) NOT NULL DEFAULT '',
     `status`                VARCHAR(32) NOT NULL,
-    `last_validated_at`     DATETIME(6) NULL,
+    `last_validated_at`     DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `last_error`            VARCHAR(2048) NOT NULL DEFAULT '',
     `created_at`            DATETIME(6) NOT NULL,
     `updated_at`            DATETIME(6) NOT NULL,
@@ -703,11 +734,14 @@ SHA-256，CRC64 只作为额外的传输一致性校验。
 - 实例与 TOS Bucket 默认要求同 Region；跨 Region 方案需显式开启并接受公网、费用和
   带宽风险。
 - ECS 能访问 TOS Endpoint；优先使用 VPC 内网接入或 VPC Endpoint。
+- 部署 Region 在平台批准的事件通知能力清单内，且对应 Result Bucket、通知规则、Kafka
+  消费端和权限已通过 8.6.1 的就绪检查；不满足时拒绝新部署，不能退化为常态 Deadline 对账。
 - Connection 的配置发布身份有权创建 Firefly 管理的云助手 Command，运行身份有权执行
   该 Command；禁止 `RunCommand` 和原地 `ModifyCommand`。
 - 目标机存在 allowlist 中的 `runAsUser`，且该用户具备用户部署指令实际需要的最小权限；
   是否使用 systemd、容器或自定义进程管理器由部署指令决定。
-- 目标机安装 `curl`、`sha256sum`、`flock`，按包类型安装 `tar` 或 `unzip`。
+- 目标机安装 `curl`、`sha256sum`、`flock` 和支持进程组超时控制的 GNU `timeout`；按包类型
+  安装 `tar` 或 `unzip`。主机时钟必须同步，启动前校验 12.1 的绝对最晚启动时间。
 
 ### 8.2 无公网 IP 的实例发现与选择
 
@@ -731,6 +765,7 @@ GET /api/volcano/pipelines/{pipelineId}/ecs/instances
 - 操作系统为 MVP 支持的 Linux。
 - 云助手 Agent 已安装且在线。
 - Instance ID、Project、VPC/Tag 满足 Connection 的 IAM 和管理员 allowlist。
+- 平台对应 Region 的结果事件通道为 `READY`，否则返回不可部署原因。
 
 选择框不能只展示 Instance ID。推荐显示：
 
@@ -884,10 +919,11 @@ Prefix 解析；拒绝 UserInfo、Port、Fragment、Query 和重复百分号解�
   `VERSIONED_DIRECTORY` 允许包含 `FILE`，但必须提供安全的 `outputFileName`，不能包含
   `/`、`..` 或控制字符。
 - `runAsUser`：不能由普通 Plugin 任意填写，必须来自管理员 allowlist；默认禁止 `root`。
-- `deployScript` 必填，UTF-8、无 NUL，和可信 Bootstrap 合并后的命令正文不得超过
-  16 KiB；`rollbackScript` 可选，并应用相同校验。
+- `deployScript` 必填，UTF-8、无 NUL；`rollbackScript` 可选。脚本、Bootstrap 和参数的
+  编码总预算必须符合 8.5.1；仅满足用户脚本局部大小限制不代表能够成功派发。
 - `healthCheck.url`：MVP 只允许 `http://127.0.0.1` 或 `http://localhost`，禁止 SSRF。
-- 超时范围 30～86400 秒，且预签名 URL TTL 大于命令超时和调度余量。
+- `commandTimeoutSeconds` 是业务步骤总预算，不是云助手硬超时。默认有效范围为
+  30～3120 秒；按 12.1 的上传、排队、交付和凭据余量动态收敛，UI 显示实际上限。
 - `retainReleases` 范围 2～20。
 
 编辑器交互顺序固定为：
@@ -901,7 +937,7 @@ Prefix 解析；拒绝 UserInfo、Port、Fragment、Query 和重复百分号解�
    预览，页面明确区分临时下载路径与用户脚本看到的最终路径。
 6. 填写部署指令、可选回滚指令、执行用户、超时和健康检查。
 7. 页面显示“该指令将在目标实例执行”的高风险确认，同时展示生成的 Script SHA-256。
-8. 保存前后端校验 Prefix 访问权限、Describe Instance 和 Agent，不要求用户选择制品。
+8. 保存前后端校验 Prefix、Instance、Agent 和结果事件通道就绪状态，不要求选择制品。
 9. 后端渲染并校验命令，通过 `CreateCommand` 创建不可变 Command Revision；只有云端命令
    和本地配置均保存成功后 Plugin 才进入 `READY`。失败时删除孤儿命令或交给 GC 回收。
 
@@ -911,14 +947,21 @@ MVP 的管理 API 已由部署层管理员认证保护，因此管理员保存�
 
 数据库和 ECS OpenAPI 不能组成一个事务，Command 发布采用可恢复 Saga：
 
-1. 数据库事务写入 `PROVISIONING` Revision，保存渲染 Hash 和唯一操作 ID。
+1. 数据库事务写入 `PROVISIONING` Revision，保存渲染 Hash 和唯一
+   `provisioning_operation_id`，`command_id=pending-<operation_id>`。
 2. 事务外调用 `CreateCommand`；命令名限制为 32 字符内的
    `firefly-<hash12>-<suffix>`，Tag 保存完整操作 ID 和 Hash。
-3. 第二个数据库事务写入 Command ID、把 Revision 改为 `READY` 并绑定 Plugin Config。
+3. 第二个数据库事务按 Revision ID、操作 ID、`PROVISIONING` 和原 `pending-*` 做 CAS，
+   写入真实 `cmd-*`、把 Revision 改为 `READY` 并绑定 Plugin Config。
 4. 请求超时或进程崩溃时，恢复器按 Tag + Hash 查询云端命令：唯一匹配则补写，多个匹配
    则告警并禁止发布，没有匹配才允许重试创建。
 5. 只有 `READY` Revision 可以执行；失败 Revision 标记 `ORPHANED`，24 小时后由 GC 在
    确认零引用、零活动 Attempt 且 Tag 匹配后删除。
+
+恢复器按持久化的操作 ID/Tag 查询，而不是把占位 Command ID 发给云 API；GC 同样只对
+已经核实的真实 `cmd-*` 调用 Delete。孤儿记录仍为 `pending-*` 时先核对云端归属，不能
+盲删或直接丢弃尚可能关联云资源的本地记录。重复响应与恢复器竞争时，只接受相同真实
+Command ID，冲突则告警；占位值和操作 ID 不得被其他 Revision 复用。
 
 ### 8.4 手动执行时选择制品
 
@@ -986,6 +1029,9 @@ Artifact Contract/制品索引为自动触发提供显式输入。
 
 ```text
 deployment_id
+execution_attempt
+instance_id
+command_revision_public_id
 artifact_url_b64_chunk_count
 artifact_url_b64_1 ... artifact_url_b64_4
 artifact_sha256
@@ -998,6 +1044,10 @@ destination_relative_path_b64
 destination_layout
 destination_executable
 execution_mode
+command_timeout_seconds
+result_upload_reserve_seconds
+start_before_epoch_seconds
+upload_deadline_epoch_seconds
 health_url_b64
 health_timeout_seconds
 retain_releases
@@ -1019,11 +1069,35 @@ Bootstrap 自身禁止 `eval` 和 `set -x`，所有变量引用加双引号。�
 `CUSTOM_FULL_SCRIPT` 才导出短期 URL，并将该 URL 的原文和 Base64 值都加入本次日志
 精确脱敏集合。
 
+#### 8.5.1 正文与参数的综合编码预算
+
+`CreateCommand` 通过不代表之后任意一组 `InvokeCommand.Parameters` 都能执行。官方
+InvokeCommand 限制是原始命令内容与自定义参数在 Base64 编码后的综合长度不超过
+16 KB；不能简化成“编码前正文不超过 16 KiB”或仅校验替换后的脚本。
+
+`VolcanoCommandSizeValidator` 在配置保存和派发前分别执行：
+
+1. 保存：固定 Bootstrap 版本，渲染完整正文（包含部署/回滚脚本、包装和参数占位符），
+   校验 CreateCommand 限制并记录原始 UTF-8 字节数、编码字节数及 Hash。用户脚本与回滚
+   脚本合计的局部上限默认 4096 字节，它只是提前拒绝阈值，不是可执行容量保证。
+2. 派发：确认重新渲染的正文 Hash 与 Revision 相同；生成两套实际预签名 URL 后再计算
+   最终 Parameters，包含 Token、Deadline、所有默认值和空分片。禁止只按 URL 平均长度
+   估算；参数最多 60 个，Key 最长 64 字符，String 值按已验证的 1000 字符上限校验。
+3. Firefly 先采用保守本地预算：`B64(originalCommandUtf8).bytes +
+   B64(compactParametersJsonUtf8).bytes <= 16384`，JSON 包含完整键名、转义和默认值；
+   同时独立检查 `B64(effectiveCommandUtf8).bytes <= 16384`，覆盖重复占位符扩张。
+   Base64 不换行，`B64` 长度为 `4 * ceil(utf8Bytes / 3)`，不能用 Java 字符数代替字节数。
+4. 上述是 Firefly 的保守保护线，不宣称等同于服务端序列化算法。启用部署前必须以
+   固定 SDK/API 的 Staging 合同测试确认综合计数口径、KB 单位和边界；若云端更严格，
+   收紧并版本化预算配置。未通过合同测试时不得将通道标记 READY。
+5. 任一局部或综合预算超限均在 Invoke 前以 `ECS_COMMAND_PARAMETERS_TOO_LARGE` 拒绝，
+   不截断脚本/URL，不自动改成其他执行模式；校验响应只返回字节数和字段名，不回显秘密。
+
 ### 8.6 TOS 结果对象与 Kafka 事件协议
 
 #### 8.6.1 平台结果存储
 
-结果对象不写入用户制品 Bucket。平台管理员为每个部署 Region 预置一个私有、平台自有的
+结果对象不写入用户制品 Bucket。平台管理员仅为已获准部署的 Region 预置私有、平台自有的
 Result Bucket，例如 `firefly-control-cn-beijing`，并对固定 Prefix 配置一条而不是每次部署
 动态创建 TOS 事件通知规则：
 
@@ -1034,9 +1108,11 @@ event  = tos:ObjectCreated:*
 target = Volcengine Kafka topic firefly-volcano-result-v1
 ```
 
-TOS 原生 Kafka Destination 需要火山引擎消息队列 Kafka 实例、Topic、User 和绑定
-`KafkaAccessForTOS` 的 IAM Role。该 Kafka 可与 Firefly 已有业务 Kafka 是不同集群；
-`firefly-app` 为结果 Topic 配置独立 Consumer Factory。如平台不使用火山引擎 Kafka，则必须
+TOS 原生 Kafka Destination 需要火山引擎消息队列 Kafka 实例、Topic、PLAIN 用户和授权
+TOS 访问 Kafka 的 IAM Role；当前控制台授权会创建 `TOSNotiKafkaRole`。该 Kafka 可与
+Firefly 已有业务 Kafka 是不同集群；
+`firefly-app` 为结果 Topic 配置独立 Consumer Factory 和独立的消费 SASL 身份，注入方式见 12。
+如平台不使用火山引擎 Kafka，则必须
 使用 TOS -> VeFaaS -> Firefly Kafka 的受控转发适配器，不得让 ECS 直接持有 Kafka 长期凭据。
 
 结果 Key 由 Firefly 生成，不接受用户输入：
@@ -1051,10 +1127,47 @@ Result Bucket 开启服务端加密、版本控制和 7～30 天生命周期清�
 的预签名 PUT URL 并读取结果。这样即使 Pipeline 绑定不同账号，也不需要用户修改
 制品 Bucket 的事件通知配置。
 
+截至 2026-09-15，官方事件通知概述列出的支持地域为华北 2（北京）、华南 1（广州）、
+华东 2（上海）、亚太东南（柔佛）。本设计中国区 MVP 默认只允许前三个 Region；柔佛
+不是默认开放范围。能力清单必须随官方能力变化经管理员验证后更新，不能推断所有 TOS
+Region 都支持事件通知，VeFaaS 转发也不能绕过源 Region 的事件能力限制。
+
+`VolcanoResultChannelReadinessService` 在配置保存与每次 Invoke 前检查：
+
+- Region 在平台 allowlist，Result Bucket 映射存在且地域正确，ECS 可达其 Endpoint。
+- 读取通知规则的有效配置，核对固定 Prefix/Suffix、ObjectCreated、目标集群/Topic、
+  SASL/服务角色授权、启用状态；规则需启用/保持有效，不能只确认 Bucket 存在。
+- 官方说明规则创建后约 5 分钟生效。Provisioner 必须等待生效并通过一条受控测试部署
+  的 PUT -> Kafka -> Consumer 全链路验收，记录 `configurationHash`、`verifiedAt` 和
+  验收版本。变更规则/Topic/凭据后旧证据失效，不能仅凭等待时间判定成功。
+- 应用的独立 Consumer 已分配分区、鉴权成功、无阻断告警；最近只读健康检查需在配置的
+  5 分钟新鲜度内。全链路验收证据绑定配置版本，不要求每次 Invoke 写探测对象。
+  GetBucketNotification 等检查使用独立只读预检身份，不给运行身份增加修改权限。
+
+任一检查失败返回 `DEPLOYMENT_RESULT_CHANNEL_NOT_READY`；不支持的 Region 返回
+`DEPLOYMENT_RESULT_REGION_UNSUPPORTED`。只读检查不能保证未来不发生故障，运行中发生的
+事件丢失仍走 Deadline 异常补偿；不得因通道未配置而主动退化为对账部署。
+
 #### 8.6.2 结果信封
 
-Firefly 在分发前生成 32 字节随机 `resultToken`，数据库只保存 SHA-256。URL 和 Token
-只传给可信 Bootstrap，不导出给用户脚本、不写 stdout/stderr，也不放入 Kafka 事件。
+Firefly 在分发前用 CSPRNG 生成 32 字节随机值，转为 64 字符小写 hex `resultToken`。
+唯一哈希口径为 `SHA256(US_ASCII(resultToken))`，输出同样为小写 hex；不是对原始随机
+32 字节求哈希。服务端生成端和消费端共享测试向量，Bootstrap 原样回传 Token，不自行
+重新编码。数据库只保存 Token Hash，拒绝大写 hex、空白和非 64 字符输入，再做常量时间比较。
+
+固定测试向量（仅测试，绝不可用于真实部署）：
+
+```text
+resultToken = 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+SHA256(US_ASCII(resultToken)) = 6c86c6aac5fb24bcf5d9939cb7d7d5645ce39418f449e03b262dd4fa14b4b92b
+```
+
+URL 和 Token 通过云助手参数传给 Bootstrap，默认不向用户脚本环境导出、不写日志，
+也不放入 Kafka 事件；这不是对同 UID、主机管理员或 Invocation 查询者的隔离保证。
+Token 只用于对应 Attempt 的结果认证与关联，不是长期凭据或主机执行证明；终态后不再
+授权状态变更。Deadline 对账可验证在上传期限内形成的原结果；Attempt 已结束后只允许
+迟到审计，不能重新推进状态机。另需校验 TOS 对象 LastModified 不晚于上传期限，而非
+只信任信封自报的时间。
 结果对象最大 16 KiB，拒绝未知字段，Schema v1 为：
 
 ```json
@@ -1067,6 +1180,7 @@ Firefly 在分发前生成 32 字节随机 `resultToken`，数据库只保存 SH
   "artifactSha256": "<64 lowercase hex>",
   "commandRevisionPublicId": "vcr_01J...",
   "status": "SUCCESS",
+  "errorCode": "",
   "failedPhase": null,
   "exitCode": 0,
   "rolledBack": false,
@@ -1078,38 +1192,82 @@ Firefly 在分发前生成 32 字节随机 `resultToken`，数据库只保存 SH
 }
 ```
 
-`status` 只允许 `SUCCESS`、`FAILURE`、`ROLLED_BACK`、`CANCELLED` 和
-`MANUAL_INTERVENTION_REQUIRED`。用户可控文本使用 Base64 字段，避免 Bootstrap 用不可靠的
+`status` 只允许 `SUCCESS`、`FAILURE`、`ROLLED_BACK` 和
+`MANUAL_INTERVENTION_REQUIRED`。`errorCode` 只能为空或 14.2 中的受控错误码，不能据此
+跳过状态/Token 校验。用户可控文本使用 Base64 字段，避免 Bootstrap 用不可靠的
 Shell 字符串拼接生成 JSON；Firefly 解码后仍要执行 UTF-8、长度、控制字符和脱敏校验。
 ECS 不知道 `InvokeCommand` 返回的 Invocation ID，因此结果协议不要求 ECS 回传该字段；
-Firefly 通过 Deployment ID + Attempt 唯一定位已持久化的 Invocation ID。
+Firefly 通过 Deployment ID + Attempt 唯一定位已持久化的 Attempt，即使 Invocation ID
+还处于 `pending-*` 也不影响结果关联。Instance ID、Attempt 和 Revision Public ID 由
+受控 Invoke 参数传入；Bootstrap 不从用户输出推断它们。
 
 #### 8.6.3 上传与消费
 
 Bootstrap 使用 `trap` 捕获 `EXIT`、`TERM` 和 `INT`，把最终状态先原子写入本地
 `result.json`，再使用 `curl --request PUT --data-binary @result.json` 上传；上传重试只使用
-同一 Key 和同一内容。成功 PUT 是 Bootstrap 的最后一个外部副作用。上传在 URL 过期前
-仍失败时以专用退出码 `44` 结束，不能把“结果未送达”错误报告为“业务部署失败”。
+同一 Key 和同一内容。成功 PUT 是 Bootstrap 的最后一个外部副作用。上传最多 3 次
+（包含首次），每次连接、传输和退避均受 12.1 的剩余上传预算约束，不能一直重试到 URL
+过期。预算耗尽仍失败时以专用退出码 `44` 结束，不能把“结果未送达”报告为“业务部署失败”。
 `SIGKILL`、内核崩溃和实例断电无法被 Trap，由 Deadline Reconciler 处理。
 
 Result Consumer 将 TOS 通知视为“某 Key 发生变化”的提示，不把事件体当作部署结果。
 处理顺序：
 
-1. 校验 Bucket、Prefix、Suffix 和事件类型，以标准化的 Bucket + Key + Version ID/ETag
-   生成 Inbox 业务 UUID。
-2. 按 `result_object_key` 唯一找到 Attempt；未知 Key 记录安全告警，不推进任何 Pipeline。
+1. 按 8.6.4 拆分 TOS `events[]`，使用专用 Inbox 事务持久化全部子事件/拒绝记录后再
+   ACK；解析失败不能调用现有 `extractMessageUUID`，也不能无记录地吞掉消息。
+2. 异步 Processor 领取 Inbox，校验 Bucket、Prefix、Suffix、事件类型并按完整
+   `result_bucket_name + result_object_key` 唯一找到 Attempt；未知 Key 不推进 Pipeline。
 3. 根据事件中的 Version ID 读取对象，限制 16 KiB，校验 Content Type、JSON Schema
    和对象 SHA-256。事件未提供 Version ID 时，使用 ETag 条件读取。
 4. 对 `resultToken` 计算 SHA-256 并使用常量时间比较，再校验 Deployment ID、Attempt、
    Instance ID、Artifact Hash、Command Revision Public ID 和时间边界。
-5. 以 Attempt + `execution_attempt` + 预期非终态为 CAS 条件，在一个 MySQL 事务中写入
-   结果快照、更新 Plugin Build 并生成 Outbox。相同 Payload Hash 的重复版本或乱序事件
-   幂等 ACK；同一 Attempt 出现不同 Payload Hash 时记录 `DEPLOYMENT_RESULT_CONFLICT` 安全
+5. 以 Attempt + `execution_attempt` + 当前 Build 引用 + 预期非终态为 CAS 条件，在一个
+   MySQL 事务中写入去除 Token 的结果快照、更新 Plugin Build、完成 Inbox 并生成 Outbox。
+   相同 Payload Hash 的重复版本或乱序事件幂等完成；同一 Attempt 出现不同 Payload Hash
+   时记录 `DEPLOYMENT_RESULT_CONFLICT` 安全
    告警，不能用后到对象覆盖已经接受的结果。
+
+CAS 未胜出时读取最新状态：相同已接受结果幂等完成，旧 Attempt 或已结束的未知结果
+仅记迟到审计，不向 Pipeline 再发终态。不能把正常并发竞争当作可无限重试的 FAILURE。
 
 Attempt 及结果 Key/Token Hash 在 `InvokeCommand` 之前提交。因此即使 ECS 很快完成、
 结果事件早于 Invoke HTTP 响应到达，Consumer 也能在 `DISPATCHING` 状态处理它。后到的
-Invocation ID 只允许补写空字段，不能把终态 Attempt 回退到运行态。
+Invocation ID 只允许 CAS 更新本 Attempt 的 `pending-<attempt_public_id>`，不能把终态
+Attempt 回退到运行态。结果 Payload Hash 在内存中对原始对象字节计算；对象原文和 Token
+不得随 Inbox、快照、异常或日志进入数据库。
+
+#### 8.6.4 专用结果 Inbox 与 ACK 契约
+
+现有 `KafkaMessageStore` 只服务 Pipeline/Stage/Job/Plugin 四张领域表，要求消息顶层存在
+`messageUUID`；TOS 的 `events[]` 不满足这个协议。本方案新增 `volcano_result_event_inbox`
+和专用 Store/Processor，不把原始 TOS 通知交给 `plugin_message` 或业务消息反序列化器。
+`MessageCategory` 增加 `VOLCANO_RESULT`，管理恢复路由接入专用适配器；原四类消息处理不变。
+
+- 一个 Kafka Record 可以包含多个事件，按数组下标持久化 `event_index=0..n-1`；在
+  同一事务写完该 Record 的所有子事件才允许 ACK。批量 Listener 必须等本批所有 Record
+  完成归档后再 ACK；数据库失败不 ACK。
+- 合法事件的 `message_uuid` 使用固定、版本化的 UUIDv5 namespace，对
+  `schemaVersion + bucket + exactKey + (VERSION,versionId)/(ETAG,etag)` 的长度前缀 UTF-8
+  编码求值。Key 仅按官方协议解码一次，不按文件路径归一化；无 Version/ETag 则拒绝。
+  持久化完整规范身份并在 UUID 命中后逐字节比较，避免把哈希命中当作身份相等。
+- 同时以 `(source_cluster_id, topic, kafka_partition, kafka_offset, event_index)` 唯一
+  定位投递位置。不同集群 ID 不可复用；同位置冲突必须校验身份。不同 offset 的同一对象
+  版本可以幂等跳过，因为首份 Inbox 已持久化；不要求为每次重复投递新增业务记录。
+- 语法错误、空/超限数组或超限 Kafka Record 使用 `event_index=-1` 写一条 `REJECTED`；
+  某个子事件非法只拒绝该子项，不丢弃合法同胞。拒绝 UUID 使用另一固定 namespace 对
+  源位置求值。保留原文 SHA-256、受限原因和安全字段，不存不受控原文/秘密，随后 ACK。
+- 正常记录 `ARCHIVED -> PROCESSING -> SUCCESS`。领取在独立事务 CAS；对象读取和验证
+  不持有长数据库事务；最终 Inbox SUCCESS、Attempt/Build 和 Outbox 在同一业务事务提交。
+  网络/数据库等可恢复异常写 `FAILURE`；协议/Token/不可变字段错误写 `REJECTED` 并告警。
+- ACK 只证明归档完成。ACK 后崩溃遗留 `ARCHIVED/PROCESSING` 或业务 `FAILURE` 不依靠
+  Kafka 重投或应用重启自动运行；管理员经 11.5 恢复。重复投递不会重跑已拒绝对象版本。
+  Deadline Reconciler 独立保证 Attempt 有界结束，不能把“有 Inbox”写成自动恢复保证。
+- 同一 Inbox 最多处理 3 次（含初次和人工 retry）；第 3 次仍失败或崩溃遗留则转
+  `REJECTED`，保留告警，
+  禁止自动重试和无限 reset。`REJECTED/SUCCESS` 不可重开；新合法对象版本使用新 Inbox，
+  仍须经过 Attempt CAS，不能反转已结束的 Pipeline。
+
+这里保证的是 MySQL 原子状态变更和消息幂等，不是 Kafka/MySQL 严格 exactly-once。
 
 ### 8.7 实例内目录
 
@@ -1158,6 +1316,8 @@ FIREFLY_SHARED_DIR
 1. `set -Eeuo pipefail`、`umask 027`，关闭命令回显。
 2. 解码并校验全部参数，按 `deployRoot + relativePath + layout` 重新计算最终路径，确认它和
    Plugin 保存的规范化预览一致且仍位于允许根目录内；检查现有父目录不存在符号链接。
+   任何下载/发布/用户指令前，检查 `start_before_epoch_seconds` 和剩余上传预算；过晚
+   启动禁止业务副作用，尽力上传 `FAILURE/DEPLOYMENT_START_WINDOW_EXPIRED`，失败则等 Deadline。
 3. 使用 `flock -n` 获取应用级部署锁；冲突返回明确退出码。
 4. 在 `deployRoot/.firefly-staging/<deployment-id>` 创建权限为 `0700` 的独占临时目录；
    相同 Deployment ID 已存在时先核对 Attempt 和内容，禁止复用未知残留目录。
@@ -1172,7 +1332,8 @@ FIREFLY_SHARED_DIR
 8. 把 Command Revision 中固定的 `deployScript` 写入权限为 `0700` 的临时文件，以
    `env -i` 仅注入稳定业务环境变量，并在独立的 `bash --noprofile --norc` 子进程执行；
    `MANAGED_DOWNLOAD` 的 Artifact URL 以及所有模式的 Result URL/Token 保留在未导出的父
-   Bootstrap 变量中。以脚本退出码作为 `USER_DEPLOY` 结果，不使用 `eval` 包装用户正文。
+   Bootstrap 变量中，仅减少意外继承，不是对同 UID 的秘密隔离。以脚本退出码作为
+   `USER_DEPLOY` 结果，不使用 `eval` 包装用户正文。
 9. `CUSTOM_FULL_SCRIPT` 跳过托管下载、准备和发布步骤，向用户脚本提供短期 URL、期望
    大小、SHA-256 和规范化 Destination；
    用户脚本必须自行下载和准备制品，Firefly 在页面和审计中标记 `integrityManaged=false`。
@@ -1184,11 +1345,16 @@ FIREFLY_SHARED_DIR
     Attempt 正在引用的目录不得删除。
 13. 根据受信任步骤计算终态，将用户 stdout/stderr 截断、脱敏并以 Base64 放入结果
     信封，原子写本地 `result.json`；完整输出不得进入 TOS 或 Kafka。
-14. 使用预签名 PUT URL 上传 `result.json`，收到 TOS 2xx 后清除本地结果文件，再以与
+14. 使用 12.1 预留的上传预算 PUT `result.json`，收到 TOS 2xx 后清除本地结果文件，再以与
     业务终态对应的退出码结束。stdout 只输出 Deployment ID 和“result delivered”标记，
     不输出 Token、URL 或完整结果信封。
 
-成功输出示例：
+步骤 2～12 共用一个业务预算，不能每一步重新计时；健康检查、回滚和进程组终止也计算在
+该预算内。父 Bootstrap 用独立 watchdog 监督业务子进程组，提前发送 TERM 并在业务
+预算耗尽前完成有界 KILL；之后才使用上传预算。不能把整个 Bootstrap 包在只覆盖业务
+时长的 `timeout` 中。回滚来不及完成时上报人工介入，不侵占结果上传预算，见 12.1。
+
+成功结果中的安全业务摘要示例（非 stdout 格式）：
 
 ```json
 {"schemaVersion":1,"deploymentId":"dep_...","status":"SUCCESS","destination":"/opt/firefly/apps/order-service/releases/dep_...","rolledBack":false}
@@ -1214,14 +1380,23 @@ FIREFLY_SHARED_DIR
 
 允许用户 Bash 意味着该用户能够以 `runAsUser` 权限在目标实例执行代码。正则校验、Shell
 lint 或关键字黑名单都不能把任意脚本变成安全脚本，因此本设计不宣称对恶意脚本提供
-沙箱。安全边界必须由权限和运行环境保证：
+沙箱。MVP 明确选择“脚本作者、审批者和目标主机管理员完全可信”的模型：
+
+- `env -i`、未导出父变量、`0700` 文件和独立 Bash 子进程不能阻止同 UID 代码通过文件、
+  进程访问或后台进程获取 Token/URL。两种执行模式都不承诺抵御同机恶意脚本伪造结果。
+- Token 用于识别持有本次秘密的结果提交者、阻止不知 Token 的主体伪造对应 Attempt，
+  不是只防传输错误，也不是可信执行证明。持有 Token/有效 PUT URL 的脚本或能查询对应
+  Invocation 参数的身份处于结果可信域内；批准部署必须接受这个边界。
+- 如未来要运行不可信脚本，必须另行设计独立的受保护 supervisor/uploader 身份、文件/
+  进程访问控制及 sudo 边界，保证用户不能读取参数/秘密、修改结果源或冒用上传器。
+  单纯换 UID 或追加一次同 UID 上传步骤不算隔离；不在本 MVP 中假定已实现。
 
 - 只有部署管理员可以创建或修改脚本；每次修改生成新 Revision 和新 Hash。
 - 使用无登录、最小权限的专用 `firefly-deploy` 用户；仅通过受控 `sudoers` 允许必要动作，
   例如重启指定服务，禁止通配符命令和任意 root Shell。
-- 实例上不保存 AK/SK、STS Token；`MANAGED_DOWNLOAD` 也不向用户脚本暴露预签名 URL。
-- `CUSTOM_FULL_SCRIPT` 的作者能够读取并输出短期 URL。精确脱敏只能防止意外打印，不能
-  防止编码、拆分或网络外传，因此该模式只能授予可信管理员并尽量使用无公网出口实例。
+- 实例上不保存 AK/SK、STS Token；`MANAGED_DOWNLOAD` 不主动导出预签名 URL，
+  `CUSTOM_FULL_SCRIPT` 主动提供制品 URL。精确脱敏只能防止意外打印，不能防止编码、
+  拆分或网络外传；两种模式都只能授予可信管理员并尽量使用无公网出口实例。
 - stdout/stderr 属于不可信数据，必须截断、脱敏并作为纯文本展示，不能当 JSON、HTML、
   Shell 或后续 Pipeline 参数再次执行。
 - 脚本执行前展示完整 diff；运行审计固定记录 Revision、Hash、批准人和 Instance ID。
@@ -1245,19 +1420,22 @@ sequenceDiagram
     AT-->>D: version/etag/size/crc64/metadata
     D->>E: DescribeInstance + Agent + Command
     E-->>D: ready
+    D->>D: check result channel + budget + credential expiry
     D->>AT: Presign GET artifact (short TTL)
     AT-->>D: artifact URL
     D->>RT: Presign PUT exact result key (short TTL)
     RT-->>D: result URL
-    D->>D: persist attempt + result key + token hash + deadline
+    D->>D: validate combined bytes; persist attempt + pending ID + key/hash + deadlines
     D->>E: InvokeCommand(commandId, instanceId, safe params)
     E-->>D: invocationId
     D-->>P: DISPATCHED
     A->>AT: GET artifact URL (managed or user script)
-    A->>A: verify/prepare -> deployScript -> health -> rollbackScript if needed
-    A->>RT: PUT signed result envelope
+    A->>A: start gate; bounded business -> deployScript -> health/rollback
+    A->>RT: PUT result envelope within upload reserve
     RT-->>K: ObjectCreated(bucket, key, version/etag)
     K->>C: result event
+    C->>C: archive all events[] in Result Inbox transaction
+    C-->>K: ACK after commit
     C->>RT: GetObject(exact key, version/etag)
     RT-->>C: result envelope
     C->>C: validate schema + token + immutable fields
@@ -1274,7 +1452,8 @@ sequenceDiagram
 
 图中的 Deadline Reconciler 只领取已经超过 `result_deadline_at` 的 Attempt，不按执行中
 状态周期轮询。正常结果对象即使先于 `InvokeCommand` HTTP 响应到达，也能通过 Deployment
-ID 与 execution attempt 完成关联；后到的 Invocation ID 只补空字段，不得覆盖终态。
+ID 与 execution attempt 完成关联；后到的 Invocation ID 只 CAS 更新本 Attempt 的占位值，
+不得覆盖终态。图中省略了非法对象、ACK 后崩溃的手动 Inbox 恢复及 9.4 的有界失败分支。
 
 ## 9. 部署持久化和状态机
 
@@ -1287,6 +1466,7 @@ CREATE TABLE `firefly`.`volcano_command_revision`
     `public_id`                VARCHAR(64) NOT NULL,
     `connection_id`            BIGINT(20) NOT NULL,
     `region`                   VARCHAR(64) NOT NULL,
+    `provisioning_operation_id` VARCHAR(64) NOT NULL,
     `command_id`               VARCHAR(128) NOT NULL,
     `command_schema_version`   INT NOT NULL,
     `execution_mode`           VARCHAR(32) NOT NULL,
@@ -1299,11 +1479,12 @@ CREATE TABLE `firefly`.`volcano_command_revision`
     `status`                   VARCHAR(32) NOT NULL,
     `created_by`               VARCHAR(128) NOT NULL,
     `approved_by`              VARCHAR(128) NOT NULL DEFAULT '',
-    `approved_at`              DATETIME(6) NULL,
+    `approved_at`              DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `created_at`               DATETIME(6) NOT NULL,
     `updated_at`               DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE INDEX `uidx_volcano_command_revision_public` (`public_id`),
+    UNIQUE INDEX `uidx_volcano_command_operation` (`provisioning_operation_id`),
     UNIQUE INDEX `uidx_volcano_command_revision_cloud`
         (`connection_id`, `region`, `command_id`),
     INDEX `idx_volcano_command_revision_hash`
@@ -1394,7 +1575,7 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
     `artifact_selection_id` BIGINT(20) NOT NULL,
     `deploy_status`         VARCHAR(32) NOT NULL,
     `execution_attempt`     INT NOT NULL DEFAULT 0,
-    `current_attempt_id`    BIGINT(20) NULL,
+    `current_attempt_id`    BIGINT(20) NOT NULL DEFAULT 0,
     `created_at`            DATETIME(6) NOT NULL,
     `updated_at`            DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
@@ -1427,12 +1608,12 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
     `deploy_script_sha256`  CHAR(64) NOT NULL,
     `execution_mode`        VARCHAR(32) NOT NULL,
     `integrity_managed`     TINYINT(1) NOT NULL,
-    `invocation_id`         VARCHAR(128) NULL,
+    `invocation_id`         VARCHAR(128) NOT NULL,
     `provider_request_id`   VARCHAR(128) NOT NULL DEFAULT '',
     `destination_layout`    VARCHAR(32) NOT NULL,
     `destination_path`      VARCHAR(1024) NOT NULL,
     `rolled_back`           TINYINT(1) NOT NULL DEFAULT 0,
-    `exit_code`             INT NULL,
+    `exit_code`             INT NOT NULL DEFAULT -1,
     `output_excerpt`        VARCHAR(8192) NOT NULL DEFAULT '',
     `error_code`            VARCHAR(64) NOT NULL DEFAULT '',
     `error_message`         VARCHAR(2048) NOT NULL DEFAULT '',
@@ -1444,14 +1625,22 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
     `result_payload_sha256` CHAR(64) NOT NULL DEFAULT '',
     `result_token_sha256`   CHAR(64) NOT NULL,
     `result_schema_version` INT NOT NULL,
+    `command_timeout_seconds` INT NOT NULL,
+    `result_upload_reserve_seconds` INT NOT NULL,
+    `invocation_timeout_seconds` INT NOT NULL,
+    `dispatch_started_at`   DATETIME(6) NOT NULL,
+    `start_before_at`       DATETIME(6) NOT NULL,
+    `upload_deadline_at`    DATETIME(6) NOT NULL,
     `result_deadline_at`    DATETIME(6) NOT NULL,
-    `result_received_at`    DATETIME(6) NULL,
+    `result_received_at`    DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `reconciliation_status` VARCHAR(32) NOT NULL DEFAULT 'NOT_DUE',
-    `reconciliation_attempted_at` DATETIME(6) NULL,
+    `reconciliation_attempted_at` DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `reconciliation_claim_count` INT NOT NULL DEFAULT 0,
+    `provider_check_started_at` DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `reconciler_id`         VARCHAR(128) NOT NULL DEFAULT '',
-    `reconcile_lease_expires_at` DATETIME(6) NULL,
-    `started_at`            DATETIME(6) NULL,
-    `finished_at`           DATETIME(6) NULL,
+    `reconcile_lease_expires_at` DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `started_at`            DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `finished_at`           DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `created_at`            DATETIME(6) NOT NULL,
     `updated_at`            DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
@@ -1474,11 +1663,55 @@ CREATE TABLE `firefly`.`volcano_deployment_attempt`
 `volcano_artifact_selection` 复制，不得再从 Job 配置或 HTTP 请求解析。同时在现有
 `pipeline_build` 中增加并持久化 `trigger_model`，以便在数据库层审计手动/自动执行边界。
 `result_object_key_sha256` 只用于索引；读取记录后仍必须逐字节比较完整
-`result_object_key`，不能把 Hash 相等直接视为 Key 相等。结果事件复用现有 Inbox，业务
-消息 UUID 由 Bucket、完整 Key、Version ID/ETag 规范化生成，不再新增一张事件去重表。
+`result_object_key`，不能把 Hash 相等直接视为 Key 相等。结果事件使用 9.2.1 的独立 Inbox，
+业务 UUID 与 Kafka 源位置按照 8.6.4 分别去重。
 表中没有 `next_poll_at`：Deadline 字段只用于挑选已经逾期、需要一次性对账的异常记录。
 `reconciliation_status` 只允许 `NOT_DUE`、`CLAIMED`、`TOS_RECOVERED`、
 `PROVIDER_CHECKED` 和 `RESULT_UNKNOWN`，领取和完成必须使用带旧值条件的 CAS 更新。
+成功结果没有经过对账时保留 `NOT_DUE`，不要求所有终态都调用 Reconciler。
+
+`invocation_id` 初值必须为本行 `pending-<public_id>`；只有尚未 Invoke 的已验证 Attempt
+才能获得派发执行权。响应/恢复器按 ID 和占位值 CAS 补写 `ivk-*`；匹配终态时仅补 ID，
+重复真实 ID 需一致，否则告警。`pending-*` 禁止传给任何云查询 API；不确定的派发不得重发。
+
+### 9.2.1 结果事件 Inbox
+
+```sql
+CREATE TABLE `firefly`.`volcano_result_event_inbox`
+(
+    `id`                     BIGINT(20) NOT NULL AUTO_INCREMENT,
+    `message_uuid`           VARCHAR(36) NOT NULL,
+    `source_cluster_id`      VARCHAR(64) NOT NULL,
+    `topic`                  VARCHAR(249) NOT NULL,
+    `kafka_partition`        INT NOT NULL,
+    `kafka_offset`           BIGINT NOT NULL,
+    `event_index`            INT NOT NULL,
+    `event_identity`         LONGTEXT NOT NULL,
+    `payload`                LONGTEXT NOT NULL,
+    `source_payload_sha256`  CHAR(64) NOT NULL,
+    `attempt_id`             BIGINT(20) NOT NULL DEFAULT 0,
+    `processing_status`      VARCHAR(32) NOT NULL DEFAULT 'ARCHIVED',
+    `processing_attempt`     INT NOT NULL DEFAULT 0,
+    `processor_id`           VARCHAR(128) NOT NULL DEFAULT '',
+    `processing_started_at`  DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `processing_finished_at` DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
+    `last_error`             VARCHAR(2048) NOT NULL DEFAULT '',
+    `received_at`            DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`id`),
+    UNIQUE INDEX `uidx_volcano_result_message` (`message_uuid`),
+    UNIQUE INDEX `uidx_volcano_result_position`
+        (`source_cluster_id`, `topic`, `kafka_partition`, `kafka_offset`, `event_index`),
+    INDEX `idx_volcano_result_processing` (`processing_status`, `received_at`, `id`),
+    INDEX `idx_volcano_result_attempt` (`attempt_id`, `processing_status`)
+);
+```
+
+`payload` 仅保存白名单化的 TOS 通知子事件；语法无效时存 `{}` 与安全拒绝原因，
+`source_payload_sha256` 对原始 Record 求哈希用于审计，不存原始秘密。`event_identity`
+存完整规范身份（拒绝记录为源位置身份），UUID 命中时比较它而非忽略冲突。
+`attempt_id=0` 仅允许尚未关联或拒绝事件，处理已知 Key 后绑定真实 ID。
+两个固定 namespace 在实现常量/协议测试中锁定，不随配置重启变化；既有事件需升级时
+使用新协议版本，不能悄悄改变去重规则。
 
 ### 9.3 状态
 
@@ -1520,8 +1753,10 @@ PENDING -> RUNNING -> SUCCESS
 
 `ROLLED_BACK` 对 Pipeline 是失败，因为目标版本未成功上线；它与
 `MANUAL_INTERVENTION_REQUIRED` 分开，便于值班人员判断线上是否已经恢复旧版本。
-`RESULT_UNKNOWN` 表示结果对象缺失且单次云端对账仍无法证明业务终态；对 Pipeline 按失败
-处理并告警，绝不把“没有失败证据”解释为成功。
+`RESULT_UNKNOWN` 表示缺少可信结果：包括对象缺失、协议/认证失败、读取失败、派发未知
+或对账中断；对 Pipeline 按失败处理并告警，绝不把“没有失败证据”解释为成功。
+它不是“进程已经停止”。MVP 不为已派发的 Once 命令产生 `CANCELLED`；该值仅预留，
+不得因 UI 请求停止、API 超时或未知结果而写入。
 
 所有状态更新必须带当前 `execution_attempt` 和期望旧状态条件，更新行数不是 1 时按并发
 冲突处理。Plugin 终态消息的 UUID 继续使用现有 `BusinessMessageUUID.plugin(...)` 规则，
@@ -1529,27 +1764,57 @@ PENDING -> RUNNING -> SUCCESS
 
 ### 9.4 事件消费、超时与恢复
 
-- Result Consumer 使用独立 Consumer Group 消费 TOS `ObjectCreated` 事件，先写现有 Inbox，
-  再读取事件指定的对象版本并做协议校验；Kafka 重投、TOS 重复通知和 Consumer 重启都不会
-  重复推进状态机。
+- Result Consumer 使用独立 Consumer Group 与专用结果 Inbox，按 8.6.4 先持久化、再 ACK、
+  后异步校验。归档不等于业务成功，ACK 后崩溃/FAILURE 需要人工恢复或 Deadline 收敛。
 - Attempt、预期结果 Key、Token Hash 和 Deadline 必须在 `InvokeCommand` 前提交。因此结果
   事件先于 Invoke HTTP 响应、服务实例重启或 Kafka 短暂不可用都不会丢失关联。
 - 正常链路不调用 `DescribeInvocations` / `DescribeInvocationResults`。Deadline Reconciler
   只扫描 `result_deadline_at <= now` 且仍非终态的记录，用
-  `reconciler_id + reconcile_lease_expires_at` 领取一次性异常处理任务。
-- 对逾期 Attempt，先直接 Head/Get 唯一预期结果 Key；如果对象存在，按正常协议消费，
-  从而覆盖 TOS 到 Kafka 的通知丢失。只有对象仍缺失时，才依据 Invocation ID 发起一次
-  Cloud Assistant 终态核对。
-- 若云端仍在运行但已超过命令超时，可调用 `StopInvocation`；若云端已终态但没有可信结果
-  信封，记录 Provider 终态并进入 `RESULT_UNKNOWN`，不能从云助手退出码伪造业务成功。
-- `InvokeCommand` 请求超时且没有 Invocation ID 时进入 `DISPATCH_UNKNOWN`。Reconciler 只
-  允许按 Deployment 标记做一次唯一性核对；无法确认时不重发部署，直接告警并进入
-  `RESULT_UNKNOWN`。
+  `reconciler_id + reconcile_lease_expires_at` CAS 领取异常处理任务，同时递增
+  `reconciliation_claim_count`，默认最多 2 次领取（初次 + 一次崩溃接管）。
+- 对逾期 Attempt，执行一次有界 Head/Get 计划，直查唯一预期结果 Key 的当前版本并校验
+  上传期限。合法结果按正常 CAS 提交，覆盖通知丢失；读取不受长数据库事务保护。
+  对同一 Key/Version 已有 REJECTED 的记录直接使用拒绝结论，不反复解析。
+- 对象存在但 Schema/Token/不可变字段/上传期限无效：隔离该版本并将仍非终态 Attempt
+  CAS 到 `RESULT_UNKNOWN`、写安全原因和 Outbox，结束对账，不再退回可领取状态。
+  不枚举历史版本寻找“某个成功结果”；后续合法事件只能按迟到规则审计。
+- 对象明确缺失时，允许一个逻辑 Cloud Assistant 诊断计划。必须先 CAS 设置
+  `provider_check_started_at`，再按需要各调用至多一次 DescribeInvocations / Results；
+  传输层至多 2 次尝试，整体时限短于 Lease。启动标记已写入的计划不会因 Lease 接管
+  再次发起，避免崩溃后无限 Describe；缺少诊断结果则以未知结束。
+- 云端仍在运行、已终态但没有可信信封、读取错误或权限错误时，记录安全诊断并进入
+  `RESULT_UNKNOWN`；不能从云助手退出码伪造业务成功，也不调用 StopInvocation。
+- `InvokeCommand` 超时且仍是占位 ID 时进入 `DISPATCH_UNKNOWN`。上述单次诊断只可按
+  持久化 Deployment Tag/操作标记做唯一性核对；找到唯一真实 ID 可 CAS 补写，找不到、
+  多个匹配或 API 不支持精确筛选均不重发部署，以 `RESULT_UNKNOWN` 结束。
+- 外部调用全部设总时限，必须在 Lease 到期前提交或放弃；写库带 owner、当前 Lease 和
+  领取次数 fencing 条件。崩溃遗留 Lease 最多接管一次；第二次 Lease 仍过期时，下一次
+  扫描只执行本地 CAS，将非终态置为 `RESULT_UNKNOWN`，不再访问 TOS/ECS。
 - 已终态 Attempt 不再访问云 API；Outbox 可独立恢复终态消息发布。Deadline 扫描频率只
   影响异常发现延迟，不构成运行期轮询。
+- Reconciler 直接以 Attempt CAS + Outbox 事务结束部署，不伪造 Kafka Record 或抢写其他
+  Processor 持有的 Inbox；已归档事件之后恢复时按最新终态幂等完成/仅追加审计。
 - Result Consumer 与 Reconciler 竞争同一 Attempt 时，以状态 CAS 决定唯一胜者。进入
   `RESULT_UNKNOWN` 后收到的合法迟到结果只追加到安全审计并触发人工复核，不自动反转已
   发送给 Pipeline 的失败终态，也不能覆盖更新 Attempt 的已接受结果 Hash。
+
+在 Deadline 之前，未知 Key、畸形 Kafka 消息或无效对象版本只使对应 Inbox REJECTED，
+不能凭不可信消息立即将合法 Attempt 判失败。该 Attempt 可以等待其他合法版本到达，
+但不会无限重试同一版本；到期后必须走上述明确终态分支。无效通知的隔离与 Attempt 的
+最终处置是两件事，防止攻击者仅投递假事件就中断部署。
+
+### 9.4.1 Once 超时与停止语义
+
+官方 StopInvocation 只能停止定时/周期任务的后续执行，不能为本设计的 Once 部署提供
+可靠的即时进程终止保证。MVP 不调用该 API、不暴露停止按钮/成功停止响应，也不授予
+`ecs:StopInvocation`。
+
+业务超时由 Bootstrap 的业务 watchdog 处理；云助手 `InvokeCommand.Timeout` 是整个命令
+的最后硬上限。硬超时或主机故障可能导致无法上传结果，因此最后以 Deadline 进入
+`RESULT_UNKNOWN`/人工核查，不能把硬超时当作所有后台服务已停止或变更已回滚的证明。
+未确认旧执行和线上状态前，不允许对未知部署自动重试。未来如要提供立即取消，必须先
+设计独立的受控终止协议，并用实际进程、子进程与副作用的 Staging 测试证明；单纯 API
+返回成功不算满足取消契约。
 
 ## 10. Firefly Plugin 接入
 
@@ -1570,6 +1835,10 @@ firefly-app/src/main/java/firefly/volcano
 ├── service/VolcanoDeploymentService.java
 ├── service/VolcanoDeploymentResultStore.java
 ├── service/VolcanoDeploymentResultConsumer.java
+├── service/VolcanoResultEventInboxStore.java
+├── service/VolcanoResultEventProcessor.java
+├── service/VolcanoResultChannelReadinessService.java
+├── service/VolcanoCommandSizeValidator.java
 ├── service/VolcanoDeploymentDeadlineReconciler.java
 ├── service/VolcanoDeploymentReconciliationService.java
 ├── service/VolcanoDeploymentStateService.java
@@ -1596,14 +1865,18 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
    Volcano Job 解析唯一 `artifactSelectionId`。
 5. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`；`executePluginBuild` 只创建
    Attempt、校验并分发云助手命令，不同步等待结果。
-6. `VolcanoDeploymentResultConsumer` 消费结果事件、读取并验证 TOS 结果对象，在同一事务
-   更新 Attempt、Plugin Build 并向现有 Plugin Topic 写 Outbox；正常路径不查询云助手。
+6. `VolcanoDeploymentResultConsumer` 在同一归档事务中保存 `events[]` 后 ACK，
+   再交给专用 Processor 读取并校验 TOS 对象；Processor 在另一业务事务更新
+   Inbox、Attempt、Plugin Build 并向现有 Plugin Topic 写 Outbox，正常路径不查询云助手。
 7. `VolcanoDeploymentDeadlineReconciler` 只处理逾期 Attempt，先读预期 TOS Key，再执行至多
    一次 Cloud Assistant 对账。
 8. `PipelineWorkspaceService` 删除 Pipeline 时先校验没有运行中的部署，再按逻辑引用顺序
    删除 Volcano Plugin 配置和 Pipeline Binding；Command Revision 先标记 `ORPHANED`，待
    没有配置和 Attempt 引用后由 GC 删除云端 Command；仅当 Connection 标记为 Pipeline
    私有且不再被其他 Binding 引用时，才删除其凭据密文。
+9. 新增结果 Inbox DAO/实体与 `MessageCategory.VOLCANO_RESULT`；管理恢复接口按该 category
+   路由到专用 Store/Processor，不复用要求业务消息 JSON 的解析器。Result Kafka Consumer
+   Factory 独立配置集群身份、SASL、手动 ACK 和安全消息大小限制。
 
 当前静态 `PluginServiceParser.PLUGIN_MAP` / `PLUGIN_BUILD_MAP` 可先兼容，但建议改为构造器
 注入后生成不可变 Map，并在启动时检测重复 `PluginType`，避免静态可变状态影响测试。
@@ -1628,12 +1901,18 @@ Build。
 | --- | --- | --- |
 | `GET` | `/api/volcano/deployments/{publicId}` | 查询部署快照和当前状态 |
 | `GET` | `/api/volcano/deployments` | 按状态、实例、应用分页查询 |
-| `POST` | `/api/volcano/deployments/{publicId}/stop` | 停止仍在运行的 Invocation |
+
+MVP 不提供 `/api/volcano/deployments/{publicId}/stop`；前端不显示可用停止按钮。若兼容层
+保留旧设计路径，必须明确返回 `409 DEPLOYMENT_STOP_UNSUPPORTED` 且不改变部署状态，
+不得返回“停止成功”。异常运行的处理见 9.4.1。
 
 部署重试沿用 `/pipeline-builds/{pipelineBuildID}/retry`，不另建绕过 Pipeline 状态机的
 重试入口。重试必须复用原 Build 的 `volcano_artifact_selection` 和对象 Version ID/ETag，
 不再展示制品选择器，也不重新计算“最近制品”。若需部署另一制品，用户必须发起新的
 手动执行。
+
+`RESULT_UNKNOWN` 或人工介入状态必须先由管理员核实旧命令/服务状态并记录处置证据，
+才允许通过现有 Retry 发起新 Attempt；不能因旧 Attempt 在数据库终态就假定实例上无执行。
 
 响应只包含安全输出摘要：
 
@@ -1698,6 +1977,8 @@ POST /api/volcano/pipelines/{pipelineId}/deploy-config/validate
 {
   "canonicalPrefixUri": "tos://firefly-artifacts/order-service/releases/",
   "artifactSourceValid": true,
+  "resultChannelReady": true,
+  "effectiveCommandTimeoutMaxSeconds": 3120,
   "destinationPreview": "/opt/firefly/apps/order-service/releases/<deployment-id>",
   "atomicPublishSupported": true,
   "warnings": []
@@ -1706,6 +1987,19 @@ POST /api/volcano/pipelines/{pipelineId}/deploy-config/validate
 
 预检结果只用于交互提示，不能替代保存时的 Prefix/实例校验，也不能替代手动
 执行提交时对具体制品的 Head Object 和快照锁定。
+
+### 11.5 结果 Inbox 人工恢复
+
+扩展现有管理接口的 category 路由，`VOLCANO_RESULT` 的 URL 值为 `volcano-result`：
+
+| 方法 | 路径 | 约束 |
+| --- | --- | --- |
+| `POST` | `/admin/kafka-messages/volcano-result/{messageUUID}/retry` | 仅 ARCHIVED/FAILURE、剩余处理次数大于 0 且 Attempt 未终态时允许 |
+| `POST` | `/admin/kafka-messages/volcano-result/{messageUUID}/reset-processing` | 先核实旧 worker 已失效，再 CAS 释放 PROCESSING；不清零处理次数 |
+
+两条路径都需要管理员认证与审计。SUCCESS/REJECTED 不可重开，达到 3 次处理上限后拒绝
+恢复；Attempt 已终态只可查看/追加迟到审计，不通过重放反转 Pipeline。没有一个“重试”
+按钮会再次调用 InvokeCommand。Deadline 处理与人工恢复仍由 Attempt/Inbox CAS 仲裁。
 
 ## 12. 配置项
 
@@ -1732,7 +2026,8 @@ firefly:
       read-timeout: ${VOLCANO_ECS_READ_TIMEOUT:15s}
       command-provisioning-enabled: ${VOLCANO_COMMAND_PROVISIONING_ENABLED:true}
       command-name-prefix: ${VOLCANO_COMMAND_NAME_PREFIX:firefly-}
-      max-user-script-bytes: ${VOLCANO_MAX_USER_SCRIPT_BYTES:12288}
+      max-user-script-bytes: ${VOLCANO_MAX_USER_SCRIPT_BYTES:4096}
+      max-encoded-command-bytes: ${VOLCANO_MAX_ENCODED_COMMAND_BYTES:16384}
       allowed-run-as-users: ${VOLCANO_ALLOWED_RUN_AS_USERS:firefly-deploy}
       allowed-deploy-roots: ${VOLCANO_ALLOWED_DEPLOY_ROOTS:/opt/firefly/apps}
       allowed-destination-layouts: ${VOLCANO_ALLOWED_DESTINATION_LAYOUTS:VERSIONED_DIRECTORY,FIXED_FILE}
@@ -1741,11 +2036,14 @@ firefly:
       custom-full-script-enabled: ${VOLCANO_CUSTOM_FULL_SCRIPT_ENABLED:false}
       command-gc-grace-period: ${VOLCANO_COMMAND_GC_GRACE_PERIOD:24h}
     deployment:
-      artifact-presign-grace: ${VOLCANO_ARTIFACT_PRESIGN_GRACE:5m}
+      result-upload-reserve: ${VOLCANO_RESULT_UPLOAD_RESERVE:60s}
+      dispatch-queue-grace: ${VOLCANO_DISPATCH_QUEUE_GRACE:120s}
       result-deadline-grace: ${VOLCANO_RESULT_DEADLINE_GRACE:5m}
       max-presign-ttl: ${VOLCANO_MAX_PRESIGN_TTL:1h}
+      credential-expiry-safety-margin: ${VOLCANO_CREDENTIAL_EXPIRY_SAFETY_MARGIN:30s}
       deadline-scan-interval: ${VOLCANO_DEADLINE_SCAN_INTERVAL:30s}
       reconcile-lease-timeout: ${VOLCANO_RECONCILE_LEASE_TIMEOUT:60s}
+      reconcile-io-budget: ${VOLCANO_RECONCILE_IO_BUDGET:40s}
       output-excerpt-bytes: ${VOLCANO_OUTPUT_EXCERPT_BYTES:8192}
     result-store:
       enabled: ${VOLCANO_RESULT_STORE_ENABLED:true}
@@ -1755,26 +2053,81 @@ firefly:
       token-bytes: ${VOLCANO_RESULT_TOKEN_BYTES:32}
       max-object-bytes: ${VOLCANO_RESULT_MAX_OBJECT_BYTES:16384}
       lifecycle-days: ${VOLCANO_RESULT_LIFECYCLE_DAYS:14}
+      enabled-deployment-regions: ${VOLCANO_RESULT_DEPLOYMENT_REGIONS:cn-beijing,cn-shanghai,cn-guangzhou}
+      channel-health-max-age: ${VOLCANO_RESULT_CHANNEL_HEALTH_MAX_AGE:5m}
     result-events:
+      source-cluster-id: ${VOLCANO_RESULT_KAFKA_CLUSTER_ID:}
       bootstrap-servers: ${VOLCANO_RESULT_KAFKA_BOOTSTRAP_SERVERS:}
       topic: ${VOLCANO_RESULT_KAFKA_TOPIC:firefly-volcano-result-v1}
       group-id: ${VOLCANO_RESULT_KAFKA_GROUP_ID:firefly-volcano-result-v1}
       security-protocol: ${VOLCANO_RESULT_KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+      sasl-mechanism: ${VOLCANO_RESULT_KAFKA_SASL_MECHANISM:PLAIN}
+      sasl-username: ${VOLCANO_RESULT_KAFKA_SASL_USERNAME:}
+      sasl-password-file: ${VOLCANO_RESULT_KAFKA_SASL_PASSWORD_FILE:}
+      max-record-bytes: ${VOLCANO_RESULT_KAFKA_MAX_RECORD_BYTES:1048576}
+      max-events-per-record: ${VOLCANO_RESULT_KAFKA_MAX_EVENTS:100}
+      max-processing-attempts: ${VOLCANO_RESULT_MAX_PROCESSING_ATTEMPTS:3}
 ```
 
 Endpoint 默认按 SDK 的 Region 规则生成。自定义 Endpoint 只允许 `https`，Host 必须在
 管理员 allowlist 中，防止通过 Connection 配置制造 SSRF。测试环境可显式开启 HTTP。
 
-分发时统一计算：
+Result Consumer 使用独立账号，不复用 TOS 投递 Topic 的 SASL 用户。官方 Kafka 推送配置
+要求投递用户使用 PLAIN 并满足其 All Permitted 前提，该权限边界由基础设施管理员审核，
+不能把它等同于单 Topic 的最小写权限。消费身份也必须与 Broker 配置匹配，仅授予指定 Topic/Group
+的必要读取权限。生产要求 `SASL_SSL`、服务器证书和主机名验证，不以关闭 TLS 绕过错误。
+`sasl-password-file` 指向由部署系统/Secret Store 挂载的只读秘密文件；配置仅保存路径，
+文件不入库、不进 Git、不可被普通用户读取，账号或文件缺失直接启动校验失败。
+Consumer Factory 在内存构造转义后的 JAAS 配置，禁止打印密码、JAAS、完整配置 Bean 或
+通过 Actuator 暴露这些值；轮换后重建对应 Consumer 并重新校验通道就绪。
+
+### 12.1 业务、上传、派发与交付预算
+
+配置与派发使用同一 `VolcanoDeploymentBudget` 校验器。令 B 为用户配置的业务总秒数，
+U 为结果上传保留秒数，Q 为签名准备/数据库提交/HTTP 派发/云助手排队的合计余量，G 为
+结果通知交付余量。`t0` 是生成第一条预签名 URL 前固定的 `dispatch_started_at`，而非
+收到 Invoke 响应的时间，所有预算快照在 Invoke 前持久化：
 
 ```text
-result_deadline_at = dispatch_started_at + commandTimeout + resultDeadlineGrace
-presign_expires_at = result_deadline_at
+invocationTimeoutSeconds = B + U
+InvokeCommand.Timeout = invocationTimeoutSeconds
+start_before_at = t0 + Q
+upload_deadline_at = t0 + Q + invocationTimeoutSeconds
+result_deadline_at = upload_deadline_at + G
+artifact_presign_expires_at = result_put_expires_at = result_deadline_at
+requiredPresignTtl = Q + B + U + G
+
+30 <= B
+30 <= invocationTimeoutSeconds <= 86400
+requiredPresignTtl <= maxPresignTtl
+B <= min(86400 - U, maxPresignTtl - Q - U - G)
 ```
 
-制品 GET 与结果 PUT URL 使用同一过期基准；若计算出的 TTL 超过 `max-presign-ttl`，在调用
-`InvokeCommand` 前拒绝配置，不能让 Result URL 先于 Deadline 过期。`deadline-scan-interval`
-只决定逾期异常的发现延迟，不用于跟踪运行中命令。
+默认 U=60、Q=120、G=300、maxPresignTtl=3600 秒，因此 B 最大 3120 秒（52 分钟），
+不是 86400 秒。B=900 时云助手 Timeout=960 秒，最晚启动为 t0+120 秒，最晚上传为
+t0+1080 秒，结果 Deadline/两条 URL 过期时间为 t0+1380 秒。提高业务上限必须同时满足
+平台 TTL、安全策略和 API 限制，不能自动延长签名或截断用户超时。
+
+- B 包含下载、解包、用户指令、健康检查、必要回滚、清理与终止子进程的全部时间。父
+  Bootstrap 监督业务进程组，例如提前 5 秒 TERM、B 耗尽前 KILL；上传器保留在父进程。
+  这个上限只约束命令步骤，不证明已启动的服务/逃逸后台进程被撤销。
+- 实例必须在 `start_before_at` 前启动业务，并检查剩余的绝对上传窗口；Q 是平台假设，
+  不是火山引擎排队 SLA。超过该窗口拒绝业务副作用，能上报则上传失败结果，否则未知。
+  实际签名/提交耗时已消耗 Q；Invoke 前窗口不足时直接拒绝，不重置 t0 扩展旧 URL。
+- U 同时覆盖结果生成、最多 3 次 PUT、连接/传输/退避；每次使用剩余预算设置 curl 总
+  时限，不能用 G 继续部署或上传。API 硬超时仍可能杀死上传器，Trap 不能保证所有路径送达。
+- 两条 URL 有效期需分别受各自签名凭据的实际 expiry 限制：`credentialExpiry >=
+  result_deadline_at + credentialExpirySafetyMargin`。AssumeRole 不足时先刷新并重新
+  计算两条 URL；STS_SESSION 不足时拒绝并提示轮换。凭据 TTL 比平台限制更短时，进一步
+  下调有效 B 上限，不能只检查 URL 参数上的过期时间。
+- 主机需同步时钟；云助手 Timeout 使用相对时长，业务 watchdog 使用单调计时，绝对
+  启动/上传门限采用受校时保证的 UTC。时钟偏差超出部署环境验收界限则禁止部署。
+- Reconciler 的 I/O 总预算默认 40 秒，必须小于 60 秒 Lease；它不能沿用更长的普通
+  TOS 下载 read-timeout。Lease fencing、最多两次领取与最终无 I/O 收敛见 9.4。
+
+任一预算不成立时在 Invoke 前返回 `DEPLOYMENT_TIMEOUT_BUDGET_INVALID` 或
+`DEPLOYMENT_CREDENTIAL_TTL_INSUFFICIENT`。UI 预检显示有效上限，派发仍再次校验。
+`deadline-scan-interval` 只影响异常发现延迟，不跟踪运行中命令。
 
 ## 13. IAM 最小权限
 
@@ -1801,8 +2154,8 @@ tos:GetObjectVersion      开启版本控制时
 ```
 
 运行期身份不需要 List、Delete 或修改通知规则。Bucket 生命周期负责过期清理。只有独立的
-基础设施 Provisioner 才能调用 Put/Get Bucket Notification；TOS 投递火山 Kafka 使用平台
-要求的 `KafkaAccessForTOS` 服务角色，该角色不授予 Firefly 应用或 ECS。ECS 只拿一次性的
+基础设施 Provisioner 才能修改 Bucket Notification，独立预检身份仅能 Get；TOS 投递火山
+Kafka 使用官方授权流程的 `TOSNotiKafkaRole`，该角色不授予 Firefly 应用或 ECS。ECS 只拿单次 Attempt 的
 精确 Key PUT URL，不拿 TOS 或 Kafka 长期凭据。
 
 部署运行角色只授予：
@@ -1814,7 +2167,6 @@ ecs:DescribeCommands
 ecs:InvokeCommand
 ecs:DescribeInvocations          仅 Deadline 单次对账
 ecs:DescribeInvocationResults    仅 Deadline 单次对账
-ecs:StopInvocation
 ```
 
 配置发布/垃圾回收角色额外授予：
@@ -1834,13 +2186,17 @@ Firefly 创建的 Command 和目标实例。云端 Command 的 Tag 至少包含
 `managed-by=firefly`、Pipeline UUID、Plugin UUID 和 Script Hash；删除时必须校验这些 Tag，
 禁止 GC 删除非 Firefly 命令。
 
-制品与结果 TOS Bucket 均保持私有。制品 GET 和结果 PUT 预签名 URL 的有效期设置为：
+`ecs:DescribeInvocations` 可读回自定义 Parameters。可查询对应 Invocation 的账号/角色、
+云控制台管理员，以及主机上能读执行脚本的主体均纳入该 Attempt 的结果可信域。
+仅做状态展示的 Firefly 用户只读脱敏本地快照，不继承这项云权限。不能声称“只读 API”
+不会接触秘密；Result Store 身份分离也不能消除这条间接读取路径。参数只携带每 Attempt
+短期 Token/URL，禁止长期结果凭据；DTO 丢弃和日志白名单的落实见 5.3。
 
-```text
-commandTimeout + resultDeadlineGrace
-```
+通道预检使用独立只读身份读取通知配置，Provisioner 才能修改；Kafka 生产与消费凭据
+分别管理。运行角色不授予 `ecs:StopInvocation`，不将它作为超时恢复依赖。
 
-如果所需 TTL 超过 `maxPresignTtl`，配置校验失败，不自动截断或生成更长 URL。
+制品与结果 TOS Bucket 均保持私有。制品 GET 和结果 PUT 的 TTL 严格使用 12.1 的
+`Q + B + U + G` 及实际签名凭据 expiry 校验，不另写一套公式。
 结果 PUT URL 必须固定 HTTP 方法、Bucket、完整 Key 和 `Content-Type: application/json`；
 URL 与 `resultToken` 不得进入日志、Kafka、stdout/stderr 或普通异常。
 
@@ -1852,14 +2208,14 @@ URL 与 `resultToken` 不得进入日志、Kafka、stdout/stderr 或普通异常
 | --- | --- | --- |
 | `ListObjects` / `HeadObject` / `GetObject` | 是 | 网络错误、429、部分 5xx；指数退避和抖动 |
 | 本地断点下载 | 是 | 使用同一 Version ID/ETag 和 checkpoint |
-| ECS 内结果 `PutObject` | 是 | Bootstrap 固定 3 次，只使用同一 Key、内容和原 URL TTL |
-| TOS `ObjectCreated` 事件 | 由平台重投 | Consumer 以 Inbox + 对象版本幂等处理重复和乱序事件 |
-| `DescribeInvocation*` | 不调度重试 | 仅 Deadline 的一个逻辑对账调用；SDK 可对网络错误做至多 2 次有界传输重试 |
+| ECS 内结果 `PutObject` | 有界 | 共最多 3 次尝试，同一 Key/内容；受 U、绝对上传期限与凭据有效期共同限制 |
+| TOS `ObjectCreated` 投递 | 可能重复 | 专用 Inbox 对同一版本幂等；ACK 后业务失败不会触发 Kafka 重投 |
+| 结果 Inbox FAILURE/遗留 PROCESSING | 不自动重试 | 管理员恢复；含初次最多 3 次，REJECTED/SUCCESS 不可重开 |
+| `DescribeInvocation*` | 不调度重试 | 一个持久化诊断计划；每种读取至多一次逻辑调用，传输层共最多 2 次尝试且受 I/O 总预算限制 |
 | `CreateCommand` | 条件重试 | 超时后先按 Firefly Tag + rendered Hash 对账，确认不存在才重建 |
 | `DeleteCommand` | 是 | 仅 GC 调用；Not Found 视为幂等成功 |
 | `InvokeCommand` | 否，除非能证明未创建 | 超时进入 `DISPATCH_UNKNOWN` 并先对账 |
-| `StopInvocation` | 可重试 | 已终态视为幂等成功 |
-| 实例内制品 `curl` | 是 | 固定 3 次，只在原 URL TTL 内 |
+| 实例内制品 `curl` | 有界 | `--retry 3` 表示首次加至多 3 次重试，共最多 4 次；仍受业务 B 与原 URL TTL 约束 |
 
 403、404、参数错误、校验失败和脚本安全校验失败不自动重试。
 
@@ -1896,6 +2252,7 @@ ECS_CLOUD_ASSISTANT_UNAVAILABLE
 ECS_COMMAND_NOT_ALLOWED
 ECS_COMMAND_CREATE_FAILED
 ECS_COMMAND_CONTENT_TOO_LARGE
+ECS_COMMAND_PARAMETERS_TOO_LARGE
 ECS_COMMAND_REVISION_NOT_READY
 DEPLOYMENT_SCRIPT_INVALID
 DEPLOYMENT_CUSTOM_SCRIPT_DISABLED
@@ -1907,6 +2264,10 @@ DEPLOYMENT_ATOMIC_PUBLISH_UNAVAILABLE
 DEPLOYMENT_LOCKED
 DEPLOYMENT_DISPATCH_UNKNOWN
 DEPLOYMENT_TIMEOUT
+DEPLOYMENT_TIMEOUT_BUDGET_INVALID
+DEPLOYMENT_CREDENTIAL_TTL_INSUFFICIENT
+DEPLOYMENT_START_WINDOW_EXPIRED
+DEPLOYMENT_STOP_UNSUPPORTED
 DEPLOYMENT_DOWNLOAD_FAILED
 DEPLOYMENT_ARTIFACT_PREPARE_FAILED
 DEPLOYMENT_USER_SCRIPT_FAILED
@@ -1916,6 +2277,9 @@ DEPLOYMENT_ROLLED_BACK
 DEPLOYMENT_ROLLBACK_FAILED
 DEPLOYMENT_RESULT_UPLOAD_FAILED
 DEPLOYMENT_RESULT_EVENT_INVALID
+DEPLOYMENT_RESULT_REGION_UNSUPPORTED
+DEPLOYMENT_RESULT_CHANNEL_NOT_READY
+DEPLOYMENT_RESULT_PROCESSING_EXHAUSTED
 DEPLOYMENT_RESULT_TOKEN_INVALID
 DEPLOYMENT_RESULT_OBJECT_MISSING
 DEPLOYMENT_RESULT_CONFLICT
@@ -1933,7 +2297,8 @@ DEPLOYMENT_RESULT_UNKNOWN
 }
 ```
 
-Provider 原始响应体只可写入受限 Debug 日志，且必须先做凭据和 URL 脱敏。
+Provider 原始响应体一律不写日志；只输出白名单化状态、Provider Code 和 Request ID。
+尤其不能先记录 DescribeInvocations/SDK 对象再做字段脱敏，Parameters 和执行参数不得落盘。
 
 ## 15. 可观测性和审计
 
@@ -1991,7 +2356,8 @@ firefly_volcano_rollback_total{result}
 - `DISPATCH_UNKNOWN` 超过 2 分钟告警。
 - `RESULT_UNKNOWN > 0` 或结果 Token 校验失败立即告警。
 - Result Kafka Consumer Lag 持续超过 60 秒告警。
-- 结果交付 P95 超过 `commandTimeout + resultDeadlineGrace` 或 Deadline 对账持续出现告警。
+- 结果交付超过该 Attempt 持久化的 `result_deadline_at` 或 Deadline 对账持续出现告警。
+- Result Inbox FAILURE/遗留 PROCESSING、REJECTED 增长、处理次数耗尽或通道不 READY 告警。
 - 同一 Connection 连续 5 次鉴权失败告警并暂停新部署。
 - 同一应用连续 3 次健康检查失败告警。
 
@@ -2008,6 +2374,12 @@ firefly_volcano_rollback_total{result}
   `toString()`、异常与日志。
 - 结果信封 Schema、16 KiB 上限、未知字段、Base64 字段、Token 常量时间比较和不可变字段
   校验。
+- Token 小写 hex 的 ASCII 哈希跨生成端/消费端固定向量；拒绝对原始 32 字节求哈希的
+  错误实现。日志、数据库快照不包含 Token/结果原文。
+- DescribeInvocations 返回含 URL/Token 的 Parameters 时，白名单 DTO 不含该字段，
+  Vendor 对象/SDK debug/异常/Actuator 均不泄露参数。
+- 原始正文 Base64 + 完整 Parameters JSON Base64、有效正文的双重保守预算；测试 UTF-8
+  多字节、JSON 转义、重复占位符、两套最长 URL、默认值和边界上下各 1 字节。
 - ECS Invocation 状态、退出码和输出映射。
 - SDK 重试只覆盖幂等操作。
 
@@ -2017,6 +2389,10 @@ firefly_volcano_rollback_total{result}
 `VolcanoEcsCommandClient`：
 
 - Connection 加密落库、解密、轮换和错误 Key Version。
+- 执行全部新表 DDL，检查所有列 NOT NULL；验证 1970/9999/0/-1 哨兵的读写语义与 API
+  映射。并发创建多条 PROVISIONING Revision/Attempt 不发生占位唯一键冲突。
+- `pending-*` 向真实 ID 的 CAS、重复/冲突响应、结果先到/响应后到；恢复器与 GC 不把
+  占位 ID 发给云 API，操作 ID 可用于唯一恢复。
 - Pipeline 创建时 `STATIC_AK_SK`、`STS_SESSION`、`STS_ASSUME_ROLE` 三种 Binding 的原子保存。
 - STS 刷新并发互斥、提前刷新、过期和 AssumeRole 失败。
 - API 永不返回明文 AK/SK。
@@ -2033,7 +2409,10 @@ firefly_volcano_rollback_total{result}
   中途失败不留半成品 Build。
 - 包含 `MANUAL_AT_RUN` Job 的 Pipeline 自动触发被拒绝，不会隐式选择最新制品。
 - `CreateCommand` 超时按 Tag + rendered Hash 对账、配置事务补偿和无引用命令 GC。
-- 命令总长度 16 KiB、用户脚本长度、URL Base64 分片及超过 4 片时拒绝。
+- 创建时静态预算与派发时实际参数综合预算、用户脚本长度、URL 超过 4 片时拒绝；
+  创建校验通过但实际 URL 太长时，断言 Invoke 调用次数为 0。
+- 默认 B=900 时 Timeout=960、上传期限 t0+1080、Deadline t0+1380；B=3120/3121 边界，
+  STS 剩余时长不足、刷新失败、签名/提交消耗 Q、云端超时上限及启动窗口过期。
 - Pipeline Build 创建 Volcano Deploy Build。
 - `InvokeCommand` 成功、失败、超时和未知结果。
 - 无公网 IP 实例可按 Region + Instance ID 部署；私网 IP 变化不改变目标，Region/Agent
@@ -2043,10 +2422,25 @@ firefly_volcano_rollback_total{result}
   一次状态机。
 - 非预期 Key、无效 Token、错误 Schema、超限对象、篡改不可变字段和同一 Attempt 的冲突
   结果全部拒绝并告警。
+- TOS `events[]` 多子项同 offset 全部归档后 ACK；合法/非法混合项相互不丢失；语法
+  错误/超限 Record 有安全 REJECTED 记录再 ACK；数据库失败不 ACK。
+- 同对象版本跨 offset/集群的重复通知只产生一次处理；源位置包含 cluster 和 event_index，
+  UUID 冲突比较完整身份。失败归档不得把任意通知正文或结果 Token 落库。
+- ACK 后分别在调度前、PROCESSING 和业务提交前崩溃：确认 Kafka 不因业务失败重投，
+  管理员恢复或 Deadline 可以结束 Attempt，且均不重新 Invoke。
+- 同版本无效结果只 REJECTED 一次；不同合法版本在 Deadline 前可完成部署。伪造消息
+  不立即终止 Attempt；到期仍没有可信结果进入 RESULT_UNKNOWN 并写一次 Outbox。
+- 对象存在但校验失败、TOS 读取错误、两个 Lease 均崩溃、诊断 ticket 已写但未收到响应
+  都有有界终态；重复扫描不再读云 API，第三次领取不允许产生外部调用。
+- 人工 retry/reset 不重置计数，最多 3 次；REJECTED/SUCCESS 不可恢复，终态 Attempt
+  的迟到结果不反转 Pipeline。Consumer/Reconciler CAS 竞争不进入无限 FAILURE。
 - Kafka 事件丢失时，Deadline Reconciler 直接读取预期 TOS Key 并恢复，不查询 ECS；结果
   对象也缺失时才执行一次 `DescribeInvocation*`。
-- Deadline Lease 抢占，两个实例不能重复对账同一 Attempt；Firefly/Kafka 重启后 Consumer
-  从 Inbox/Offset 恢复且不重新 Invoke。
+- Deadline Lease/fencing 抢占与一个逻辑诊断 ticket；重启后 Kafka 从已提交 Offset 继续，
+  已 ACK 未完成 Inbox 走显式人工恢复/Deadline，而不是假定重启就会自动重放。
+- 不支持的 Region、无 Result Bucket、错误规则/Topic、规则尚未生效、验收配置 Hash
+  失效、健康检查过期和 SASL 文件缺失均阻止派发；运行期故障仍走有界 Deadline。
+- 未授予 StopInvocation 仍可完成正常部署和超时收敛；兼容 `/stop` 明确拒绝，不写 CANCELLED。
 - 终态 Outbox 重放不重复推进 Job/Stage/Pipeline。
 - Pipeline Retry 创建新的 Attempt、不覆盖旧 Attempt 审计，并且复用原制品选择
   快照，不查询/选择新制品。
@@ -2070,10 +2464,14 @@ firefly_volcano_rollback_total{result}
 - 归档中的绝对路径、`../`、危险符号链接和设备文件被拒绝。
 - 两个并发部署只能有一个取得 `flock`。
 - 用户部署指令退出非零、超时、stdout/stderr 超限和特殊字符脚本。
+- 业务用完 B 后仍有 U 生成/上传结果；健康检查/回滚不能重置业务预算，curl 每次尝试和
+  退避均有剩余时限。超过启动窗口无业务副作用，超时无法回滚时明确人工介入。
 - 健康检查失败后用户回滚指令成功；回滚缺失或失败时返回人工介入。
 - 每条可捕获终态路径都生成并上传结果信封；结果上传使用同一 Key/内容有界重试，最终失败
   返回 44；`SIGKILL`/主机重启导致无结果时由 Deadline 对账覆盖。
 - 制品和结果预签名 URL、Result Token、完整信封不出现在 stdout/stderr。
+- 安全测试注明可信脚本前提：不宣称 env -i 能抵御同 UID 主动窃取/编码外传；若未来
+  引入不可信模式，必须新增独立身份、进程/文件/权限逃逸与结果伪造测试后才能启用。
 
 ### 16.4 火山引擎 Staging 合同测试
 
@@ -2082,13 +2480,21 @@ firefly_volcano_rollback_total{result}
 1. List/Head/Get/Range/Download、制品 Presign GET 和固定 Key 结果 Presign PUT。
 2. 版本对象和 If-Match 失败。
 3. 100 MB 以上对象断点续传及 CRC64/SHA-256。
-4. 配置 TOS `ObjectCreated` 到 Kafka，验证结果上传、事件投递、重复投递和 Consumer 恢复。
-5. 验证云助手 16 KiB 命令正文和 String 参数长度边界。
+4. 在允许 Region 配置 TOS `ObjectCreated` 到 Kafka，确认规则约 5 分钟生效后全链路
+   通过，验证多事件格式、重复投递、原生 PLAIN 投递身份和独立 TLS 消费身份/轮换。
+5. 分别验证 CreateCommand 正文与 InvokeCommand 综合 Base64 预算、实际参数序列化、
+   String 长度、最长 STS URL 和临界值；记录 SDK/API 版本，不以本地估算代替合同结果。
 6. 分别使用压缩包、JAR 和原始可执行文件执行用户给定的部署指令。
 7. 真实部署、健康检查、用户回滚指令和进程重启恢复。
 8. 人为抑制结果事件，验证 Deadline 直接读 TOS；再删除结果对象，验证只发生一次
    Describe Result 对账。
 9. 用 IAM 明确验证未授权 Bucket、实例、RunCommand 和非 Firefly Command 均被拒绝。
+10. 用合成秘密验证 DescribeInvocations 会回显 Parameters，而 Firefly DTO/数据库/日志
+    不保留它；单独核验只读云查询角色的实际资源范围，不使用生产凭据测试。
+11. 验证业务 watchdog、上传余量和 InvokeCommand.Timeout；令 Once 超时/主机故障并
+    确认未知终态，不将 StopInvocation 响应当作进程终止证明。
+12. 延迟启动、STS 提前失效、结果对象非法或事件丢失，验证拒绝副作用及有限次 Deadline
+    收敛，确认超时不会错误显示为成功或已回滚。
 
 最终必须执行：
 
@@ -2096,7 +2502,8 @@ firefly_volcano_rollback_total{result}
 mvn clean verify
 ```
 
-Docker/Testcontainers 的完整 `verify` 是后端合并前的权威结果。
+Docker/Testcontainers 的完整 `verify` 是后端实现合并前的必要结果；不能替代上述云端
+合同测试。本 PR 仅修改设计文档，不声称这些尚未实现的测试已经执行通过。
 
 ## 17. 数据迁移与兼容
 
@@ -2108,6 +2515,9 @@ Docker/Testcontainers 的完整 `verify` 是后端合并前的权威结果。
 - 新代码只写加密的 `volcano_connection`。
 - 新 Pipeline 使用全局 Volcano Binding，`VOLCANO_DEPLOY` Plugin 不再携带 Connection。
 - 旧 `VOLCANO` Trigger 暂时只读兼容。
+- 若环境曾按旧版草案建表，先审计并按 6.0 转换 NULL 与占位 ID、补齐操作 ID，再执行
+  NOT NULL/唯一索引迁移；未知历史云资源需人工核对，不伪造真实 ID。新结果 Inbox 独立
+  建表，不原地改变四张业务 Inbox 的载荷语义。
 
 ### 阶段 B：凭据迁移
 
@@ -2151,11 +2561,12 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 ### Milestone 3：ECS 云助手与用户部署指令
 
 - 实现可信 Bootstrap 渲染、用户脚本校验、不可变 Command Revision 创建与垃圾回收。
-- 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Create、Describe、Invoke、Result、
-  Stop 和 Delete。
+- 实现 ECS 列表、Region + Instance ID 选择、Agent 过滤、Create、Describe、Invoke、Result
+  和 Delete；Once 不提供 Stop，读取响应使用安全字段白名单。
 - 完成压缩包安全解包、原始文件准备、环境变量契约、用户部署/回滚指令和健康检查测试。
 - 实现 TOS URI 解析、Destination Layout、路径预检、同文件系统暂存和原子发布。
 - 实现 Result Token、终态信封、固定 Key 预签名 PUT 和 Bootstrap 有界上传重试。
+- 实现完整编码预算与业务/上传双预算、实际凭据 expiry 校验和最晚启动门限。
 
 验收：测试 ECS 能从私有 TOS 直拉压缩包或二进制，执行用户给定指令并完成部署；实例内
 不存在长期 AK/SK，运行结果可关联到不可变 Script Hash。
@@ -2165,14 +2576,16 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - 新增 `VOLCANO_DEPLOY` 配置、运行制品选择、build/attempt 表和服务。
 - 扩展 `/manual_trigger/pipeline` 的按 Job UUID 运行输入，在一个事务内固化制品快照并创建
   Build；包含手动选择 Job 时拒绝自动触发。
-- 接入现有 Plugin、Outbox、Inbox 和 Pipeline Retry。
+- 接入现有 Plugin、Outbox 和 Pipeline Retry，新增专用结果 Inbox、category 适配和人工恢复。
 - 配置平台结果 Bucket 的 `ObjectCreated` 到 Kafka，实现 Result Consumer、严格协议校验、
   幂等状态推进和告警指标。
+- 实现 Region/结果通道就绪门禁、SASL 秘密文件注入、无效消息隔离与有界处理。
 - 实现只处理逾期 Attempt 的 Deadline Reconciler：先读唯一结果 Key，对象缺失时至多一次
   Cloud Assistant 对账，不实现运行期定时轮询。
 
 验收：正常部署由 TOS 结果对象与 Kafka 事件完成且云助手 Describe 调用为 0；Firefly 在
-部署中重启后仍能恢复结果；重复消息、事件丢失和重试不造成重复发布或重复部署。
+部署中重启后仍能通过事件、明确的人工 Inbox 恢复或 Deadline 收敛；重复消息、事件丢失
+和重试不造成重复状态推进或意外的第二次 Invoke。
 
 ### Milestone 5：旧数据迁移与生产灰度
 
@@ -2206,15 +2619,22 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
   影响现有版本，成功制品通过同文件系统原子发布后才执行用户脚本。
 - 实例不会接收长期 AK/SK 或 STS 凭据。
 - 无公网 IP 的 ECS 可按 Region + Instance ID 发现和部署，并在执行前验证实例与 Agent。
+- 结果事件 Region、Bucket/规则、Kafka 鉴权/消费端及验收证据不就绪时拒绝新派发。
 - 部署具有应用级锁、路径/归档安全检查、用户指令超时、健康检查和可选用户回滚指令；
   无法证明回滚成功时进入人工介入状态。
 - Invocation 和每次 Pipeline Retry 都有独立、可恢复的持久化审计；Retry 始终复用
   原 Build 制品快照，更换制品必须创建新的手动执行。
 - 可信 Bootstrap 把受限终态信封写入平台私有 TOS；TOS `ObjectCreated` 通过 Kafka 推进
   正常终态，协议具备随机 Token、固定 Key、Schema、大小限制和幂等校验。
+- Token 哈希口径固定；同 UID/主机管理员/Invocation 查询者的可信边界明确，不宣称
+  不可信脚本隔离；Parameters 与结果秘密不进入 DTO、数据库、日志或普通 API。
+- 完整正文与参数通过综合字节预算；业务超时保留上传窗口，两条 URL 同时满足实际
+  凭据有效期；超晚启动不执行业务步骤。
 - 正常部署期间不轮询 Cloud Assistant；只有超过结果 Deadline 且结果对象仍缺失时，才做
   一次 Cloud Assistant 对账，无法证明业务终态则进入 `RESULT_UNKNOWN`。
-- Firefly 或 Kafka 重启不造成任务丢失或重复部署。
+- 专用结果 Inbox 正确拆分 events[]、提交后 ACK；ACK 后崩溃可人工恢复且不会重复 Invoke。
+- 无效对象/读取失败/崩溃接管最终有界进入未知状态并只推进一次失败，不无限 FAILURE/对账。
+- DDL 全列 NOT NULL，缺省值语义明确，占位云 ID 唯一且不会误传云 API；Once 不提供停止承诺。
 - IAM 分离制品访问、平台结果存储和 Bucket 通知身份，只覆盖指定 TOS Prefix、Command
   和必要的只读/异常对账 API；ECS 不持有 TOS/Kafka 长期凭据。
 - 单元、集成、脚本安全、Staging 合同测试全部通过，`mvn clean verify` 成功。
@@ -2229,10 +2649,13 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 - TOS ListObjectsV2：<https://www.volcengine.com/docs/6349/74861>
 - TOS 普通上传：<https://www.volcengine.com/docs/6349/92800>
 - TOS 事件通知到 Kafka：<https://www.volcengine.com/docs/6349/1817509>
+- TOS 事件通知概述（地域与 events[] 格式）：<https://docs.volcengine.com/docs/6349/128981?lang=zh>
 - TOS PutBucketNotificationV2：<https://www.volcengine.com/docs/6349/1183362>
 - STS AssumeRole 临时授权：<https://www.volcengine.com/docs/6720/1144521>
 - 云助手 API 概览：<https://api.volcengine.com/api-docs/view/115526>
 - 云助手 InvokeCommand：<https://www.volcengine.com/docs/6396/170898>
+- 查询任务及 Parameters 返回结构：<https://docs.volcengine.com/docs/6396/170906?lang=zh>
+- StopInvocation 使用限制：<https://docs.volcengine.com/docs/6396/170897?lang=zh>
 - 创建自定义命令：<https://www.volcengine.com/docs/6396/170743>
 - 查看命令执行结果：<https://www.volcengine.com/docs/6396/170924>
 - 云助手运维概述：<https://www.volcengine.com/docs/6396/164682>
@@ -2240,3 +2663,21 @@ SQL 不能完成应用级 AES-GCM 和 AAD，所以不得只靠 DDL 把明文复�
 
 SDK 版本和 API 参数在实施时必须再次以 Maven Central、官方仓库和 API Explorer 为准；
 本文的架构边界、安全规则、数据状态机和验收标准不依赖某个生成 SDK 的具体方法名。
+
+## 21. PR #50 评审闭环（v1.6）
+
+| 评论 | 设计修订 | 对应章节 |
+| --- | --- | --- |
+| 1. NULL 与派发前云 ID | Volcano 新表统一 NOT NULL，明确哨兵、唯一 pending ID、操作 ID 和 CAS/GC 边界；不声称现有全库禁 NULL | 6.0、8.3、9.1～9.2 |
+| 2. Inbox 不可原样复用 | 新增结果 Inbox、events[] 子项归档、源位置/业务版本去重、category 和人工恢复 | 8.6.4、9.2.1、10、11.5 |
+| 3. Bootstrap 秘密边界 | 明确可信管理员模型，env -i 非沙箱，Token 是 Attempt 认证而非执行证明 | 2.8、8.6.2、8.8～8.9 |
+| 4. Parameters 回显 | ECS 白名单映射、禁止 SDK 原文日志，Invocation 查询者纳入对应结果可信域 | 5.3、13、14.2 |
+| 5. Once 停止不成立 | 移除 Stop 方法/权限/重试承诺，依靠硬超时和未知终态，不等同回滚 | 9.4.1、11.2、13 |
+| 6. 上传与 TTL 预算 | 业务/上传双预算，启动门限，默认业务上限 3120 秒，校验两种签名凭据 expiry | 8.3、8.8、12.1 |
+| 7. 无效结果无终态 | REJECTED 版本不重开，人工恢复次数有界，Deadline 各分支与崩溃接管最终收敛 | 8.6.4、9.4、11.5 |
+| 8. Region 与通道能力 | 中国区 MVP allowlist、通知生效/配置验收及只读健康门禁，不静默降级 | 8.1、8.6.1、12 |
+| 9. 综合参数大小 | 创建/派发分开校验，实际 URL/默认值计入双重保守预算，云端口径需合同验证 | 8.5.1、16.4 |
+| Token/SASL 补充 | 小写 hex ASCII 的 SHA-256 契约，独立 SASL 消费身份与只读秘密文件注入 | 8.6.2、12 |
+
+本节表示评审要求已落实到设计与测试计划，不表示实现、云账号权限配置或 Staging 测试
+已经完成；不会因为文档闭环就自动合并 PR 或关闭评审人的评论。
