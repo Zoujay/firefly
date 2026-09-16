@@ -25,11 +25,11 @@ TOS/ECS OpenAPI。本次只实现 Volcano 部署最小闭环：
 - 手动执行时，从 Job 配置的 TOS Prefix 当前层选择最近 10 个制品之一。
 - 后端对选中对象执行一次 `HeadObject`，生成不可变制品快照。
 - ECS 从预签名 URL 直拉制品，校验 SHA-256，完成 `TAR_GZ`/`ZIP`/`FILE` 准备后执行用户部署脚本。
-- 运行期只轮询云助手状态，不做自动重试。
+- 部署 worker 调用 `RunCommand` 后在本地同步等待云助手终态；等待超时直接置 `TIMEOUT`，后台不运行轮询 Scheduler。
 
 ### 1.2 明确不做
 
-- 不自动重试、不自动恢复、不自动重派部署。
+- 不自动重试、不自动恢复、不自动重派部署；等待超时直接置 `TIMEOUT`，之后 Firefly 不再自动查询。
 - 不提供 Pipeline Retry、部署停止、取消或回滚。
 - 不实现 TOS 结果对象、结果 Bucket、TOS 事件通知、结果 Kafka、Result Inbox、Deadline Reconciler。
 - 不实现健康检查脚本、`rollbackScript`、`CUSTOM_FULL_SCRIPT`。
@@ -61,10 +61,11 @@ Firefly 不下载制品后再上传 ECS，而是：
 3. Firefly 调 `RunCommand` 执行可信 Bootstrap；
 4. ECS 在本地下载、校验、解压和部署。
 
-### 2.4 使用 `RunCommand` + 状态轮询，不引入 Command Revision
+### 2.4 使用 `RunCommand` + 同步等待，不引入 Command Revision
 
 最小版本不创建和回收云端自定义命令，直接使用 `RunCommand` 提交渲染后的 Bootstrap。
-每次部署都有自己的 `invocation_id`，后台 Scheduler 调 `DescribeInvocations` 直到终态。
+每个部署在自己的 worker 线程内同步调用 `DescribeInvocations`，直到终态或等待超时；
+不存在后台 Scheduler、轮询表和自动恢复。
 
 `RunCommand` 允许提交任意命令内容，IAM 无法限制到某个已持久化命令版本。本设计接受这一
 取舍：脚本只能由部署管理员配置，所有脚本修改、审批和运行 Hash 必须写审计；如果后续要
@@ -82,7 +83,7 @@ Firefly 不下载制品后再上传 ECS，而是：
 - TOS/ECS 调用失败：部署失败；
 - `RunCommand` 失败：部署失败；
 - 云助手终态非 0：部署失败；
-- 超时无法确认：标记 `UNKNOWN`，人工检查；
+- 同步等待超过截止时间：直接标记 `TIMEOUT`，不继续查询、不重发；
 - 用户要重来：重新发起一次手动执行。
 
 系统不自动重发 `RunCommand`，不自动创建新 Attempt，不自动重放任何消息。
@@ -106,8 +107,9 @@ flowchart LR
     ECSAPI --> AGENT["ECS Cloud Assistant Agent"]
     AGENT -->|GET 预签名 URL| TOS
     AGENT --> HOST["Release Directory + 用户部署脚本"]
-    SCHED["Invocation Polling Scheduler"] --> ECSC
-    SCHED --> DB["volcano_deploy_build"]
+    DS --> WAITER["Invocation Sync Waiter"]
+    WAITER --> ECSC
+    WAITER --> DB["volcano_deploy_build"]
 ```
 
 ## 4. Maven 模块
@@ -540,41 +542,44 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
 - `invocation_id=''` 表示尚未拿到云助手 InvocationId，不参与任何云 API 查询。
 - 不创建 `volcano_deployment_attempt`、`volcano_command_revision`、结果 Inbox 等表。
 
-## 10. 状态机与轮询
+## 10. 状态机与同步等待
 
 状态：
 
 ```text
-PENDING -> DISPATCHING -> RUNNING -> SUCCESS
-        -> FAILURE                 -> FAILURE
-        -> UNKNOWN                 -> UNKNOWN
+PENDING -> RUNNING -> SUCCESS
+                  -> FAILURE
+                  -> TIMEOUT
 ```
 
-- `PENDING`：已创建，尚未调用 `RunCommand`。
-- `DISPATCHING`：`RunCommand` 可能已经提交，但 InvocationId 尚未落库或调用结果未知。
-- `RUNNING`：InvocationId 已落库，等待云助手终态。
+- `PENDING`：部署记录已创建，尚未拿到云助手 InvocationId。
+- `RUNNING`：`RunCommand` 已返回 InvocationId，worker 正在同步等待终态。
 - `SUCCESS`：云助手终态为成功且 `ExitCode=0`。
 - `FAILURE`：`RunCommand` 明确失败，或云助手终态为失败且退出码非 0。
-- `UNKNOWN`：超时/网络异常/云助手返回无法归类，不自动重试，人工查看。
+- `TIMEOUT`：同步等待超过截止时间，Firefly 不再等待。该状态不证明 ECS 进程已停止，
+  也不触发后续自动查询或重发。
 
-Scheduler 简单逻辑：
+同步等待规则：
 
-1. 每 5～10 秒查询 `status = 'RUNNING'` 且 `invocation_id LIKE 'ivk-%'` 的记录；
-2. 调用 `DescribeInvocations(InvocationId)`；非终态保持 `RUNNING`；
-3. 终态更新 `volcano_deploy_build`，并通过现有 Outbox 发送 Plugin 终态消息；
-4. `dispatched_at + commandTimeout + 5分钟` 仍非终态则置 `UNKNOWN`，不重复调用 `RunCommand`。
+1. `VolcanoDeployPluginBuildService` 在现有消息处理 worker 内执行，不阻塞 Kafka poll
+   线程；如果 worker 并发不足，再单独配置部署执行线程池。
+2. 生成预签名 URL、渲染 Bootstrap，设置 `InvocationName=部署 public_id`；
+3. 调用一次 `RunCommand`；
+4. 成功返回 InvocationId：CAS 写入 `invocation_id`、`dispatched_at=now`，状态置 `RUNNING`；
+5. worker 在 `dispatched_at + commandTimeoutSeconds + syncWaitGrace` 之前循环调用
+   `DescribeInvocations`，每次间隔 `statusQueryInterval`；
+6. 拿到终态：`SUCCESS` 或 `FAILURE`，在同一事务更新 `volcano_deploy_build`、确定退出码并
+   通过现有 Outbox 发 Plugin 终态消息；
+7. 超过截止时间仍非终态：CAS 将状态置 `TIMEOUT`，写入 `error_code=DEPLOYMENT_TIMEOUT`，
+   通过 Outbox 发送失败终态；之后不再查询云助手；
+8. `RunCommand` 请求本身超时且没有 InvocationId：直接置 `TIMEOUT`，不重新提交；
+9. 等待期间不得持有数据库事务；每次状态更新使用旧状态 CAS；
+10. worker 或 Firefly 崩溃时不自动恢复等待线程，也不重新查询。`PENDING`/`RUNNING`
+    记录保留现场，由人工在云助手控制台核实；系统不自动补查、不自动重发，也不把已经
+    发给 Pipeline 的 `TIMEOUT` 反转成成功。
 
-对 `PENDING`/`DISPATCHING` 的记录，`RunCommand` 的 `InvocationName` 固定为部署记录
-`public_id`。Scheduler 在创建或派发后等待 2 分钟仍未拿到 InvocationId 时，按
-`InvocationName` 调用一次 `DescribeInvocations`：
-
-- 唯一匹配：CAS 写入真实 InvocationId，进入 `RUNNING`；
-- 无匹配：置 `FAILURE`，不重新提交；
-- 多个匹配：置 `UNKNOWN`，人工核对，不重新提交。
-
-Scheduler 允许多实例重复查询云助手，`DescribeInvocations` 是只读操作；最终状态更新必须带旧
-状态条件，Outbox 消息 UUID 继续使用现有 `BusinessMessageUUID.plugin(...)` 规则。
-
+`DescribeInvocations` 返回结构包含 `CommandContent`/`Parameters`，Adapter 必须使用白名单，
+只映射 InvocationId、InvocationStatus、ExitCode、Output 等安全字段。
 ## 11. Plugin 接入
 
 新增类：
@@ -589,7 +594,7 @@ firefly-app/src/main/java/firefly/volcano
 ├── service/VolcanoConnectionService.java
 ├── service/VolcanoObjectService.java
 ├── service/VolcanoDeployService.java
-├── service/VolcanoInvocationPollingScheduler.java
+├── service/VolcanoInvocationWaiter.java
 ├── model/...
 └── dao/...
 
@@ -608,13 +613,13 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 4. `PipelineBuildServiceImpl` 在创建 Build 前解析每个 Volcano Job 的 `artifactSelectionId`。
 5. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`：
    - 创建 `volcano_deploy_build`，状态 `PENDING`；
-   - 生成预签名 URL，渲染 Bootstrap，设置 `InvocationName=public_id`，发起派发前设置 `dispatched_at=now`；
-   - 调 `RunCommand`；拿到 InvocationId 后用 CAS 写入并进入 `RUNNING`；
-   - 调用明确失败：置 `FAILURE`；超时/未知：置 `DISPATCHING`；
-   - 不自动重发、不自动创建新的部署记录；`PENDING/DISPATCHING` 由 Scheduler 按
-     `InvocationName` 做一次只读核对。
-6. `VolcanoInvocationPollingScheduler` 轮询终态并写 Outbox，只查状态，不重派。
-7. Pipeline 删除时校验没有非终态部署，再按逻辑引用顺序删除 Volcano 配置和 Binding。
+   - 生成预签名 URL，渲染 Bootstrap，设置 `InvocationName=public_id`；
+   - 调 `RunCommand`；明确失败直接置 `FAILURE`，请求超时且无 InvocationId 直接置 `TIMEOUT`；
+   - 拿到 InvocationId 后 CAS 写入并进入 `RUNNING`，然后调用 `VolcanoInvocationWaiter` 同步等待；
+   - 等待到终态写 `SUCCESS`/`FAILURE`，等待超时写 `TIMEOUT`；
+   - 不自动重发、不自动创建新的部署记录、不重新启动等待。
+6. `VolcanoInvocationWaiter` 只在当前 worker 内循环 `DescribeInvocations`，不是后台 Scheduler。
+7. Pipeline 删除时校验没有 `PENDING`/`RUNNING` 部署，`TIMEOUT` 视为终态，可按逻辑引用顺序删除。
 
 ## 12. API
 
@@ -655,8 +660,8 @@ firefly:
       allowed-run-as-users: ${VOLCANO_ALLOWED_RUN_AS_USERS:firefly-deploy}
       allowed-deploy-roots: ${VOLCANO_ALLOWED_DEPLOY_ROOTS:/opt/firefly/apps}
     deployment:
-      poll-interval: ${VOLCANO_POLL_INTERVAL:5s}
-      unknown-after-timeout: ${VOLCANO_UNKNOWN_AFTER_TIMEOUT:5m}
+      status-query-interval: ${VOLCANO_STATUS_QUERY_INTERVAL:3s}
+      sync-wait-grace: ${VOLCANO_SYNC_WAIT_GRACE:30s}
 ```
 
 自定义 Endpoint 只允许 `https`，Host 必须在管理员 allowlist 中。
@@ -704,7 +709,7 @@ ECS_INSTANCE_NOT_RUNNING
 ECS_CLOUD_ASSISTANT_UNAVAILABLE
 ECS_RUN_COMMAND_FAILED
 ECS_COMMAND_TOO_LARGE
-ECS_INVOCATION_UNKNOWN
+DEPLOYMENT_TIMEOUT
 DEPLOYMENT_PATH_INVALID
 DEPLOYMENT_PATH_OUTSIDE_ALLOWLIST
 DEPLOYMENT_SCRIPT_INVALID
@@ -724,15 +729,15 @@ DEPLOYMENT_USER_SCRIPT_FAILED
 - TOS 列表、Head、预签名 TTL、404/403/5xx/网络异常映射。
 - 手动选制品 Top-10、前缀边界、客户伪造快照拒绝。
 - 命令渲染大小校验、URL shell 转义和 Host allowlist。
-- ECS Invocation 状态、退出码映射和终态 CAS。
+- ECS Invocation 状态、退出码映射、同步等待截止时间和 `TIMEOUT` CAS。
 
 ### 16.2 集成测试
 
 - Testcontainers MySQL + Fake TOS/ECS Client。
 - Connection、Binding、Deploy Config、Artifact Selection 落库。
 - 手动执行缺选、无 SHA、越 Prefix、非当前层被拒绝。
-- `RunCommand` 成功、明确失败、超时未知。
-- Scheduler 不重复重派，只更新终态；Outbox 幂等。
+- `RunCommand` 成功、明确失败、请求超时无 InvocationId。
+- 同步等待：终态立即返回、超时置 `TIMEOUT`、`RunCommand` 只调用一次、Outbox 幂等。
 - Pipeline/Plugin Build 创建和删除路径。
 
 ### 16.3 脚本测试
@@ -770,7 +775,7 @@ mvn clean verify
 2. Connection 加密存储和 Pipeline Binding。
 3. TOS 列表/Head/预签名和手动选制品 API。
 4. ECS 实例查询、Bootstrap 渲染、`RunCommand`。
-5. `VOLCANO_DEPLOY` Plugin Config/Build 接入和 Invocation Scheduler。
+5. `VOLCANO_DEPLOY` Plugin Config/Build 接入和同步等待。
 6. 单元、集成、脚本和 Staging 合同测试。
 
 ## 19. 完成标准
@@ -780,5 +785,5 @@ mvn clean verify
 - TOS 对象可列举、Head 和预签名 GET；Firefly 不实现本地制品下载。
 - 手动执行时每个 Volcano Job 必须选择一个当前层制品，后端 HeadObject 生成不可变快照。
 - ECS 能从私有 TOS 直拉制品，校验 SHA-256 后执行用户部署脚本。
-- `RunCommand` 和 `DescribeInvocations` 可覆盖成功、失败和未知终态。
-- 不实现任何自动重试、自动恢复、Pipeline Retry、停止/取消/回滚和结果事件链路。
+- `RunCommand` 和同步 `DescribeInvocations` 覆盖成功、失败和 `TIMEOUT` 终态；超时不自动查询、不自动重发。
+- 不实现任何自动重试、自动恢复、Pipeline Retry、停止/取消/回滚和结果事件链路；等待超时只写 `TIMEOUT`。
