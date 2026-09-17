@@ -20,7 +20,8 @@ TOS/ECS OpenAPI。本次只实现 Volcano 部署最小闭环：
 - 新建 `firefly-volcano` Maven 模块和 Spring Boot 自动装配。
 - Pipeline 级 Volcano Connection，AK/SK 使用 AES-256-GCM 加密落库。
 - TOS 对象列表、`HeadObject`、预签名 GET URL。
-- ECS 实例列表、云助手 Agent 状态检查、`RunCommand`、`DescribeInvocations`。
+- ECS 实例列表、云助手 Agent 状态检查、`RunCommand`、`DescribeInvocations`、
+  `DescribeInvocationResults`。
 - Pipeline Plugin 类型 `VOLCANO_DEPLOY`。
 - 手动执行时，从 Job 配置的 TOS Prefix 当前层选择最近 10 个制品之一。
 - 后端对选中对象执行一次 `HeadObject`，生成不可变制品快照。
@@ -64,8 +65,11 @@ Firefly 不下载制品后再上传 ECS，而是：
 ### 2.4 使用 `RunCommand` + 同步等待，不引入 Command Revision
 
 最小版本不创建和回收云端自定义命令，直接使用 `RunCommand` 提交渲染后的 Bootstrap。
-每个部署在自己的 worker 线程内同步调用 `DescribeInvocations`，直到终态或等待超时；
-不存在后台 Scheduler、轮询表和自动恢复。
+每个部署由独立部署 executor 同步调用 `DescribeInvocations` 查询任务状态，终态后调用
+`DescribeInvocationResults` 取退出码和输出；不存在后台 Scheduler、轮询表和自动恢复。
+
+`RunCommand` 的 SDK 自动重试和 HTTP 自动重试必须显式关闭，业务层只发起一次请求。
+响应丢失时按 `TIMEOUT` 处理，不重新提交。
 
 `RunCommand` 允许提交任意命令内容，IAM 无法限制到某个已持久化命令版本。本设计接受这一
 取舍：脚本只能由部署管理员配置，所有脚本修改、审批和运行 Hash 必须写审计；如果后续要
@@ -217,13 +221,19 @@ public interface VolcanoEcsCommandClient {
     RunCommandResult runCommand(RunCommand command);
 
     InvocationStatus describeInvocation(DescribeInvocationCommand command);
+
+    InvocationResult describeInvocationResult(DescribeInvocationResultCommand command);
 }
 ```
 
 - `RunCommand` 输入：InstanceId、命令正文、工作目录、`runAsUser`、超时、InvocationName、
   Tag。
-- `DescribeInvocations` 响应使用白名单映射，只取 InvocationId、InvocationStatus、ExitCode、
-  Output 等安全字段，必须丢弃 `CommandContent`、`Parameters` 等可能包含预签名 URL 的字段。
+- `DescribeInvocations` 只用于查询任务级状态，取 InvocationId、InvocationStatus 等字段；
+  不在这里读取 ExitCode/Output。
+- 任务到达终态后调用 `DescribeInvocationResults`，按 InvocationId + InstanceId 查询每个
+  实例的 ExitCode 和 Output；单实例 MVP 取目标实例结果。
+- 两个查询接口的响应都必须白名单映射，丢弃 `CommandContent`、`Parameters` 等可能包含
+  预签名 URL 的字段。
 - 不提供 `StopInvocation`、`CreateCommand`、`DeleteCommand`。
 
 ### 5.3 错误转换
@@ -323,7 +333,8 @@ GET /api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent?limit=10
 - 按 `LastModified` 倒序、Key 正序排序，最多返回 10 条。
 - 返回 `key`、`size`、`lastModified`、`etag`、`displayName`；此阶段不返回 SHA-256。
 - 后端最多扫描 10000 个对象，超出返回 `ARTIFACT_SCAN_LIMIT_EXCEEDED`，不返回不完整结果。
-- 前端只回传选中 `key`、可选 `versionId` 和 `handling`，后端不接受 ETag、大小、SHA 等客户端快照。
+- 前端只回传选中 `key` 和可选 `versionId`；后端按扩展名推断 `handling`，不接受客户端
+  提交的 ETag、大小、SHA 或 handling。
 
 ### 7.3 选中对象快照
 
@@ -332,9 +343,51 @@ GET /api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent?limit=10
 1. 调用 `HeadObject` 获取 VersionId、ETag、大小、LastModified 和自定义元数据；
 2. 从 `x-tos-meta-firefly-sha256` 读取 SHA-256；
 3. SHA-256 必须存在且为 64 位小写十六进制，否则拒绝部署；
-4. 生成不可变快照并写入 `volcano_artifact_selection`。
+4. 按扩展名推断 `artifact_handling`：`.tar.gz`/`.tgz` -> `TAR_GZ`，`.zip` -> `ZIP`，
+   其他 -> `FILE`；
+5. 生成不可变快照并写入 `volcano_artifact_selection`。
 
-### 7.4 预签名 GET
+### 7.4 手动执行的创建顺序
+
+`POST /manual_trigger/pipeline` 的每个 Volcano Job 输入只包含选中的 `key`、可选
+`versionId`，后端按以下顺序处理：
+
+1. 解析 Pipeline Binding、Job 配置、Prefix 和允许的制品范围；
+2. 在数据库事务外调用 `HeadObject`，校验 Key 仍在 Prefix 当前层、读取 VersionId/ETag/
+   大小/LastModified/SHA-256；
+3. 开启一个数据库短事务：
+   - 创建 `PipelineBuild` 并 flush 获取 ID；
+   - 按现有流程创建 `StageBuild`、`JobBuild`；
+   - 为每个 Volcano Job 插入 `volcano_artifact_selection`，同时写入
+     `pipeline_build_id`、`job_config_id` 和制品快照；
+   - 提交事务；
+4. 事务提交后，现有 Pipeline 调度流程创建 Plugin Build；
+5. `JobBuildContext` 增加 `artifactSelectionId` 字段，`VolcanoDeployPluginBuildService`
+   直接用该 ID 查询 `volcano_artifact_selection`，不在 Plugin Build 阶段重新选制品。
+
+请求示例（只包含选择一个 Volcano Job 的情况）：
+
+```json
+{
+  "pipelineId": 1001,
+  "uuid": "<64-char-request-uuid>",
+  "triggerModel": "MANUAL",
+  "triggerMatch": "ACCURATE",
+  "triggerOrigin": "VOLCANO",
+  "jobInputs": {
+    "<64-char-volcano-job-uuid>": {
+      "artifact": {
+        "key": "order-service/releases/order-service-1.8.2.tar.gz",
+        "versionId": null
+      }
+    }
+  }
+}
+```
+
+任一 HeadObject 校验失败时不创建 Pipeline Build，也不留下孤立选择记录。
+
+### 7.5 预签名 GET
 
 - 制品 Bucket 保持私有。
 - TTL 默认 10 分钟，覆盖云助手排队和 ECS 下载时间，不需要覆盖整个部署命令时长。
@@ -471,7 +524,12 @@ CREATE TABLE `firefly`.`volcano_deploy_config`
     `deploy_root`             VARCHAR(512) NOT NULL,
     `run_as_user`             VARCHAR(64) NOT NULL,
     `deploy_script`           TEXT NOT NULL,
+    `deploy_script_sha256`    CHAR(64) NOT NULL,
     `command_timeout_seconds` INT NOT NULL,
+    `created_by`              VARCHAR(128) NOT NULL,
+    `updated_by`              VARCHAR(128) NOT NULL,
+    `approved_by`             VARCHAR(128) NOT NULL DEFAULT '',
+    `approved_at`             DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `created_at`              DATETIME(6) NOT NULL,
     `updated_at`              DATETIME(6) NOT NULL,
     PRIMARY KEY (`id`),
@@ -519,6 +577,8 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
     `plugin_id`             BIGINT(20) NOT NULL,
     `job_build_id`          BIGINT(20) NOT NULL,
     `artifact_selection_id` BIGINT(20) NOT NULL,
+    `deploy_script_sha256`  CHAR(64) NOT NULL,
+    `execution_config_sha256` CHAR(64) NOT NULL,
     `status`                VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     `invocation_id`         VARCHAR(128) NOT NULL DEFAULT '',
     `exit_code`             INT NOT NULL DEFAULT -1,
@@ -540,9 +600,13 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
 - 所有时间按 UTC 保存；API 将 `1970-01-01` 和 `exit_code=-1` 映射为未发生/未知。
 - 一个 `job_build_id` 只允许一个 `volcano_deploy_build`，失败后不自动创建第二个。
 - `invocation_id=''` 表示尚未拿到云助手 InvocationId，不参与任何云 API 查询。
+- 创建部署记录时，从 `volcano_deploy_config` 复制 `deploy_script_sha256`，并对
+  `region + instanceId + deployRoot + applicationName + runAsUser + commandTimeout`
+  计算规范 JSON 的 `execution_config_sha256`。配置后续被修改不会改变历史部署审计。
 - 不创建 `volcano_deployment_attempt`、`volcano_command_revision`、结果 Inbox 等表。
+- 不持久化包含预签名 URL 的完整命令正文。
 
-## 10. 状态机与同步等待
+## 10. 状态机、事务与同步等待
 
 状态：
 
@@ -553,33 +617,50 @@ PENDING -> RUNNING -> SUCCESS
 ```
 
 - `PENDING`：部署记录已创建，尚未拿到云助手 InvocationId。
-- `RUNNING`：`RunCommand` 已返回 InvocationId，worker 正在同步等待终态。
-- `SUCCESS`：云助手终态为成功且 `ExitCode=0`。
-- `FAILURE`：`RunCommand` 明确失败，或云助手终态为失败且退出码非 0。
+- `RUNNING`：`RunCommand` 已返回 InvocationId，部署 executor 正在同步等待终态。
+- `SUCCESS`：任务终态成功且 `DescribeInvocationResults.ExitCode=0`。
+- `FAILURE`：`RunCommand` 明确失败，或任务终态失败且退出码非 0。
 - `TIMEOUT`：同步等待超过截止时间，Firefly 不再等待。该状态不证明 ECS 进程已停止，
   也不触发后续自动查询或重发。
 
-同步等待规则：
+### 10.1 事务与线程边界
 
-1. `VolcanoDeployPluginBuildService` 在现有消息处理 worker 内执行，不阻塞 Kafka poll
-   线程；如果 worker 并发不足，再单独配置部署执行线程池。
-2. 生成预签名 URL、渲染 Bootstrap，设置 `InvocationName=部署 public_id`；
-3. 调用一次 `RunCommand`；
-4. 成功返回 InvocationId：CAS 写入 `invocation_id`、`dispatched_at=now`，状态置 `RUNNING`；
-5. worker 在 `dispatched_at + commandTimeoutSeconds + syncWaitGrace` 之前循环调用
+现有 `KafkaMessageProcessingTransaction.process()` 会在一个 MySQL 事务内执行
+`MessageCenter` 插件处理逻辑，而 `MessageListener` 还用共享的 24 个并发许可调度处理
+线程。部署流程不能在这个事务和线程里做云调用或同步等待：
+
+1. Volcano Build 的数据库短事务只创建 `volcano_deploy_build`，状态 `PENDING`，并提交。
+2. 短事务提交后，通过 `TransactionSynchronization.afterCommit` 把任务投递到独立的
+   `VolcanoDeployExecutor`，不复用消息处理 worker 的 24 个许可。
+3. 部署 executor 调 `RunCommand`、写 InvocationId、同步等待和写终态，整个等待期间不持有
+   数据库事务；每次状态落库使用独立短事务和旧状态 CAS。
+4. 终态更新 `volcano_deploy_build` 与写 Outbox 在同一个新短事务中提交。
+5. `afterCommit` 投递被 executor 拒绝（队列满）时，在新事务中把 `PENDING` 置 `FAILURE`，
+   不重派。
+
+这样既不会让数据库事务跨越部署时长，也不会因为长时间等待占满消息处理许可而阻塞
+Kafka poll。
+
+### 10.2 同步等待规则
+
+1. 生成预签名 URL、渲染 Bootstrap，设置 `InvocationName=部署 public_id`；
+2. 部署 executor 调用一次 `RunCommand`；
+3. 成功返回 InvocationId：短事务 CAS 写入 `invocation_id`、`dispatched_at=now`，状态置
+   `RUNNING`；
+4. 在 `dispatched_at + commandTimeoutSeconds + syncWaitGrace` 之前循环调用
    `DescribeInvocations`，每次间隔 `statusQueryInterval`；
-6. 拿到终态：`SUCCESS` 或 `FAILURE`，在同一事务更新 `volcano_deploy_build`、确定退出码并
-   通过现有 Outbox 发 Plugin 终态消息；
-7. 超过截止时间仍非终态：CAS 将状态置 `TIMEOUT`，写入 `error_code=DEPLOYMENT_TIMEOUT`，
-   通过 Outbox 发送失败终态；之后不再查询云助手；
+5. 任务终态后调用 `DescribeInvocationResults`，按目标 InstanceId 取 ExitCode/Output；
+6. `ExitCode=0` 且任务成功：CAS 置 `SUCCESS`；否则置 `FAILURE`；终态与 Outbox 同事务提交；
+7. 超过截止时间仍非终态：CAS 置 `TIMEOUT`，写入 `error_code=DEPLOYMENT_TIMEOUT`，与 Outbox
+   同事务提交；之后不再查询云助手；
 8. `RunCommand` 请求本身超时且没有 InvocationId：直接置 `TIMEOUT`，不重新提交；
-9. 等待期间不得持有数据库事务；每次状态更新使用旧状态 CAS；
-10. worker 或 Firefly 崩溃时不自动恢复等待线程，也不重新查询。`PENDING`/`RUNNING`
-    记录保留现场，由人工在云助手控制台核实；系统不自动补查、不自动重发，也不把已经
-    发给 Pipeline 的 `TIMEOUT` 反转成成功。
+9. `RunCommand` 明确失败：置 `FAILURE`；
+10. 部署 executor 或 Firefly 崩溃时不自动恢复等待线程，也不重新查询。`PENDING`/`RUNNING`
+    记录保留现场，由人工在云助手控制台核实；系统不自动补查、不自动重发。
 
-`DescribeInvocations` 返回结构包含 `CommandContent`/`Parameters`，Adapter 必须使用白名单，
-只映射 InvocationId、InvocationStatus、ExitCode、Output 等安全字段。
+`DescribeInvocations` 与 `DescribeInvocationResults` 返回结构可能包含 `CommandContent`、
+`Parameters` 等字段，Adapter 必须使用白名单映射，只保留任务状态、退出码、输出和实例 ID。
+
 ## 11. Plugin 接入
 
 新增类：
@@ -594,6 +675,7 @@ firefly-app/src/main/java/firefly/volcano
 ├── service/VolcanoConnectionService.java
 ├── service/VolcanoObjectService.java
 ├── service/VolcanoDeployService.java
+├── service/VolcanoDeployExecutor.java
 ├── service/VolcanoInvocationWaiter.java
 ├── model/...
 └── dao/...
@@ -608,18 +690,29 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 修改点：
 
 1. `PluginType` 增加 `VOLCANO_DEPLOY`。
-2. `VolcanoDeployPluginConfigService` 实现 `IPluginConfig`，保存 `volcano_deploy_config`。
-3. `PipelineBuildRequest` 增加按 Job UUID 索引的 `jobInputs`。
-4. `PipelineBuildServiceImpl` 在创建 Build 前解析每个 Volcano Job 的 `artifactSelectionId`。
+2. `VolcanoDeployPluginConfigService` 实现 `IPluginConfig`，保存 `volcano_deploy_config`；
+   保存时校验脚本、计算并持久化 `deploy_script_sha256`，记录 `created_by`/`updated_by`，
+   审批后写 `approved_by`/`approved_at`。脚本变更必须产生新的 SHA-256。
+3. `PipelineBuildRequest` 增加按 Job UUID 索引的 `jobInputs`，仅包含 `key`/`versionId`。
+4. `PipelineBuildServiceImpl` 在数据库短事务中创建 Pipeline/Stage/Job Build 和
+   `volcano_artifact_selection`，并把 `artifactSelectionId` 写入 `JobBuildContext`。
 5. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`：
-   - 创建 `volcano_deploy_build`，状态 `PENDING`；
-   - 生成预签名 URL，渲染 Bootstrap，设置 `InvocationName=public_id`；
-   - 调 `RunCommand`；明确失败直接置 `FAILURE`，请求超时且无 InvocationId 直接置 `TIMEOUT`；
-   - 拿到 InvocationId 后 CAS 写入并进入 `RUNNING`，然后调用 `VolcanoInvocationWaiter` 同步等待；
+   - 在现有短事务内创建 `volcano_deploy_build`，状态 `PENDING`；
+   - 事务内不调云 API、不等待；该方法只登记部署任务并返回；
+   - 事务提交后通过 `TransactionSynchronization.afterCommit` 投递到 `VolcanoDeployExecutor`；
+   - Executor 内生成预签名 URL、渲染 Bootstrap、设置 `InvocationName=public_id`；
+   - `RunCommand` 只调用一次；明确失败直接置 `FAILURE`，请求超时且无 InvocationId 直接置
+     `TIMEOUT`；
+   - 拿到 InvocationId 后短事务 CAS 写入并进入 `RUNNING`，然后调用
+     `VolcanoInvocationWaiter` 同步等待；
    - 等待到终态写 `SUCCESS`/`FAILURE`，等待超时写 `TIMEOUT`；
    - 不自动重发、不自动创建新的部署记录、不重新启动等待。
-6. `VolcanoInvocationWaiter` 只在当前 worker 内循环 `DescribeInvocations`，不是后台 Scheduler。
+6. `VolcanoDeployExecutor` 是独立有界线程池，不复用 `MessageListener` 的 24 个处理许可；
+   `VolcanoInvocationWaiter` 只在该线程内循环查询状态和结果，不是后台 Scheduler。
 7. Pipeline 删除时校验没有 `PENDING`/`RUNNING` 部署，`TIMEOUT` 视为终态，可按逻辑引用顺序删除。
+8. 在 `PipelineBuildServiceImpl.retryPipeline` 修改任何状态之前，检查该 Pipeline Build 的
+   Job 是否包含 `VOLCANO_DEPLOY`；包含则直接返回 `PIPELINE_RETRY_UNSUPPORTED_FOR_VOLCANO`，
+   不得进入通用 Stage/Job/Build 重置逻辑。
 
 ## 12. API
 
@@ -637,7 +730,10 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
 | `GET` | `/api/volcano/deployments` | 分页查询部署 |
 | `GET` | `/api/volcano/deployments/{publicId}` | 查询详情 |
 
-不提供 `/stop`、Retry、Command Revision 查询、对象内容下载和结果 Inbox 恢复接口。
+不新增 Volcano Retry API；已有 `POST /pipeline-builds/{pipelineBuildID}/retry` 必须在修改
+任何状态前检查并拒绝包含 `VOLCANO_DEPLOY` 的 Build，返回
+`PIPELINE_RETRY_UNSUPPORTED_FOR_VOLCANO`。不提供 `/stop`、Command Revision 查询、对象内容
+下载和结果 Inbox 恢复接口。
 
 ## 13. 配置项
 
@@ -655,6 +751,7 @@ firefly:
     ecs:
       connect-timeout: ${VOLCANO_ECS_CONNECT_TIMEOUT:3s}
       read-timeout: ${VOLCANO_ECS_READ_TIMEOUT:15s}
+      run-command-max-retries: ${VOLCANO_RUN_COMMAND_MAX_RETRIES:0}
       max-command-bytes: ${VOLCANO_MAX_COMMAND_BYTES:16384}
       default-run-as-user: ${VOLCANO_DEFAULT_RUN_AS_USER:firefly-deploy}
       allowed-run-as-users: ${VOLCANO_ALLOWED_RUN_AS_USERS:firefly-deploy}
@@ -662,7 +759,14 @@ firefly:
     deployment:
       status-query-interval: ${VOLCANO_STATUS_QUERY_INTERVAL:3s}
       sync-wait-grace: ${VOLCANO_SYNC_WAIT_GRACE:30s}
+      executor-core-size: ${VOLCANO_DEPLOY_EXECUTOR_CORE_SIZE:4}
+      executor-max-size: ${VOLCANO_DEPLOY_EXECUTOR_MAX_SIZE:8}
+      executor-queue-capacity: ${VOLCANO_DEPLOY_EXECUTOR_QUEUE_CAPACITY:64}
 ```
+
+- `run-command-max-retries=0`：`RunCommand` 的 SDK 自动重试和 HTTP 自动重试都关闭，
+  防止云端已受理但响应丢失时重复提交。
+- `executor-*`：部署 executor 独立有界，不复用消息处理 worker 的 24 个许可。
 
 自定义 Endpoint 只允许 `https`，Host 必须在管理员 allowlist 中。
 
@@ -684,6 +788,7 @@ ecs:DescribeInstances
 ecs:DescribeCloudAssistantStatus
 ecs:RunCommand
 ecs:DescribeInvocations
+ecs:DescribeInvocationResults
 ```
 
 不授予 `ecs:StopInvocation`、`ecs:CreateCommand`、`ecs:DeleteCommand`。`RunCommand` 的
@@ -710,6 +815,7 @@ ECS_CLOUD_ASSISTANT_UNAVAILABLE
 ECS_RUN_COMMAND_FAILED
 ECS_COMMAND_TOO_LARGE
 DEPLOYMENT_TIMEOUT
+PIPELINE_RETRY_UNSUPPORTED_FOR_VOLCANO
 DEPLOYMENT_PATH_INVALID
 DEPLOYMENT_PATH_OUTSIDE_ALLOWLIST
 DEPLOYMENT_SCRIPT_INVALID
@@ -729,7 +835,10 @@ DEPLOYMENT_USER_SCRIPT_FAILED
 - TOS 列表、Head、预签名 TTL、404/403/5xx/网络异常映射。
 - 手动选制品 Top-10、前缀边界、客户伪造快照拒绝。
 - 命令渲染大小校验、URL shell 转义和 Host allowlist。
-- ECS Invocation 状态、退出码映射、同步等待截止时间和 `TIMEOUT` CAS。
+- `DescribeInvocations` 只映射任务状态；`DescribeInvocationResults` 才映射 ExitCode/Output，
+  两者互换不会误判成功。
+- ECS 同步等待截止时间、`TIMEOUT` CAS、`RunCommand` 明确失败和请求超时分支。
+- `execution_config_sha256` 对目标配置变化敏感，脚本变更后 `deploy_script_sha256` 改变。
 
 ### 16.2 集成测试
 
@@ -738,6 +847,11 @@ DEPLOYMENT_USER_SCRIPT_FAILED
 - 手动执行缺选、无 SHA、越 Prefix、非当前层被拒绝。
 - `RunCommand` 成功、明确失败、请求超时无 InvocationId。
 - 同步等待：终态立即返回、超时置 `TIMEOUT`、`RunCommand` 只调用一次、Outbox 幂等。
+- 事务边界：Kafka/Inbox 短事务提交后才投递部署 executor；等待期间无数据库事务；
+  executor 不复用消息处理许可。
+- 手动执行顺序：HeadObject 后一次事务创建 Pipeline/Stage/Job Build 和 selection；
+  `JobBuildContext.artifactSelectionId` 能唯一解析，失败时不产生孤立记录。
+- 已有 `/pipeline-builds/{id}/retry` 在改状态前拒绝包含 `VOLCANO_DEPLOY` 的 Build。
 - Pipeline/Plugin Build 创建和删除路径。
 
 ### 16.3 脚本测试
@@ -751,7 +865,10 @@ DEPLOYMENT_USER_SCRIPT_FAILED
 ### 16.4 合同测试
 
 - TOS Presign GET、VPC Endpoint、VersionId/If-Match。
-- Cloud Assistant `RunCommand` 正文 16 KiB 限制、`DescribeInvocations` 终态和退出码。
+- Cloud Assistant `RunCommand` 正文 16 KiB 限制、`DescribeInvocations` 任务状态和
+  `DescribeInvocationResults` 实例退出码/输出。
+- 在真实 HTTP/SDK 层注入“已受理但响应丢失”故障，验证 `RunCommand` 实际只发出一次请求，
+  SDK/HTTP 自动重试为 0。
 - 100 MB 以上制品直拉；无公网 IP ECS 可部署。
 - 明确验证 `StopInvocation`、`CreateCommand` 权限未被授予。
 
@@ -785,5 +902,7 @@ mvn clean verify
 - TOS 对象可列举、Head 和预签名 GET；Firefly 不实现本地制品下载。
 - 手动执行时每个 Volcano Job 必须选择一个当前层制品，后端 HeadObject 生成不可变快照。
 - ECS 能从私有 TOS 直拉制品，校验 SHA-256 后执行用户部署脚本。
-- `RunCommand` 和同步 `DescribeInvocations` 覆盖成功、失败和 `TIMEOUT` 终态；超时不自动查询、不自动重发。
+- `RunCommand`、同步 `DescribeInvocations` 和终态 `DescribeInvocationResults` 覆盖成功、
+  失败和 `TIMEOUT`；ExitCode 来自结果接口，超时不自动查询、不自动重发。
+- 部署事务与等待线程完全分离；已有通用 Pipeline Retry 会拒绝 Volcano Build。
 - 不实现任何自动重试、自动恢复、Pipeline Retry、停止/取消/回滚和结果事件链路；等待超时只写 `TIMEOUT`。
