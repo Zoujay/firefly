@@ -355,15 +355,17 @@ GET /api/volcano/pipelines/{pipelineId}/jobs/{jobUuid}/artifacts/recent?limit=10
 1. 解析 Pipeline Binding、Job 配置、Prefix 和允许的制品范围；
 2. 在数据库事务外调用 `HeadObject`，校验 Key 仍在 Prefix 当前层、读取 VersionId/ETag/
    大小/LastModified/SHA-256；
-3. 开启一个数据库短事务：
+3. 开启一个数据库建单事务：
    - 创建 `PipelineBuild` 并 flush 获取 ID；
    - 按现有流程创建 `StageBuild`、`JobBuild`；
    - 为每个 Volcano Job 插入 `volcano_artifact_selection`，同时写入
      `pipeline_build_id`、`job_config_id` 和制品快照；
+   - 调用 `VolcanoDeployPluginBuildService.savePluginBuild()`，在同一事务内创建
+     `volcano_deploy_build=PENDING`，并生成执行快照；此阶段不调云 API、不注册派发回调；
    - 提交事务；
-4. 事务提交后，现有 Pipeline 调度流程创建 Plugin Build；
-5. `JobBuildContext` 增加 `artifactSelectionId` 字段，`VolcanoDeployPluginBuildService`
-   直接用该 ID 查询 `volcano_artifact_selection`，不在 Plugin Build 阶段重新选制品。
+4. `JobBuildContext` 增加 `artifactSelectionId`，Plugin Build 从选择快照解析它；
+5. 只有 DAG 调度到该 Job、`MessageCenter.onJobMessage()` 调用
+   `executePluginBuild()` 时，才登记部署回调；前置 Job 未成功时不会调用该方法。
 
 请求示例（只包含选择一个 Volcano Job 的情况）：
 
@@ -579,6 +581,9 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
     `artifact_selection_id` BIGINT(20) NOT NULL,
     `deploy_script_sha256`  CHAR(64) NOT NULL,
     `execution_config_sha256` CHAR(64) NOT NULL,
+    `execution_snapshot_json` JSON NOT NULL,
+    `approved_by`           VARCHAR(128) NOT NULL DEFAULT '',
+    `approved_at`           DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000',
     `status`                VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     `invocation_id`         VARCHAR(128) NOT NULL DEFAULT '',
     `exit_code`             INT NOT NULL DEFAULT -1,
@@ -600,9 +605,14 @@ CREATE TABLE `firefly`.`volcano_deploy_build`
 - 所有时间按 UTC 保存；API 将 `1970-01-01` 和 `exit_code=-1` 映射为未发生/未知。
 - 一个 `job_build_id` 只允许一个 `volcano_deploy_build`，失败后不自动创建第二个。
 - `invocation_id=''` 表示尚未拿到云助手 InvocationId，不参与任何云 API 查询。
-- 创建部署记录时，从 `volcano_deploy_config` 复制 `deploy_script_sha256`，并对
-  `region + instanceId + deployRoot + applicationName + runAsUser + commandTimeout`
-  计算规范 JSON 的 `execution_config_sha256`。配置后续被修改不会改变历史部署审计。
+- `savePluginBuild()` 创建部署记录时，从 `volcano_deploy_config` 生成
+  `execution_snapshot_json`，包含脚本正文、脚本 Hash、目标 InstanceId、部署路径、
+  `runAsUser`、命令超时和 `approved_by`/`approved_at`，但不包含预签名 URL。
+- `execution_config_sha256` 是 `execution_snapshot_json` 的规范 Hash；`deploy_script_sha256`
+  和审批字段同时以独立列冗余保存。配置表后续被修改时，已经创建的部署记录仍保留原执行
+  快照，审计可还原当时内容。
+- 部署 executor 只使用 `execution_snapshot_json`，不读取可能已被修改的
+  `volcano_deploy_config`。
 - 不创建 `volcano_deployment_attempt`、`volcano_command_revision`、结果 Inbox 等表。
 - 不持久化包含预签名 URL 的完整命令正文。
 
@@ -629,14 +639,21 @@ PENDING -> RUNNING -> SUCCESS
 `MessageCenter` 插件处理逻辑，而 `MessageListener` 还用共享的 24 个并发许可调度处理
 线程。部署流程不能在这个事务和线程里做云调用或同步等待：
 
-1. Volcano Build 的数据库短事务只创建 `volcano_deploy_build`，状态 `PENDING`，并提交。
-2. 短事务提交后，通过 `TransactionSynchronization.afterCommit` 把任务投递到独立的
-   `VolcanoDeployExecutor`，不复用消息处理 worker 的 24 个许可。
-3. 部署 executor 调 `RunCommand`、写 InvocationId、同步等待和写终态，整个等待期间不持有
-   数据库事务；每次状态落库使用独立短事务和旧状态 CAS。
-4. 终态更新 `volcano_deploy_build` 与写 Outbox 在同一个新短事务中提交。
-5. `afterCommit` 投递被 executor 拒绝（队列满）时，在新事务中把 `PENDING` 置 `FAILURE`，
+1. `buildPipeline()` 的建单事务内，`savePluginBuild()` 只创建
+   `volcano_deploy_build=PENDING` 和执行快照，不注册部署回调、不调云 API；Plugin Build
+   在 DAG 调度开始前已经存在。
+2. DAG 调度到该 Job 时，`MessageCenter.onJobMessage()` 调用 `executePluginBuild()`；它只
+   注册 `TransactionSynchronization.afterCommit` 后立即返回，不在消息事务内启动部署。
+3. 当前消息事务提交后，`afterCommit` 把任务投递到独立 `VolcanoDeployExecutor`，不复用
+   消息处理 worker 的 24 个许可。
+4. 部署 executor 调 `RunCommand`、写 InvocationId、同步等待和写终态，整个等待期间不持有
+   数据库事务；只使用 `savePluginBuild()` 时保存的 `execution_snapshot_json`，每次状态
+   落库使用独立短事务和旧状态 CAS。
+5. 终态更新 `volcano_deploy_build` 与写 Outbox 在同一个新短事务中提交。
+6. `afterCommit` 投递被 executor 拒绝（队列满）时，在新事务中把 `PENDING` 置 `FAILURE`，
    不重派。
+7. 前置 Job 未成功时，现有 DAG 不会调用 `executePluginBuild()`，因此不会发生
+   `RunCommand`。
 
 这样既不会让数据库事务跨越部署时长，也不会因为长时间等待占满消息处理许可而阻塞
 Kafka poll。
@@ -651,8 +668,12 @@ Kafka poll。
    `DescribeInvocations`，每次间隔 `statusQueryInterval`；
 5. 任务终态后调用 `DescribeInvocationResults`，按目标 InstanceId 取 ExitCode/Output；
 6. `ExitCode=0` 且任务成功：CAS 置 `SUCCESS`；否则置 `FAILURE`；终态与 Outbox 同事务提交；
-7. 超过截止时间仍非终态：CAS 置 `TIMEOUT`，写入 `error_code=DEPLOYMENT_TIMEOUT`，与 Outbox
-   同事务提交；之后不再查询云助手；
+7. 超过截止时间仍非终态：CAS 将 `volcano_deploy_build.status` 置 `TIMEOUT`，写入
+   `error_code=DEPLOYMENT_TIMEOUT`，并在同一短事务写 Outbox。由于现有 `BuildStatus`
+   枚举没有 `TIMEOUT`，Outbox 中 `TriggerPluginMessage.status` 使用
+   `BuildStatus.FAILURE`，使 Job/Stage/Pipeline 正常进入失败终态；
+   `volcano_deploy_build.status` 保持 `TIMEOUT`，后续 `updatePluginBuild()` 不得把它覆盖成
+   `FAILURE`；
 8. `RunCommand` 请求本身超时且没有 InvocationId：直接置 `TIMEOUT`，不重新提交；
 9. `RunCommand` 明确失败：置 `FAILURE`；
 10. 部署 executor 或 Firefly 崩溃时不自动恢复等待线程，也不重新查询。`PENDING`/`RUNNING`
@@ -694,23 +715,29 @@ firefly-app/src/main/java/firefly/service/pluginbuild/impl/
    保存时校验脚本、计算并持久化 `deploy_script_sha256`，记录 `created_by`/`updated_by`，
    审批后写 `approved_by`/`approved_at`。脚本变更必须产生新的 SHA-256。
 3. `PipelineBuildRequest` 增加按 Job UUID 索引的 `jobInputs`，仅包含 `key`/`versionId`。
-4. `PipelineBuildServiceImpl` 在数据库短事务中创建 Pipeline/Stage/Job Build 和
-   `volcano_artifact_selection`，并把 `artifactSelectionId` 写入 `JobBuildContext`。
-5. `VolcanoDeployPluginBuildService` 实现 `IPluginBuild`：
-   - 在现有短事务内创建 `volcano_deploy_build`，状态 `PENDING`；
-   - 事务内不调云 API、不等待；该方法只登记部署任务并返回；
-   - 事务提交后通过 `TransactionSynchronization.afterCommit` 投递到 `VolcanoDeployExecutor`；
-   - Executor 内生成预签名 URL、渲染 Bootstrap、设置 `InvocationName=public_id`；
-   - `RunCommand` 只调用一次；明确失败直接置 `FAILURE`，请求超时且无 InvocationId 直接置
-     `TIMEOUT`；
-   - 拿到 InvocationId 后短事务 CAS 写入并进入 `RUNNING`，然后调用
+4. `PipelineBuildServiceImpl.buildPipeline()` 在建单事务中创建 Pipeline/Stage/Job Build、
+   `volcano_artifact_selection`，并调用 `savePluginBuild()` 创建 `volcano_deploy_build`；
+   把 `artifactSelectionId` 写入 `JobBuildContext`。
+5. `VolcanoDeployPluginBuildService.savePluginBuild()`：
+   - 只创建 `volcano_deploy_build=PENDING`，生成 `execution_snapshot_json`、
+     `deploy_script_sha256`、`execution_config_sha256` 和审批快照；
+   - 不调云 API、不注册部署回调；Plugin Build 在 DAG 调度前已存在。
+6. `VolcanoDeployPluginBuildService.executePluginBuild()`：
+   - 只会在 DAG 调度到该 Job 时由 `MessageCenter` 调用；
+   - 在当前消息事务中只注册 `TransactionSynchronization.afterCommit` 回调并返回，不调云 API
+     也不等待；
+   - 事务提交后投递到独立 `VolcanoDeployExecutor`；
+   - executor 只使用 `savePluginBuild()` 时保存的 `execution_snapshot_json`，不读取运行期间
+     可能已变化的配置；
+   - `RunCommand` 只调用一次；明确失败置 `FAILURE`，请求超时且无 InvocationId 置 `TIMEOUT`；
+   - 拿到 InvocationId 后短事务 CAS 写入并进入 `RUNNING`，再调用
      `VolcanoInvocationWaiter` 同步等待；
    - 等待到终态写 `SUCCESS`/`FAILURE`，等待超时写 `TIMEOUT`；
-   - 不自动重发、不自动创建新的部署记录、不重新启动等待。
-6. `VolcanoDeployExecutor` 是独立有界线程池，不复用 `MessageListener` 的 24 个处理许可；
+   - 不自动重发、不自动创建新记录、不重新启动等待。
+7. `VolcanoDeployExecutor` 是独立有界线程池，不复用 `MessageListener` 的 24 个处理许可；
    `VolcanoInvocationWaiter` 只在该线程内循环查询状态和结果，不是后台 Scheduler。
-7. Pipeline 删除时校验没有 `PENDING`/`RUNNING` 部署，`TIMEOUT` 视为终态，可按逻辑引用顺序删除。
-8. 在 `PipelineBuildServiceImpl.retryPipeline` 修改任何状态之前，检查该 Pipeline Build 的
+8. Pipeline 删除时校验没有 `PENDING`/`RUNNING` 部署，`TIMEOUT` 视为终态，可按逻辑引用顺序删除。
+9. 在 `PipelineBuildServiceImpl.retryPipeline` 修改任何状态之前，检查该 Pipeline Build 的
    Job 是否包含 `VOLCANO_DEPLOY`；包含则直接返回 `PIPELINE_RETRY_UNSUPPORTED_FOR_VOLCANO`，
    不得进入通用 Stage/Job/Build 重置逻辑。
 
@@ -847,10 +874,16 @@ DEPLOYMENT_USER_SCRIPT_FAILED
 - 手动执行缺选、无 SHA、越 Prefix、非当前层被拒绝。
 - `RunCommand` 成功、明确失败、请求超时无 InvocationId。
 - 同步等待：终态立即返回、超时置 `TIMEOUT`、`RunCommand` 只调用一次、Outbox 幂等。
-- 事务边界：Kafka/Inbox 短事务提交后才投递部署 executor；等待期间无数据库事务；
-  executor 不复用消息处理许可。
-- 手动执行顺序：HeadObject 后一次事务创建 Pipeline/Stage/Job Build 和 selection；
-  `JobBuildContext.artifactSelectionId` 能唯一解析，失败时不产生孤立记录。
+- 事务边界：`buildPipeline()` 建单事务内 Plugin Build 已存在；只有 DAG 调度到该 Job 后
+  才注册 afterCommit 并投递 executor；等待期间无数据库事务；executor 不复用消息处理许可。
+- 前置 Job 未成功时不会调用 `executePluginBuild()`，`RunCommand` 调用次数为 0。
+- 手动执行顺序：HeadObject 后一次事务创建 Pipeline/Stage/Job Build、selection 和
+  `volcano_deploy_build`；`JobBuildContext.artifactSelectionId` 能唯一解析，失败时不产生
+  孤立记录。
+- 部署记录使用 `execution_snapshot_json`：建单后修改 `volcano_deploy_config`，executor 仍
+  按原脚本、原目标、原路径执行。
+- `TIMEOUT` 时 Plugin 消息使用 `BuildStatus.FAILURE`，Job/Stage/Pipeline 能正常失败，
+  但 `volcano_deploy_build.status` 保持 `TIMEOUT`，重复 `updatePluginBuild()` 不会覆盖它。
 - 已有 `/pipeline-builds/{id}/retry` 在改状态前拒绝包含 `VOLCANO_DEPLOY` 的 Build。
 - Pipeline/Plugin Build 创建和删除路径。
 
@@ -904,5 +937,10 @@ mvn clean verify
 - ECS 能从私有 TOS 直拉制品，校验 SHA-256 后执行用户部署脚本。
 - `RunCommand`、同步 `DescribeInvocations` 和终态 `DescribeInvocationResults` 覆盖成功、
   失败和 `TIMEOUT`；ExitCode 来自结果接口，超时不自动查询、不自动重发。
-- 部署事务与等待线程完全分离；已有通用 Pipeline Retry 会拒绝 Volcano Build。
+- 部署事务与等待线程完全分离；Plugin Build 在 DAG 调度前已存在；前置 Job 未成功时
+  `RunCommand` 请求次数为 0；已有通用 Pipeline Retry 会拒绝 Volcano Build。
+- 部署记录保存 `execution_snapshot_json`，配置变更不影响已创建的部署审计；executor 使用
+  该快照执行。
+- `TIMEOUT` 在部署记录中保留，Outbox 使用 `BuildStatus.FAILURE` 让 Pipeline 正常失败；
+  重复终态更新不会把部署记录覆盖为 `FAILURE`。
 - 不实现任何自动重试、自动恢复、Pipeline Retry、停止/取消/回滚和结果事件链路；等待超时只写 `TIMEOUT`。
