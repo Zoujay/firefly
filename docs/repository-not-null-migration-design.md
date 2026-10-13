@@ -25,6 +25,7 @@
 4. OAuth 保留当前“条件删除、独立事务、最多消费一次”的模型；不借本次改造改成另一套 OAuth 状态机。
 5. 默认采用有维护窗口的升级，停止旧写入方后完成转换；不承诺旧程序和新程序混跑兼容。
 6. 当前维护的 `v1.sql` 更新为最终结构；已执行的 `v2_github_oauth.sql` 不篡改，通过新增前向迁移消除其最终 Schema 中的可空列。
+7. GitHub Trigger 增加显式的非空执行来源，区分 Webhook、手动构建和旧历史记录。手动构建没有 Webhook Delivery，不因缺少事件元数据而被判为损坏记录。
 
 “禁 NULL”指数据库列和 SQL NULL 数据，不是删除 Java 的 `null` 关键字。API 中的缺失值、`Optional.empty()`、原始 Webhook JSON 中的 JSON `null` 可以保留原契约，但不能直接成为数据库列的 SQL NULL。不得修改原始签名载荷来消除 JSON `null`。
 
@@ -47,16 +48,16 @@
 
 | # | 表.字段 | 原类型；v1 / v2 行号 | 改造后的持久化表示与规则 |
 | --- | --- | --- | --- |
-| 1 | `github_trigger.delivery_id` | VARCHAR(64)；66 / 9 | `NOT NULL DEFAULT ''`；只允许历史不完整记录使用空串，新事件必须有真实 Delivery ID |
+| 1 | `github_trigger.delivery_id` | VARCHAR(64)；66 / 9 | `NOT NULL DEFAULT ''`；WEBHOOK 必须有真实 Delivery ID；MANUAL 为不适用的空串；LEGACY 未知时为空串，见第 5.5 节 |
 | 2 | `github_trigger.pipeline_id` | BIGINT(20)；67 / 10 | `NOT NULL DEFAULT 0`；历史未知为 0，新 Trigger 必须大于 0 |
 | 3 | `github_trigger.pipeline_build_id` | BIGINT(20)，UNIQUE；68 / 11 | 移入 `github_trigger_build_binding.pipeline_build_id NOT NULL UNIQUE`；未知关联无绑定行，见第 4 节 |
-| 4 | `github_trigger.github_repository_id` | BIGINT(20)；69 / 12 | `NOT NULL DEFAULT 0`；历史未知为 0，新事件必须大于 0 |
-| 5 | `github_trigger.event_type` | VARCHAR(64)；71 / 13 | `NOT NULL DEFAULT ''`；历史未知为空串，新事件须为校验通过的事件类型 |
-| 6 | `github_trigger.action` | VARCHAR(64)；72 / 14 | `NOT NULL DEFAULT ''`；push 不适用时为空串，PR 仍按事件规则校验 action |
+| 4 | `github_trigger.github_repository_id` | BIGINT(20)；69 / 12 | `NOT NULL DEFAULT 0`；历史未知为 0，新 WEBHOOK/MANUAL 执行必须大于 0 |
+| 5 | `github_trigger.event_type` | VARCHAR(64)；71 / 13 | `NOT NULL DEFAULT ''`；WEBHOOK 须为校验通过的事件类型；MANUAL 不适用、LEGACY 未知时为空串 |
+| 6 | `github_trigger.action` | VARCHAR(64)；72 / 14 | `NOT NULL DEFAULT ''`；MANUAL、push 不适用时为空串，Webhook PR 仍按事件规则校验 action |
 | 7 | `github_trigger.source_branch` | VARCHAR(512)；73 / 15 | `NOT NULL DEFAULT ''`；仅不适用或历史未知时为空串，不把空串当匹配所有分支 |
 | 8 | `github_trigger.target_branch` | VARCHAR(512)；74 / 16 | `NOT NULL DEFAULT ''`；push 无目标分支时为空串；PR 分支校验不放宽 |
 | 9 | `github_trigger.head_sha` | VARCHAR(64)；75 / 17 | `NOT NULL DEFAULT ''`；按事件类型区分不适用/未知与真实 SHA，不生成假 SHA |
-| 10 | `github_trigger.created_at` | DATETIME(6)；77 非空 / 19 可空 | `NOT NULL`，不设自动时间默认值；新记录填真实接收时间，历史不可还原时显式填 U 并保留历史标记 |
+| 10 | `github_trigger.created_at` | DATETIME(6)；77 非空 / 19 可空 | `NOT NULL`，不设自动时间默认值；WEBHOOK 填真实接收时间，MANUAL 填真实手动触发时间；历史不可还原时显式填 U 并保留审计标记 |
 | 11 | `github_oauth_state.consumed_at` | DATETIME(6)；91 / 31 | `NOT NULL DEFAULT U`；U 表示未消费；当前消费成功会删除整行，而非更新时间 |
 | 12 | `github_repository_subscription.connection_id` | BIGINT(20)；123 / 63 | `NOT NULL DEFAULT 0`；0 表示无 Connection，不允许授权、创建 Hook 或恢复 ACTIVE |
 | 13 | `github_repository_subscription.webhook_id` | BIGINT(20)，UNIQUE；132 / 72 | 移入 `github_subscription_webhook_binding.webhook_id NOT NULL UNIQUE`；未绑定时无绑定行，见第 4 节 |
@@ -163,7 +164,7 @@ CREATE TABLE `firefly`.`github_trigger_build_binding`
 
 新增 `GitHubTriggerBuildBindingEntity/Repository`，由 [GithubTrigger.saveRealTrigger](../firefly-app/src/main/java/firefly/service/trigger/impl/GithubTrigger.java) 在保存 Trigger 并取得自增 ID 后插入绑定。
 
-- 当前 [AbstractTrigger.dispatch](../firefly-app/src/main/java/firefly/service/trigger/AbstractTrigger.java) 已要求 `pipelineBuildID > 0`。新事件必须同时创建 Trigger 和真实 Build 绑定，不能走“未知关联”分支。
+- 当前 [AbstractTrigger.dispatch](../firefly-app/src/main/java/firefly/service/trigger/AbstractTrigger.java) 已要求 `pipelineBuildID > 0`。新 WEBHOOK 和 MANUAL 执行都必须同时创建 Trigger 和真实 Build 绑定，不能走“未知关联”分支。
 - Trigger、绑定、Pipeline Build 及相关 Outbox 仍处于原业务事务边界内；绑定唯一性失败必须回滚本次 Trigger 与 Outbox，不能留下可执行的半条记录。
 - 历史 `legacy_record = 1` 且关联未知的 Trigger 保留原审计行但无绑定行，禁止据此重放部署或 Pipeline。
 - 历史已知的真实 Build ID 原样迁移，唯一性保持；不要为了补历史关联而创建假 Build。
@@ -248,15 +249,41 @@ WHERE delivery_id = :deliveryId
 - `GitHubConnectionDisconnectService` 中 `.setConnectionId(null)` 改为具名的未绑定值 0；仅在已完成解除关联的业务路径执行。远端清理失败时保留真实 Connection ID 以便恢复。
 - 0 不能用于查询有效 Connection、解密凭据或调用 GitHub。ACTIVE/PROVISIONING 等正常使用身份的记录必须有正数 Connection ID；历史异常记录先停止使用并人工核对。
 - `GithubTrigger` 的可选 action/branch/SHA 在事件匹配完成后、落库前按契约转换；不要修改外部事件解析器的全局 null 语义而改变分支匹配结果。
-- 历史 Trigger 仅对确实的 `legacy_record = 1` 记录使用历史缺省规则。非历史记录缺失必填 Delivery、Pipeline、Repository 或 Build 关联时阻断迁移，必须从可信记录修复或审批隔离方案；不能自动改成 legacy 来掩盖错误。
-- 历史未知 `created_at` 用 U；不得统一填迁移执行时间。正常新记录使用真实接收时间或明确的 UTC 接收时钟，移除依赖服务器本地时区的隐式补时行为。
+- 历史 Trigger 仅对确实的 `legacy_record = 1` 记录使用 LEGACY 缺省规则。按第 5.5 节先区分执行来源：WEBHOOK 缺必填 Delivery/事件事实，或 MANUAL/WEBHOOK 缺必填 Pipeline、Repository、Build 关联时阻断迁移；合法 MANUAL 缺少 Webhook 元数据不属于错误。未知来源必须审计确认，不能自动改成 legacy 来掩盖错误。
+- 历史未知 `created_at` 用 U；不得统一填迁移执行时间。新 WEBHOOK 使用真实接收时间，新 MANUAL 使用真实 UTC 手动触发时间；移除实体回调中依赖服务器本地时区的隐式补时行为。
+
+### 5.5 GitHub Trigger：保留手动构建的合法语义
+
+现有 [PipelineBuildController](../firefly-app/src/main/java/firefly/controller/pipelinebuild/PipelineBuildController.java) 的 `POST /manual_trigger/pipeline` 支持 `triggerOrigin = GITHUB`。[PipelineBuildServiceImpl.triggerPipeline](../firefly-app/src/main/java/firefly/service/pipelinebuild/impl/PipelineBuildServiceImpl.java) 创建 Build 后调用 [GithubTriggerOriginServiceImpl.buildMessage](../firefly-app/src/main/java/firefly/service/triggerorigin/impl/GithubTriggerOriginServiceImpl.java)，只填 Repository、Pipeline、Build 等信息，不生成 Delivery ID、事件类型、action、分支或 SHA；`GithubTrigger.saveRealTrigger` 仍写入 `legacy_record = false`。这是一条正常的手动执行路径，不是旧数据缺损。
+
+新增 `github_trigger.trigger_source VARCHAR(32) NOT NULL`，最终只允许 `WEBHOOK`、`MANUAL`、`LEGACY`，不设默认值。它表示执行来源，与 `TriggerOrigin.GITHUB` 和 Subscription 的 `registration_mode` 分别独立；MANUAL 注册的 Hook 收到事件时仍是 WEBHOOK 执行。
+
+这是新增的全非空分类列，不计入第 2.2 节的 18 个既有可空字段清单。
+
+| 来源 | 必须保留的事实 | 不适用/未知的表示 |
+| --- | --- | --- |
+| WEBHOOK | `legacy_record = 0`；真实 Delivery、有效事件类型、正数 Pipeline/Repository ID、真实 Build 绑定及 UTC 接收时间 | action、分支、SHA 仍按具体事件契约处理；缺必填事件事实不得降级为 MANUAL |
+| MANUAL | `legacy_record = 0`；正数 Pipeline/Repository ID、真实 Build 绑定及 UTC 手动触发时间 | `delivery_id`、`event_type`、`action`、`source_branch`、`target_branch`、`head_sha` 均为 `''`，表示无 Webhook 事件，不是历史未知 |
+| LEGACY | 既有 `legacy_record = 1`，已知事实和真实 Build ID 原样保留 | 无法还原的事实按第 2.2 节使用 `''`、0、U 或无绑定行；不得据此重放执行 |
+
+写入与校验要求：
+
+- 在内部消息增加明确的执行来源，由 `GitHubPipelineInvocationService.invoke` 固定设置 WEBHOOK，由 `GithubTriggerOriginServiceImpl.buildMessage` 固定设置 MANUAL；不得由外部请求或“Delivery 为空”的判断选择来源以绕过事件校验。
+- LEGACY 仅供已确认的存量历史记录使用，新业务入口不得写入该来源。
+- `GithubTrigger.saveRealTrigger` 按来源校验并规范化字段；两个新写入入口都保留真实 Build 绑定和原 Trigger/Build/Outbox 事务。手动入口按现有行为直接 dispatch，不新增 Webhook 匹配、Delivery 记录或假的 Delivery ID。
+- 手动时间由该入口的 UTC 时钟显式设置，不伪装为 Webhook 接收时间。已存在的真实 `created_at` 不改写；历史无法还原的时间按审计规则处理，不能用本次迁移时间补造。
+
+存量数据必须在通用 NULL 回填前分类并记录证据：`legacy_record = 1` 对应 LEGACY；真实 Delivery 和事件事实可确认的记录对应 WEBHOOK；MANUAL 须有能关联到确切 Trigger/Build ID 的可信手动请求、访问或审计证据，结合实际部署版本的生成路径确认，并核对已有 Pipeline、Repository、Build 事实和关联一致性。旧 Schema 没有执行来源字段，仅靠 `delivery_id IS NULL`、没有 Delivery/Pipeline 关联行或 `legacy_record = 0` 都不能证明来源是 MANUAL；过期清理也可能使事件关联缺失。当前可变的 Pipeline 配置不能单独用来补造历史 Repository 身份。
+
+已确认的合法手动记录保留 `legacy_record = 0`，新增 MANUAL 来源，将不适用事件字段从 NULL 转为空串，并迁移其真实 Build 绑定，不要求补一个不存在的 Delivery。证据不足、事实冲突或缺少必填关联的记录列入待核对清单，明确缺少的是来源证明还是业务事实，再由可信记录修复或批准隔离；不得自动归为 MANUAL/LEGACY。分类记录须包含 Trigger PK、来源、证据引用及规则版本，避免把原始敏感请求写入日志。
 
 ## 6. 目标表结构与迁移 SQL 边界
 
-以下 DDL 片段只展示保留列的最终约束，必须在第 7 节的数据回填、绑定迁移和预检查全部完成之后执行。完整迁移必须保留现场列的字符集、排序规则、长度、注释和其他属性，不可直接把片段当作生产脚本粘贴运行。
+以下 DDL 片段展示新增执行来源和保留列的最终约束，必须在第 7 节的来源列扩展、分类回填、绑定迁移和预检查全部完成之后执行。完整迁移必须保留现场列的字符集、排序规则、长度、注释和其他属性，不可直接把片段当作生产脚本粘贴运行。
 
 ```sql
 ALTER TABLE `firefly`.`github_trigger`
+    MODIFY COLUMN `trigger_source` VARCHAR(32) NOT NULL,
     MODIFY COLUMN `delivery_id` VARCHAR(64) NOT NULL DEFAULT '',
     MODIFY COLUMN `pipeline_id` BIGINT(20) NOT NULL DEFAULT 0,
     MODIFY COLUMN `github_repository_id` BIGINT(20) NOT NULL DEFAULT 0,
@@ -265,7 +292,18 @@ ALTER TABLE `firefly`.`github_trigger`
     MODIFY COLUMN `source_branch` VARCHAR(512) NOT NULL DEFAULT '',
     MODIFY COLUMN `target_branch` VARCHAR(512) NOT NULL DEFAULT '',
     MODIFY COLUMN `head_sha` VARCHAR(64) NOT NULL DEFAULT '',
-    MODIFY COLUMN `created_at` DATETIME(6) NOT NULL;
+    MODIFY COLUMN `created_at` DATETIME(6) NOT NULL,
+    ADD CONSTRAINT `chk_github_trigger_source`
+        CHECK ((`trigger_source` = 'LEGACY' AND `legacy_record` = 1)
+            OR (`trigger_source` IN ('WEBHOOK', 'MANUAL') AND `legacy_record` = 0)),
+    ADD CONSTRAINT `chk_github_trigger_event_source`
+        CHECK ((`trigger_source` = 'WEBHOOK'
+                AND `delivery_id` <> '' AND `event_type` <> '')
+            OR (`trigger_source` = 'MANUAL'
+                AND `delivery_id` = '' AND `event_type` = ''
+                AND `action` = '' AND `source_branch` = ''
+                AND `target_branch` = '' AND `head_sha` = '')
+            OR `trigger_source` = 'LEGACY');
 
 ALTER TABLE `firefly`.`github_oauth_state`
     MODIFY COLUMN `consumed_at` DATETIME(6) NOT NULL
@@ -316,7 +354,7 @@ CHECK 不能替代 NOT NULL；MySQL CHECK 对 UNKNOWN 的处理意味着仍需�
 
 迁移前必须拦截：
 
-1. 非历史 Trigger 缺必填事实；SUCCESS 的 Delivery/Pipeline 没有正数 Build ID。
+1. 按来源检查 Trigger 必填事实：WEBHOOK 缺 Delivery/事件事实，MANUAL/WEBHOOK 缺 Pipeline、Repository、Build 关联，或执行来源尚未确认；合法 MANUAL 没有 Webhook 元数据不阻断迁移。SUCCESS 的 `github_delivery_pipeline` 没有正数 Build ID 仍须拦截。
 2. 待迁移的绑定 ID 非正数、重复、与父记录身份矛盾；若关联资源已按保留策略删除，需区分历史审计 ID 与错误关联，不能随意抹掉真实值。
 3. ACTIVE/PROVISIONING Subscription 没有有效 Connection；ACTIVE 没有真实 Hook 绑定。
 4. 未清理的活跃 PROCESSING、未决外部调用以及无法确认停写的旧应用实例。
@@ -327,8 +365,8 @@ CHECK 不能替代 NOT NULL；MySQL CHECK 对 UNKNOWN 的处理意味着仍需�
 | --- | --- | --- |
 | P0 演练 | 从备份恢复到隔离库，运行审计、回填、约束修改、对比和恢复演练 | 记录耗时、锁等待、磁盘需求、异常行数，全部在审批范围内 |
 | P1 停写与快照 | 暂停所有应用写入口、Kafka 消费、GitHub 定时恢复、后台管理重试和相关脚本；等待在途事务结束；保存一致备份及重放边界 | 无旧进程继续写入；维护窗口和备份可验证 |
-| P2 扩展 | 创建第 4 节的两个全非空绑定表；保留旧列/索引 | 新表约束存在，暂不切换应用 |
-| P3 数据转换 | 按 PK 小批事务回填保留列；仅为旧列中真实的正数 ID 创建绑定；逐批比对 | 已知关联集合完全一致；必填错误已解决；剩余 SQL NULL 仅限即将删除的旧关联列 |
+| P2 扩展 | 创建第 4 节的两个全非空绑定表；添加 `trigger_source NOT NULL DEFAULT 'UNCLASSIFIED'` 作为迁移期标记；保留旧列/索引 | 新表约束存在，暂不切换应用；UNCLASSIFIED 仅允许停写的迁移期存在 |
+| P3 数据转换 | 先按第 5.5 节分类 Trigger，再按 PK 小批事务回填保留列；仅为旧列中真实的正数 ID 创建绑定；逐批比对 | 无 UNCLASSIFIED；已知关联集合完全一致；按来源的必填错误已解决；剩余 SQL NULL 仅限即将删除的旧关联列 |
 | P4 收紧 | 修改保留列为 NOT NULL，添加状态约束；验证后删除旧关联列及原索引 | 新绑定表唯一保护持续有效；所有最终业务列非空；无遗留可空影子列 |
 | P5 切换 | 部署匹配新 Schema 的代码；写入口保持关闭，先运行只读 Schema 校验 | 新代码可启动，Schema/迁移版本匹配，所有实例版本一致 |
 | P6 恢复 | 受控恢复入口、消费者及原有恢复任务；验证事件去重、OAuth、ping、Pipeline 及 Outbox | 冒烟测试通过，异常指标无新增后再结束维护 |
@@ -343,7 +381,7 @@ Webhook 维护期间不能“先返回 2xx 后丢弃”；入口关闭应明确�
 
 ### 7.3 数据转换规则
 
-- 文本：只将 NULL 转为表 2.2 中允许的空串，已有真实文本不修改。
+- 文本：先确认 Trigger 来源；只将 NULL 转为表 2.2 和第 5.5 节允许的空串，已有真实文本不修改。合法 MANUAL 的不适用事件字段可为空串，不要求伪造事件。
 - 非唯一 ID：只对合法的未绑定状态填 0；成功/有效状态缺 ID 必须先修复。
 - OAuth：只将 `consumed_at IS NULL` 转为 U，不覆盖已消费时间。
 - 时间：未发生或历史不可还原的时间填 U；不得用 `NOW()` 编造历史开始/结束时间。
@@ -358,9 +396,9 @@ Webhook 维护期间不能“先返回 2xx 后丢弃”；入口关闭应明确�
 
 后续实现建议新增以下受版本控制的迁移产物；具体序号在实施分支基于最新 main 再确认，不能覆盖别人已占用的版本：
 
-- `v3_not_null_expand.sql`：创建绑定表和所需的全非空审计元数据。
+- `v3_not_null_expand.sql`：创建绑定表、全非空的过渡 `trigger_source` 列和所需的全非空审计元数据；UNCLASSIFIED 不得进入最终 Schema 或恢复写入。
 - 独立的受审计回填程序：执行状态感知转换、批次校验、重跑与中断恢复。
-- `v4_not_null_contract.sql`：验证前置条件后收紧保留列、移除已迁移旧列，写入最终版本记录。
+- `v4_not_null_contract.sql`：验证前置条件后收紧保留列、去掉 `trigger_source` 的迁移默认值并增加最终来源约束、移除已迁移旧列，写入最终版本记录；全新 v1 直接定义无默认值的最终来源列。
 
 当前代码中没有本方案的迁移 runner。实现时提供显式运维命令，运行前验证目标库、预期 Schema 签名、迁移校验和及步骤状态；不要让应用每次启动自动执行未经批准的回填。
 
@@ -442,7 +480,7 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 - 新绑定表内所有 ID 为正数、没有重复真实 ID；迁移前后的已知关联集合一致。
 - SUCCESS 的 `github_delivery_pipeline.pipeline_build_id > 0`。
 - RETRYABLE 的 `next_retry_at > U`；ACTIVE Subscription 有真实绑定和有效 Connection。
-- 除明确的历史不完整记录外，新 Trigger 的必填事实、Build 绑定和时间完整。
+- `trigger_source` 只含 WEBHOOK/MANUAL/LEGACY，且与 `legacy_record` 一致；WEBHOOK 事件事实完整，MANUAL 不适用事件字段为空串；两个新执行来源均有真实 Build 绑定、正数 Pipeline/Repository ID 和真实时间。历史记录按来源及审计例外校验，不把 MANUAL 的空事件字段误报为数据损坏。
 - 新安装和升级安装的列类型、默认值、主键、唯一键、CHECK、索引集合语义一致；不比较 AUTO_INCREMENT 当前值等运行时差异。
 
 ### 9.2 必需的自动化测试
@@ -450,19 +488,20 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 | 测试层 | 必须覆盖的情况 |
 | --- | --- |
 | 全新 Schema | 修改后的 v1 初始化；全业务库可空列为 0；所有最终持久化列显式 NOT NULL |
-| 基线升级 | 用本方案基线提交的原 v1 创建旧结构，灌入上述 17 类 NULL、合法非空、未绑定多行和冲突数据，再执行迁移 |
+| 基线升级 | 用本方案基线提交的原 v1 创建旧结构，灌入上述 17 类 NULL、合法非空、未绑定多行和冲突数据，再执行迁移；包含 `legacy_record = 0`、无事件元数据且有真实 Build 的已确认手动记录，分类为 MANUAL 并保留真实关联 |
 | 更早升级 | 从真实历史 Git 版本/部署 DDL 固定 pre-v2 fixture 与校验和，执行原 v2，再迁移；覆盖额外的 `github_trigger.created_at` NULL；禁止对当前完整 v1 再跑 v2 |
-| 迁移恢复 | 批次中断重跑、DDL 部分成功、版本/校验和不匹配、错误映射、非历史缺必填事实时必须停止 |
+| 迁移恢复 | 批次中断重跑、DDL 部分成功、版本/校验和不匹配、错误映射、按来源缺必填事实或来源证据不足时必须停止；不能把损坏 WEBHOOK 自动归为 MANUAL；合法 MANUAL 不因无 Delivery 停止 |
 | 唯一关联 | 多条未绑定记录可共存；重复真实 Hook/Build 被拒绝；相同绑定幂等；不同绑定冲突 |
 | Webhook 并发 | AUTO 返回与 ping 竞态、两个 ping、删除与绑定竞态、重复 Delivery、错误签名/Repository/Hook 不得绑定 |
 | OAuth | 两个并发 take 只有一个成功；已消费/过期/错误 session 不能通过；条件删除失败不返回 State |
 | Delivery | 新入库、入口拒绝、ping、claim、finish、requestRetry、recoverExpired、expireDead 均无 SQL NULL；U 不被当作到期重试 |
 | Pipeline | 创建前 0、成功后真实 ID、重复投递幂等；绑定失败时 Build/Trigger/Outbox 事务回滚 |
+| 手动 GitHub 构建 | 经真实 `POST /manual_trigger/pipeline` 创建 MANUAL Trigger；事件字段为空串，Pipeline/Repository ID、Build 绑定和触发时间完整，Build/Trigger/Outbox 原子提交；MANUAL 注册 Hook 的事件仍分类为 WEBHOOK；无 Delivery 的损坏 WEBHOOK 不得借手动契约通过 |
 | API | 不泄露 0/U 作为真实 ID/时间；保留可选响应语义；原始 payload 不被改写 |
 | ORM 与写入 | 全实体生成结构独立建库核验；包括继承映射、未显式 @Column 字段、JPQL/native 更新；显式 null 插入/更新最终非空列应失败 |
 | 回归 | 原消息 Inbox/Outbox、Stage/Job/Pipeline 状态流转与 GitHub 删除/断开连接测试继续通过 |
 
-优先扩展现有 `GitHubSchemaIntegrationTests`、`GitHubOAuthStateWriterTests`、`GitHubWebhookDeliveryWriterTests`、`GitHubWebhookIngressServiceTests`、`GitHubDeliveryStateServiceTests`、`GitHubSubscriptionDeletionTests` 和 `TriggerTransactionIntegrationTests`，并新增全库 Schema、历史迁移、绑定并发集成测试。不能只用 Mockito 证明数据库唯一性和事务正确。
+优先扩展现有 `GitHubSchemaIntegrationTests`、`GitHubOAuthStateWriterTests`、`GitHubWebhookDeliveryWriterTests`、`GitHubWebhookIngressServiceTests`、`GitHubDeliveryStateServiceTests`、`GitHubSubscriptionDeletionTests`、`TriggerImplementationsTests` 和 `TriggerTransactionIntegrationTests`，并新增全库 Schema、历史迁移、绑定并发及手动 GitHub 构建集成测试。不能只用 Mockito 证明数据库唯一性和事务正确。
 
 在 Docker 可用的隔离测试环境，使用仓库当前 Java 25 / Maven 工具链执行：
 
@@ -486,7 +525,7 @@ mvn clean verify
 建议后续实现按以下顺序组织可审核提交，并作为一次协调发布交付：
 
 1. 固定旧 Schema fixture、18 列清单和全库检查；准备失败用例及回填审计格式。
-2. 引入两个全非空绑定模型和统一缺省值，改造所有相关实体、服务、DAO、DTO 与并发测试。
+2. 引入两个全非空绑定模型、GitHub Trigger 执行来源和统一缺省值，改造所有相关实体、服务、DAO、DTO 与并发测试。
 3. 更新维护中的全量建库基线，实现 expand / 状态感知回填 / contract 及恢复测试，保留冻结历史迁移。
 4. 同步旧 GitHub/Volcano 文档，接入全库 Schema/ORM/升级门禁和只读启动检查。
 5. 隔离库演练通过后，另行批准实际环境维护窗口，执行并产出数据核对与恢复验证报告。
@@ -496,6 +535,7 @@ mvn clean verify
 - 所有受管理业务表不存在可空列；在线业务库及长期保留的业务影子表中 SQL NULL 数据为 0。
 - 18 个基线问题全部关闭：16 个保留列已收紧，2 个可选唯一关联已迁入非空绑定表且旧列已删除。
 - 真实 Hook/Build 唯一性、OAuth 单次消费、Webhook 绑定权限、Delivery owner CAS 与 Pipeline/Outbox 原子性不退化。
+- 合法手动 GitHub 构建可继续执行，已确认的存量 MANUAL 记录可迁移；来源显式可审计，Webhook 事件缺必填事实不能借 MANUAL/LEGACY 契约绕过校验。
 - 无新程序向非空列写 SQL NULL；所有缺省值都有状态语义，未知事实不会被当作成功、有效身份或公开仓库。
 - 新安装与全部受支持升级链的最终约束一致，历史数据已校验，完整回归与迁移恢复测试通过。
 - 文档、实体映射、DDL、迁移和 CI 的规则一致；不得只合并本方案文档就宣布全仓库改造完成。
